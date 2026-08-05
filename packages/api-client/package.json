@@ -1,0 +1,15 @@
+{
+  "name": "@rdc/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/client.test.mjs"
+  },
+  "dependencies": { "@rdc/shared-types": "workspace:*" },
+  "devDependencies": { "typescript": "catalog:" }
+}
