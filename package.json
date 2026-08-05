@@ -1,0 +1,24 @@
+{
+  "name": "rooz-data-cloud",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.4.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format:check": "prettier --check .",
+    "format:write": "prettier --write .",
+    "verify": "python3 scripts/verify-scaffold.py"
+  },
+  "devDependencies": {
+    "prettier": "^3.6.2",
+    "turbo": "2.10.7",
+    "typescript": "6.0.3"
+  }
+}
