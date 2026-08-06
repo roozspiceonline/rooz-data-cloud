@@ -6,7 +6,7 @@
 **Contract version:** 1.0.0-draft  
 **API version:** `/api/v1`  
 **Owner:** ChatGPT — Architecture, Backend, Security, DevOps, and Integration  
-**Consumers:** Gemini frontend, future SDKs, CLI, integrations, and execution-plane services
+**Consumers:** RDC console, future SDKs, CLI, integrations, and execution-plane services
 
 ---
 
@@ -843,6 +843,15 @@ Build creation:
 | GET | `/api/v1/projects/{project_id}/runs` | `run.read` |
 
 Run creation requires `Idempotency-Key` and returns `202 Accepted`.
+
+Phase 1E implementation rules:
+
+- A Run references a successful Build artifact for the same immutable Agent version.
+- Inline JSON input is limited to 64 KiB; large object-storage inputs are deferred.
+- Runtime overrides may reduce but cannot exceed immutable manifest resource limits.
+- Run creation writes a durable `START` command and an initial persisted status event.
+- Cancellation requires `Idempotency-Key`; queued Runs are aborted before dispatch, while active Runs receive a durable `CANCEL` command.
+- The public API never executes Agent code or decrypts project secrets.
 
 Cancellation is a command, not a resource deletion.
 
