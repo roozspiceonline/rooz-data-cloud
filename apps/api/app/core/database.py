@@ -52,6 +52,13 @@ async def set_tenant_context(
     )
 
 
+async def set_worker_context(session: AsyncSession, worker_id: UUID) -> None:
+    await session.execute(
+        text("SELECT set_config('rdc.current_worker_id', :value, true)"),
+        {"value": str(worker_id)},
+    )
+
+
 async def set_api_key_lookup_context(
     session: AsyncSession,
     token_digest_hex: str,
