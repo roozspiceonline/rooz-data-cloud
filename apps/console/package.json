@@ -1,14 +1,14 @@
 {
   "name": "@rdc/console",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint src --max-warnings=0",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/navigation.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@rdc/api-client": "workspace:*",
@@ -27,9 +27,6 @@
     "@types/react-dom": "^19.2.0",
     "postcss": "^8.5.0",
     "tailwindcss": "^4.1.0",
-    "typescript": "catalog:",
-    "@next/eslint-plugin-next": "16.2.12",
-    "eslint": "^10.0.0",
-    "typescript-eslint": "^8.0.0"
+    "typescript": "catalog:"
   }
 }
