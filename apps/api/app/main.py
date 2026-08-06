@@ -8,8 +8,8 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from .api.routes.agents import router as agents_router
-from .api.routes.health import router as health_router
 from .api.routes.builds_secrets import router as builds_secrets_router
+from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
 from .core.config import get_settings
 from .core.errors import (
