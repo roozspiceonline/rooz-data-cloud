@@ -122,6 +122,8 @@ async def foundation_status() -> dict[str, object]:
         "phase": "1B",
         "service": "rdc-api",
         "status": "identity-tenancy-foundation",
+        "tenant_rls_required": True,
+        "write_only_secrets_required": True,
         "tenant_rls_enabled": True,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
