@@ -65,7 +65,10 @@ def main() -> None:
     )
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
-    require('"phase": "1F"' in main_source, "foundation phase is not 1F")
+    require(
+        '"phase": "1F"' in main_source or '"phase": "1G"' in main_source,
+        "foundation phase is earlier than 1F",
+    )
     require(
         '"untrusted_agent_execution_enabled": False' in main_source,
         "untrusted execution was enabled",
