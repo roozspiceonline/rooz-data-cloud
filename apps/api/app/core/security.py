@@ -143,3 +143,36 @@ def derive_api_key(
 
 def is_expired(value: datetime | None, *, now: datetime) -> bool:
     return value is not None and value <= now
+
+@dataclass(frozen=True)
+class IssuedWorkerToken:
+    raw_token: str
+    public_prefix: str
+    last_four: str
+
+
+@dataclass(frozen=True)
+class IssuedLeaseToken:
+    raw_token: str
+    digest: bytes
+
+
+def issue_worker_token() -> IssuedWorkerToken:
+    prefix_bytes = secrets.token_bytes(5)
+    public_prefix = (
+        base64.b32encode(prefix_bytes).decode("ascii").lower().rstrip("=")
+    )
+    secret_part = secrets.token_urlsafe(32)
+    return IssuedWorkerToken(
+        raw_token=f"rdc_worker_{public_prefix}_{secret_part}",
+        public_prefix=public_prefix,
+        last_four=secret_part[-4:],
+    )
+
+
+def issue_lease_token(*, pepper: str) -> IssuedLeaseToken:
+    raw_token = "rdc_lease_" + secrets.token_urlsafe(32)
+    return IssuedLeaseToken(
+        raw_token=raw_token,
+        digest=secret_digest(raw_token, pepper),
+    )
