@@ -792,3 +792,241 @@ class IdempotencyRecord(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True),
         nullable=False,
     )
+
+
+class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "worker_identities"
+    __table_args__ = {"schema": "security"}
+
+    name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    public_prefix: Mapped[str] = mapped_column(
+        String(16), nullable=False, unique=True
+    )
+    last_four: Mapped[str] = mapped_column(String(4), nullable=False)
+    token_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32), nullable=False, unique=True
+    )
+    capabilities: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="ACTIVE"
+    )
+    protocol_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    software_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "execution_leases"
+    __table_args__ = (
+        UniqueConstraint(
+            "work_kind",
+            "source_outbox_id",
+            "attempt",
+            name="uq_execution_leases_source_attempt",
+        ),
+        {"schema": "control"},
+    )
+
+    worker_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.worker_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    work_kind: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_outbox_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    source_topic: Mapped[str] = mapped_column(String(120), nullable=False)
+    build_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.builds.id", ondelete="CASCADE"),
+        index=True,
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    lease_token_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32), nullable=False, unique=True
+    )
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="ACTIVE"
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_renewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    failure_summary: Mapped[str | None] = mapped_column(Text)
+
+
+class ExecutionArtifact(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "execution_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "digest_algorithm",
+            "digest",
+            "kind",
+            name="uq_execution_artifacts_digest_kind",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    build_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.builds.id", ondelete="CASCADE"),
+        index=True,
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    lease_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.execution_leases.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    created_by_worker_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.worker_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    digest_algorithm: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="sha256"
+    )
+    digest: Mapped[str] = mapped_column(String(128), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="AVAILABLE"
+    )
+    scan_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="PENDING"
+    )
+    provenance: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SecretInjectionGrant(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "secret_injection_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "lease_id",
+            "request_fingerprint",
+            name="uq_secret_injection_grants_lease_request",
+        ),
+        {"schema": "security"},
+    )
+
+    worker_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.worker_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    lease_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.execution_leases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    secret_names: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    environment: Mapped[str] = mapped_column(String(24), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(80), nullable=False)
+    ephemeral_public_key: Mapped[bytes] = mapped_column(
+        LargeBinary(32), nullable=False
+    )
+    nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    worker_public_key_digest: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="ISSUED"
+    )
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
