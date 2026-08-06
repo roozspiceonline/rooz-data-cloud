@@ -1046,3 +1046,13 @@ Stores digest-addressed artifact metadata and provenance. Artifact bytes remain 
 Stores only encrypted worker envelopes and metadata. It binds one active `RUN_START` lease, worker, tenant, project, Run, requested secret names, environment, worker public-key digest, encryption algorithm, expiry, and lifecycle state.
 
 All Phase 1F tenant-owned tables use RLS and tenancy triggers. Worker access is based on transaction-local `rdc.current_worker_id` and active lease relationships.
+
+
+## Phase 1G storage tables
+
+- `control.storage_objects`: expected and verified object metadata, archive scan state, immutable digest, tenant/Agent ownership.
+- `security.storage_grants`: capability digests and short-lived upload/download grant metadata; no URL or credential plaintext.
+- `control.agent_versions.source_object_id`: unique immutable source binding for new versions.
+- `control.builds.source_object_id`: source snapshot for new Builds.
+
+The migration initially permits null source references for pre-1G rows; all Phase 1G creation paths require them.
