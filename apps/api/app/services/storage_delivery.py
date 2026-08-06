@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -232,10 +233,8 @@ async def complete_source_upload(
         record.rejection_code = exc.code
         record.rejected_at = now
         record.metadata_json = {"rejection_message": exc.message}
-        try:
+        with suppress(StorageBackendError):
             await object_storage.delete_object(object_key=record.object_key)
-        except StorageBackendError:
-            pass
         await append_audit_event(
             session,
             organization_id=record.organization_id,

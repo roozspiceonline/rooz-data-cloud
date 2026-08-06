@@ -223,12 +223,6 @@ async def replace_project_secret(
     request_id: str,
 ) -> dict[str, object]:
     validate_idempotency_key(idempotency_key)
-    if version.source_object_id is None:
-        raise ApiError(
-            status_code=409,
-            code="SOURCE_OBJECT_NOT_AVAILABLE",
-            message="This legacy Agent version has no verified source archive.",
-        )
     fingerprint = canonical_fingerprint(
         {
             "secret_id": str(record.id),
@@ -386,6 +380,12 @@ async def create_build(
     request_id: str,
 ) -> dict[str, object]:
     validate_idempotency_key(idempotency_key)
+    if version.source_object_id is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_NOT_AVAILABLE",
+            message="This legacy Agent version has no verified source archive.",
+        )
     fingerprint = canonical_fingerprint(
         {
             "agent_version_id": str(version.id),
