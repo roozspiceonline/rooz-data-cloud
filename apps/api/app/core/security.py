@@ -114,7 +114,7 @@ def derive_api_key(
 ) -> IssuedApiKey:
     scope = (
         f"{environment}:{organization_id}:{principal_id}:{idempotency_key}"
-    ).encode("utf-8")
+    ).encode()
     prefix_digest = hmac.new(
         issuance_secret.encode("utf-8"),
         b"prefix:" + scope,
