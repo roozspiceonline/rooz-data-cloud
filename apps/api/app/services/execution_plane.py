@@ -440,7 +440,7 @@ async def _select_source(
             .with_for_update(skip_locked=True)
             .limit(1)
         )
-        return cast(BuildDispatchOutbox | None, source)
+        return source
     command = "START" if kind == "RUN_START" else "CANCEL"
     source = await session.scalar(
         select(RunCommandOutbox)
@@ -867,7 +867,7 @@ async def _source_for_lease(
                 BuildDispatchOutbox.id == lease.source_outbox_id
             )
         )
-        return cast(BuildDispatchOutbox | None, source)
+        return source
     source = await session.scalar(
         select(RunCommandOutbox).where(
             RunCommandOutbox.id == lease.source_outbox_id
