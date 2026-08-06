@@ -4,24 +4,32 @@
   "title": "Rooz Run Event v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["eventId", "eventType", "timestamp", "runId", "sequence", "payload"],
+  "required": [
+    "schema_version",
+    "event_type",
+    "run_id",
+    "sequence",
+    "timestamp",
+    "payload"
+  ],
   "properties": {
-    "eventId": {"type": "string", "minLength": 1, "maxLength": 128},
-    "eventType": {
+    "schema_version": {"const": "1"},
+    "event_type": {
       "enum": [
-        "stream.connected",
-        "stream.heartbeat",
+        "run.connected",
         "run.status",
         "run.log",
         "run.metric",
         "run.warning",
         "run.completed",
-        "run.failed"
+        "run.failed",
+        "run.heartbeat",
+        "run.replay_reset"
       ]
     },
-    "timestamp": {"type": "string", "format": "date-time"},
-    "runId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "run_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "sequence": {"type": "integer", "minimum": 0},
+    "timestamp": {"type": "string", "format": "date-time"},
     "payload": {"type": "object"}
   }
 }

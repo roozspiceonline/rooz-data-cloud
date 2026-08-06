@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0-phase1e — 2026-08-06
+
+- Added idempotent Run creation from successful immutable-version Build artifacts.
+- Added bounded inline input and immutable-manifest resource enforcement.
+- Added Run reads, project Run history, and idempotent cancellation.
+- Added durable START and CANCEL command outbox records.
+- Added append-only, sequence-ordered Run events.
+- Added replayable SSE monitoring with Last-Event-ID, replay reset, heartbeats, stream authorization revalidation, and connection limits.
+- Added ANSI sanitization, event size limits, and sensitive-key redaction.
+- Added Run RLS, tenant resolvers, tenancy triggers, audit events, console workflows, and Phase 1E verification.
+
 ## 0.4.0-phase1d — 2026-08-06
 
 - Added envelope-encrypted, write-only project secrets.

@@ -1,34 +1,33 @@
-# Rooz Data Cloud — Phase 1D
+# Rooz Data Cloud — Phase 1E
 
-Phase 1D extends the merged identity, tenancy, and Agent registry foundation with write-only project secrets and the metadata-only Build control plane.
+Phase 1E extends the merged identity, tenancy, Agent, project-secret, and Build foundations with the Run control plane and replayable Server-Sent Events monitoring.
 
 ## Included
 
-- Envelope-encrypted project-secret storage
-- Secret metadata list, create, replace, and delete APIs
-- No secret reveal or plaintext-return endpoint
-- ETag concurrency and idempotent secret replacement
-- Build creation from immutable Agent versions
-- Build read and Agent Build-history APIs
-- Transactional Build dispatch outbox
-- PostgreSQL RLS, explicit tenant predicates, resource resolvers, and tenancy guards
-- Security audit events
-- Secrets and Builds console flows
-- Alembic, backend, frontend, scaffold, and Compose CI
+- Idempotent Run creation from a successful immutable-version Build artifact
+- Inline JSON input with a 64 KiB limit
+- Runtime resource overrides bounded by immutable Agent-manifest limits
+- Run read and project Run-history APIs
+- Idempotent Run cancellation with explicit state transitions
+- Durable `START` and `CANCEL` command outbox records
+- Append-only Run events with monotonically increasing per-Run sequences
+- SSE replay, `Last-Event-ID`, replay-reset, heartbeat, reconnect, and terminal-stream behavior
+- Event ANSI sanitization, size limits, and sensitive-key redaction
+- Revalidated stream authorization and concurrent-stream limits
+- PostgreSQL RLS, explicit tenant predicates, resolver functions, tenancy guards, and audit events
+- Runs console for queueing, cancellation, history, and live event monitoring
+- Alembic, backend, frontend, scaffold, protocol, and Compose verification
 
 ## Execution boundary
 
-The public API stores and queues metadata only. It does not decrypt secrets for users, invoke BuildKit, call Docker, execute Agent code, start Runs, or inject runtime secrets. Build execution remains delegated to a future isolated execution-plane worker.
+The public API stores and queues metadata only. It does not execute Agent code, start containers, invoke Docker/Kubernetes, decrypt project secrets, or expose an execution-worker endpoint. A future isolated execution plane will consume Run command records and append validated events.
 
 ## Start the phase
 
-Keep RDC Team Bridge running, then execute:
+The generated `start-phase1e.py` reads the existing repository-scoped GitHub token from:
 
-```bash
-cd ~/Downloads
-unzip -o RDC-P1D-SECRETS-BUILDS.zip
-cd RDC-P1D-SECRETS-BUILDS
-python3 start-phase1d.py
+```text
+~/Downloads/rdc-team-bridge/.env
 ```
 
-The script creates Phase 1D Bridge tasks and GitHub Issues, uploads the implementation to `feat/phase-1d-secrets-build-control-plane`, opens a draft pull request, and dispatches the UX/accessibility review to Gemini. It never merges automatically.
+The Bridge web server does not need to be running. The script creates one Phase 1E GitHub issue, creates `feat/phase-1e-run-control-plane-sse`, uploads the implementation, and opens a draft pull request. It does not merge automatically.
