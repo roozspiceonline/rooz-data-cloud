@@ -21,6 +21,10 @@ import type {
   ProjectSummary,
   SessionData,
   UpdateAgentInput,
+  CreateSourceUploadInput,
+  SourceUploadIntent,
+  StorageDownloadGrant,
+  StorageObjectSummary,
 } from "@rdc/shared-types";
 
 export class RdcApiError extends Error {
@@ -424,8 +428,55 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     return `${options.baseUrl}/runs/${encodeURIComponent(runId)}/events${query}`;
   }
 
+
+  async function createSourceUpload(
+    agentId: string,
+    input: CreateSourceUploadInput,
+  ): Promise<SourceUploadIntent> {
+    const response = await request<ApiSuccess<SourceUploadIntent>>(
+      `/agents/${encodeURIComponent(agentId)}/source-uploads`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+    return response.data;
+  }
+
+  async function completeSourceUpload(
+    storageObjectId: string,
+  ): Promise<StorageObjectSummary> {
+    const response = await request<ApiSuccess<StorageObjectSummary>>(
+      `/storage-objects/${encodeURIComponent(storageObjectId)}/complete`,
+      { method: "POST" },
+    );
+    return response.data;
+  }
+
+  async function projectStorageObjects(
+    projectId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<StorageObjectSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<
+      ApiCollectionSuccess<StorageObjectSummary>
+    >(`/projects/${encodeURIComponent(projectId)}/storage-objects${query}`);
+    return { data: response.data, page: response.meta.page };
+  }
+
+  async function storageDownloadGrant(
+    storageObjectId: string,
+  ): Promise<StorageDownloadGrant> {
+    const response = await request<ApiSuccess<StorageDownloadGrant>>(
+      `/storage-objects/${encodeURIComponent(storageObjectId)}/download-grant`,
+      { method: "POST" },
+    );
+    return response.data;
+  }
+
   return {
     agent,
+    completeSourceUpload,
+    createSourceUpload,
     agentBuilds,
     agentVersion,
     agentVersions,
@@ -444,11 +495,13 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     projectExecutionArtifacts,
     projectExecutionLeases,
     projectRuns,
+    projectStorageObjects,
     projectSecrets,
     request,
     run,
     runEventsUrl,
     session,
+    storageDownloadGrant,
     cancelRun,
     deleteProjectSecret,
     replaceProjectSecret,
