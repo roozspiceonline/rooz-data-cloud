@@ -17,6 +17,7 @@ from ..models import (
     OrganizationMembership,
     Project,
     ProjectSecret,
+    Run,
 )
 from .dependencies import AuthContext, resolve_auth_context
 
@@ -51,6 +52,12 @@ class BuildAccess:
     build: Build
 
 
+@dataclass(frozen=True)
+class RunAccess:
+    context: AuthContext
+    run: Run
+
+
 async def _resolved_organization_id(
     db: AsyncSession,
     *,
@@ -63,6 +70,7 @@ async def _resolved_organization_id(
         "rdc_agent_version_org",
         "rdc_project_secret_org",
         "rdc_build_org",
+        "rdc_run_org",
     }
     if function_name not in allowed:
         raise RuntimeError("Unsupported organization resolver")
@@ -244,7 +252,6 @@ def require_agent_version_permission(
     return dependency
 
 
-
 def require_project_secret_permission(
     permission: str,
 ) -> Callable[..., Awaitable[ProjectSecretAccess]]:
@@ -313,5 +320,41 @@ def require_build_permission(
                 message="The requested resource was not found.",
             )
         return BuildAccess(context=context, build=record)
+
+    return dependency
+
+
+def require_run_permission(
+    permission: str,
+) -> Callable[..., Awaitable[RunAccess]]:
+    async def dependency(
+        run_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> RunAccess:
+        organization_id = await _resolved_organization_id(
+            db,
+            function_name="rdc_run_org",
+            resource_id=run_id,
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(Run).where(
+                Run.id == run_id,
+                Run.organization_id == organization_id,
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return RunAccess(context=context, run=record)
 
     return dependency
