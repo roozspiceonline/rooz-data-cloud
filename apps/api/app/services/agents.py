@@ -15,7 +15,7 @@ from ..agent_schemas import (
 )
 from ..core.errors import ApiError
 from ..core.pagination import decode_cursor, encode_cursor, normalize_limit
-from ..models import Agent, AgentVersion, Project
+from ..models import Agent, AgentVersion, Project, StorageObject
 from .identity_tenancy import append_audit_event
 
 
@@ -333,12 +333,51 @@ async def create_agent_version(
             code="RESOURCE_CONFLICT",
             message="That semantic version already exists for this Agent.",
         )
+    source_object = await session.scalar(
+        select(StorageObject)
+        .where(
+            StorageObject.id == payload.source_object_id,
+            StorageObject.organization_id == locked.organization_id,
+            StorageObject.project_id == locked.project_id,
+            StorageObject.agent_id == locked.id,
+            StorageObject.kind == "AGENT_SOURCE",
+            StorageObject.status == "AVAILABLE",
+            StorageObject.scan_status == "PASSED",
+            StorageObject.deleted_at.is_(None),
+        )
+        .with_for_update()
+    )
+    if source_object is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_NOT_AVAILABLE",
+            message="A verified source archive is required for this Agent version.",
+        )
+    linked = await session.scalar(
+        select(AgentVersion).where(
+            AgentVersion.source_object_id == source_object.id
+        )
+    )
+    if linked is not None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_ALREADY_LINKED",
+            message="The source archive is already linked to an immutable version.",
+        )
     maximum = await session.scalar(
         select(func.max(AgentVersion.version_number)).where(
             AgentVersion.agent_id == locked.id
         )
     )
     manifest = canonical_manifest(payload)
+    digest = manifest_digest(manifest)
+    source_digest = source_object.metadata_json.get("manifest_digest")
+    if source_digest != digest:
+        raise ApiError(
+            status_code=422,
+            code="SOURCE_MANIFEST_MISMATCH",
+            message="The supplied manifest does not match the verified source archive.",
+        )
     record = AgentVersion(
         organization_id=locked.organization_id,
         project_id=locked.project_id,
@@ -347,8 +386,9 @@ async def create_agent_version(
         protocol=payload.manifest.protocol,
         semantic_version=payload.manifest.version,
         manifest_schema_version=payload.manifest.protocol,
-        manifest_digest=manifest_digest(manifest),
+        manifest_digest=digest,
         manifest=manifest,
+        source_object_id=source_object.id,
         release_notes=(
             payload.release_notes.strip() if payload.release_notes else None
         ),
@@ -371,6 +411,7 @@ async def create_agent_version(
             "version_number": record.version_number,
             "semantic_version": record.semantic_version,
             "manifest_digest": record.manifest_digest,
+            "source_object_id": str(record.source_object_id),
         },
     )
     return record
