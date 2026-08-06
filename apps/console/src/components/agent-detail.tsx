@@ -14,6 +14,9 @@ import { useEffect, useState } from "react";
 import { rdcApi } from "@/lib/rdc-api";
 
 function errorMessage(error: unknown): string {
+  if (error instanceof SyntaxError) {
+    return `Invalid Manifest JSON syntax: ${error.message}`;
+  }
   return error instanceof Error ? error.message : "The operation failed.";
 }
 
@@ -171,7 +174,7 @@ export function AgentDetail({
   if (!agent) {
     return (
       <Card>
-        <h1>Agent unavailable</h1>
+        <h1 style={{ marginTop: 0 }}>Agent unavailable</h1>
         <p>{message ?? "The requested Agent could not be loaded."}</p>
         <Link href={`${root}/agents`}>Back to Agents</Link>
       </Card>
@@ -181,7 +184,7 @@ export function AgentDetail({
   return (
     <div style={{ display: "grid", gap: "1.5rem" }}>
       <header>
-        <Link href={`${root}/agents`}>← Agents</Link>
+        <Link href={`${root}/agents`} aria-label="Back to Agents list">← Agents</Link>
         <div style={{ alignItems: "center", display: "flex", gap: "0.75rem", marginTop: "0.75rem" }}>
           <h1 style={{ margin: 0 }}>{agent.name}</h1>
           <StatusBadge tone={agent.status === "ACTIVE" ? "success" : "neutral"}>
@@ -190,6 +193,21 @@ export function AgentDetail({
         </div>
         <p style={{ color: "var(--muted-foreground)" }}>{agent.slug}</p>
       </header>
+
+      {message ? (
+        <div
+          aria-live="polite"
+          role="status"
+          style={{
+            padding: "0.75rem 1rem",
+            borderRadius: "0.375rem",
+            backgroundColor: "var(--surface-subtle, #f4f4f5)",
+            borderLeft: "4px solid var(--border-accent, #0052cc)",
+          }}
+        >
+          <p style={{ margin: 0 }}>{message}</p>
+        </div>
+      ) : null}
 
       <Card>
         <h2 style={{ marginTop: 0 }}>Agent metadata</h2>
@@ -200,7 +218,17 @@ export function AgentDetail({
           </label>
           <label style={{ display: "grid", gap: "0.35rem" }}>
             Slug
-            <input disabled={saving} maxLength={80} onChange={(event) => setSlug(event.target.value)} required style={{ minHeight: 44, padding: "0.7rem" }} value={slug} />
+            <input
+              autoCapitalize="none"
+              disabled={saving}
+              maxLength={80}
+              onChange={(event) => setSlug(event.target.value)}
+              pattern="[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?"
+              required
+              spellCheck={false}
+              style={{ minHeight: 44, padding: "0.7rem" }}
+              value={slug}
+            />
           </label>
           <label style={{ display: "grid", gap: "0.35rem" }}>
             Description
@@ -275,8 +303,6 @@ export function AgentDetail({
           </ul>
         )}
       </section>
-
-      {message ? <p aria-live="polite" role="status">{message}</p> : null}
     </div>
   );
 }
