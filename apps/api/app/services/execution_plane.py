@@ -51,6 +51,7 @@ from ..models import (
     Run,
     RunCommandOutbox,
     SecretInjectionGrant,
+    StorageObject,
     WorkerIdentity,
 )
 from .identity_tenancy import append_audit_event
@@ -347,6 +348,28 @@ async def _build_claim_payload(
             code="WORK_ITEM_STATE_CONFLICT",
             message="The immutable Agent version is unavailable.",
         )
+    if build.source_object_id is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_UNAVAILABLE",
+            message="This legacy Build has no verified source archive.",
+        )
+    source_object = await session.scalar(
+        select(StorageObject).where(
+            StorageObject.id == build.source_object_id,
+            StorageObject.organization_id == build.organization_id,
+            StorageObject.project_id == build.project_id,
+            StorageObject.status == "AVAILABLE",
+            StorageObject.scan_status == "PASSED",
+            StorageObject.deleted_at.is_(None),
+        )
+    )
+    if source_object is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_UNAVAILABLE",
+            message="The verified Build source archive is unavailable.",
+        )
     payload: dict[str, object] = {
         "schema_version": "1",
         "work_kind": "BUILD",
@@ -357,7 +380,17 @@ async def _build_claim_payload(
         "agent_version_id": str(build.agent_version_id),
         "manifest_digest": build.manifest_digest,
         "manifest": dict(version.manifest),
-        "source": {"kind": "deferred", "available": False},
+        "source": {
+            "kind": "object_storage",
+            "object_id": str(source_object.id),
+            "sha256_digest": source_object.sha256_digest,
+            "size_bytes": source_object.size_bytes,
+            "media_type": source_object.media_type,
+            "download_grant_path": (
+                "/internal/v1/leases/{lease_id}/source-download"
+            ),
+            "available": True,
+        },
         "execution_enabled": False,
     }
     return payload, build
