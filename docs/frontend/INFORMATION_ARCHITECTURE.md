@@ -369,3 +369,8 @@ No other endpoint may be assumed without a contract change.
 ## Phase 1F project navigation
 
 `Execution plane` is a first-class project page after `Runs`. It displays tenant-scoped lease attempts and artifact metadata. It does not expose worker registration, credentials, lease tokens, secret grants, or decrypted values. Operational worker administration remains a future organization-level module.
+
+
+## Phase 1G storage experience
+
+The Agent detail route performs direct source upload, verification completion, and immutable version binding. The project Storage route lists verified source objects and requests short-lived downloads. Capability URLs are never stored in browser persistence.
