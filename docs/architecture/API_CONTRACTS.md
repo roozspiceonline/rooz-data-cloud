@@ -1,13 +1,5 @@
 # Rooz Data Cloud API Contracts
 
-**Document ID:** RDC-ARCH-API-001  
-**Task:** RDC-P0-CHAT-001  
-**Status:** Phase 0 baseline  
-**Contract version:** 1.0.0-draft  
-**API version:** `/api/v1`  
-**Owner:** ChatGPT — Architecture, Backend, Security, DevOps, and Integration  
-**Consumers:** RDC console, future SDKs, CLI, integrations, and execution-plane services
-
 ---
 
 ## 1. Purpose
