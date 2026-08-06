@@ -38,6 +38,19 @@ class Settings(BaseSettings):
         "ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE="
     )
     project_secret_master_key_version: str = "local-v1"
+    worker_bootstrap_token: str = (
+        "development-worker-bootstrap-token-change-me-32"
+    )
+    worker_token_pepper: str = (
+        "development-worker-token-pepper-change-me-32"
+    )
+    lease_token_pepper: str = (
+        "development-lease-token-pepper-change-me-32"
+    )
+    worker_lease_seconds: int = 60
+    worker_lease_max_seconds: int = 300
+    worker_max_attempts: int = 5
+    worker_secret_envelope_seconds: int = 60
 
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
@@ -56,6 +69,9 @@ class Settings(BaseSettings):
             "api_key_issuance_secret": self.api_key_issuance_secret,
             "rate_limit_key": self.rate_limit_key,
             "cursor_signing_key": self.cursor_signing_key,
+            "worker_bootstrap_token": self.worker_bootstrap_token,
+            "worker_token_pepper": self.worker_token_pepper,
+            "lease_token_pepper": self.lease_token_pepper,
         }
         too_short = [name for name, value in values.items() if len(value) < 32]
         if too_short:
@@ -79,6 +95,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Project-secret master key version cannot be empty."
             )
+        if self.worker_lease_seconds < 15:
+            raise ValueError("Worker leases must last at least 15 seconds.")
+        if self.worker_lease_max_seconds < self.worker_lease_seconds:
+            raise ValueError("Worker lease maximum must exceed the default lease.")
+        if not 1 <= self.worker_max_attempts <= 20:
+            raise ValueError("Worker max attempts must be between 1 and 20.")
+        if not 15 <= self.worker_secret_envelope_seconds <= 300:
+            raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
         if self.env in {"staging", "production"}:
             defaults = [name for name, value in values.items() if "change-me" in value]
             if defaults:
