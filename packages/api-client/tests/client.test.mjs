@@ -17,3 +17,12 @@ test("client exposes Run commands and credentialed SSE URL support", async () =>
   assert.match(source, /runEventsUrl/);
   assert.match(source, /last_event_id/);
 });
+
+
+test("client exposes execution-plane metadata collections", async () => {
+  const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /projectExecutionLeases/);
+  assert.match(source, /projectExecutionArtifacts/);
+  assert.match(source, /execution-leases/);
+  assert.match(source, /execution-artifacts/);
+});
