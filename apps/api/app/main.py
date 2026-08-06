@@ -9,8 +9,10 @@ from starlette.responses import Response
 
 from .api.routes.agents import router as agents_router
 from .api.routes.builds_secrets import router as builds_secrets_router
+from .api.routes.execution import router as execution_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
+from .api.routes.internal_execution import router as internal_execution_router
 from .api.routes.runs import router as runs_router
 from .core.config import get_settings
 from .core.errors import (
@@ -24,7 +26,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.5.0-phase1e",
+    version="0.6.0-phase1f",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -49,6 +51,7 @@ app.add_middleware(
         "If-Match",
         "Last-Event-ID",
         "X-RDC-CSRF",
+        "X-RDC-Lease-Token",
         "X-Request-ID",
     ],
 )
@@ -61,8 +64,7 @@ async def request_context(
 ) -> Response:
     incoming = request.headers.get("X-Request-ID", "")
     valid = 1 <= len(incoming) <= 100 and all(
-        character.isalnum() or character in "._-"
-        for character in incoming
+        character.isalnum() or character in "._-" for character in incoming
     )
     request.state.request_id = incoming if valid else f"req_{uuid4().hex}"
     response = await call_next(request)
@@ -112,27 +114,29 @@ async def unexpected_error(
 
 
 app.include_router(health_router)
+app.include_router(internal_execution_router)
 
 v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
 v1_router.include_router(runs_router)
+v1_router.include_router(execution_router)
 
 
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1E",
+        "phase": "1F",
         "service": "rdc-api",
-        "status": "run-control-plane-sse-monitoring",
+        "status": "isolated-execution-plane-foundation",
         "write_only_project_secrets": True,
+        "write_only_secrets_required": True,
         "envelope_encryption_required": True,
         "durable_build_dispatch_outbox": True,
         "build_execution_isolated": True,
         "tenant_rls_required": True,
-        "write_only_secrets_required": True,
         "tenant_rls_enabled": True,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
@@ -142,6 +146,11 @@ async def foundation_status() -> dict[str, object]:
         "run_dispatch_outbox_enabled": True,
         "run_sse_monitoring_enabled": True,
         "run_execution_enabled": False,
+        "internal_execution_protocol_enabled": True,
+        "worker_leasing_enabled": True,
+        "artifact_metadata_enabled": True,
+        "lease_scoped_secret_envelopes_enabled": True,
+        "untrusted_agent_execution_enabled": False,
     }
 
 
