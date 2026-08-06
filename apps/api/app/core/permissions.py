@@ -12,6 +12,10 @@ PERMISSIONS = frozenset(
         "project.read",
         "project.update",
         "project.delete",
+        "agent.create",
+        "agent.read",
+        "agent.update",
+        "agent.version_create",
         "api_key.create",
         "api_key.read_metadata",
         "api_key.revoke",
@@ -29,6 +33,10 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "project.create",
             "project.read",
             "project.update",
+            "agent.create",
+            "agent.read",
+            "agent.update",
+            "agent.version_create",
             "api_key.create",
             "api_key.read_metadata",
             "api_key.revoke",
@@ -39,6 +47,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read",
             "membership.read",
             "project.read",
+            "agent.read",
             "api_key.read_metadata",
         }
     ),
@@ -47,12 +56,14 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read",
             "membership.read",
             "project.read",
+            "agent.read",
         }
     ),
     "viewer": frozenset(
         {
             "organization.read",
             "project.read",
+            "agent.read",
         }
     ),
     "billing_manager": frozenset({"organization.read"}),

@@ -68,6 +68,7 @@ jobs:
       RDC_API_KEY_PEPPER: ci-api-key-pepper-with-more-than-thirty-two-characters
       RDC_API_KEY_ISSUANCE_SECRET: ci-api-key-issuance-secret-with-more-than-thirty-two-characters
       RDC_RATE_LIMIT_KEY: ci-rate-limit-key-with-more-than-thirty-two-characters
+      RDC_CURSOR_SIGNING_KEY: ci-cursor-signing-key-with-more-than-thirty-two-characters
     defaults:
       run:
         working-directory: apps/api
@@ -93,4 +94,5 @@ jobs:
           python-version: "3.12"
       - run: python3 scripts/verify-scaffold.py
       - run: python3 scripts/verify-phase1b.py
+      - run: python3 scripts/verify-phase1c.py
       - run: docker compose config --quiet

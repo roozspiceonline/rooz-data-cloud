@@ -1,5 +1,10 @@
-import { SectionPlaceholder } from "@/components/section-placeholder";
+import { AgentRegistry } from "@/components/agent-registry";
 
-export default function Page() {
-  return <SectionPlaceholder title="Agents" description="Agent metadata and immutable versions enter a dedicated Phase 1 domain module." status="foundation" />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ orgId: string; projectId: string }>;
+}) {
+  const { orgId, projectId } = await params;
+  return <AgentRegistry organizationId={orgId} projectId={projectId} />;
 }

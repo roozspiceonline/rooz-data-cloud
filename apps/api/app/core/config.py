@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     api_key_pepper: str = "development-api-key-pepper-change-me"
     api_key_issuance_secret: str = "development-api-key-issuance-secret-change-me"
     rate_limit_key: str = "development-rate-limit-key-change-me"
+    cursor_signing_key: str = "development-cursor-signing-key-change-me"
 
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
             "api_key_pepper": self.api_key_pepper,
             "api_key_issuance_secret": self.api_key_issuance_secret,
             "rate_limit_key": self.rate_limit_key,
+            "cursor_signing_key": self.cursor_signing_key,
         }
         too_short = [name for name, value in values.items() if len(value) < 32]
         if too_short:
