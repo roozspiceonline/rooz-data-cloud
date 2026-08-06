@@ -34,6 +34,40 @@ jobs:
   backend:
     name: Backend checks
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: rooz_data_cloud
+          POSTGRES_USER: rdc_app
+          POSTGRES_PASSWORD: rdc_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rdc_app -d rooz_data_cloud"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      RDC_ENV: test
+      RDC_DATABASE_URL: postgresql+asyncpg://rdc_app:rdc_ci_password@127.0.0.1:5432/rooz_data_cloud
+      RDC_REDIS_URL: redis://127.0.0.1:6379/0
+      RDC_ALLOWED_ORIGINS: '["http://localhost:3000"]'
+      RDC_SESSION_COOKIE_SECURE: "false"
+      RDC_SESSION_TOKEN_PEPPER: ci-session-token-pepper-with-more-than-thirty-two-characters
+      RDC_CSRF_TOKEN_PEPPER: ci-csrf-token-pepper-with-more-than-thirty-two-characters
+      RDC_API_KEY_PEPPER: ci-api-key-pepper-with-more-than-thirty-two-characters
+      RDC_API_KEY_ISSUANCE_SECRET: ci-api-key-issuance-secret-with-more-than-thirty-two-characters
+      RDC_RATE_LIMIT_KEY: ci-rate-limit-key-with-more-than-thirty-two-characters
     defaults:
       run:
         working-directory: apps/api
@@ -44,6 +78,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv sync --all-groups
+      - run: uv run alembic upgrade head
       - run: uv run ruff check .
       - run: uv run mypy app
       - run: uv run pytest
@@ -57,4 +92,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 scripts/verify-scaffold.py
+      - run: python3 scripts/verify-phase1b.py
       - run: docker compose config --quiet
