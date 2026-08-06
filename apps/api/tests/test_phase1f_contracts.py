@@ -172,9 +172,9 @@ def test_phase1f_routes_keep_internal_protocol_out_of_public_openapi() -> None:
     assert "/api/v1/projects/{project_id}/execution-leases" in paths
     assert "/api/v1/projects/{project_id}/execution-artifacts" in paths
     assert "/internal/v1/leases/claim" not in paths
-    assert any(
-        getattr(route, "path", None) == "/internal/v1/leases/claim"
-        for route in app.routes
+    assert (
+        str(app.url_path_for("claim_work_route"))
+        == "/internal/v1/leases/claim"
     )
 
 
