@@ -47,7 +47,7 @@ async def acquire_idempotency_lock(
 ) -> None:
     material = (
         f"{organization_id}:{principal_id}:{endpoint}:{key_digest}"
-    ).encode("utf-8")
+    ).encode()
     lock_key = int.from_bytes(
         hashlib.sha256(material).digest()[:8],
         byteorder="big",
