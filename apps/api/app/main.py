@@ -11,6 +11,7 @@ from .api.routes.agents import router as agents_router
 from .api.routes.builds_secrets import router as builds_secrets_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
+from .api.routes.runs import router as runs_router
 from .core.config import get_settings
 from .core.errors import (
     ApiError,
@@ -23,7 +24,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.4.0-phase1d",
+    version="0.5.0-phase1e",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -46,6 +47,7 @@ app.add_middleware(
         "Content-Type",
         "Idempotency-Key",
         "If-Match",
+        "Last-Event-ID",
         "X-RDC-CSRF",
         "X-Request-ID",
     ],
@@ -65,7 +67,7 @@ async def request_context(
     request.state.request_id = incoming if valid else f"req_{uuid4().hex}"
     response = await call_next(request)
     response.headers["X-Request-ID"] = request.state.request_id
-    response.headers["Cache-Control"] = "no-store"
+    response.headers.setdefault("Cache-Control", "no-store")
     return response
 
 
@@ -115,15 +117,16 @@ v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
+v1_router.include_router(runs_router)
 
 
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1D",
+        "phase": "1E",
         "service": "rdc-api",
-        "status": "project-secrets-build-control-plane",
+        "status": "run-control-plane-sse-monitoring",
         "write_only_project_secrets": True,
         "envelope_encryption_required": True,
         "durable_build_dispatch_outbox": True,
@@ -135,6 +138,9 @@ async def foundation_status() -> dict[str, object]:
         "write_only_api_keys": True,
         "agent_versions_immutable": True,
         "build_execution_enabled": False,
+        "run_control_plane_enabled": True,
+        "run_dispatch_outbox_enabled": True,
+        "run_sse_monitoring_enabled": True,
         "run_execution_enabled": False,
     }
 
