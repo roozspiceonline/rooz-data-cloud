@@ -474,3 +474,21 @@ Before a release:
 8. Protect `main`
 9. Require status checks
 10. Test the exception workflow
+
+
+## Phase 1F merge gates
+
+- Internal routes are excluded from public OpenAPI.
+- Worker and lease credentials use different prefixes, peppers, and digests.
+- Worker bootstrap, token, and lease settings reject weak production defaults.
+- Claims use row locking, active-source uniqueness, bounded attempts, and expiry.
+- Worker concurrency is serialized per worker.
+- Lease status and completion transitions are target-specific.
+- Run events pass the Phase 1E sanitizer and payload limit.
+- Secret names are declared by the immutable Agent manifest.
+- Secret envelopes are X25519/HKDF/AES-256-GCM and expire with the lease.
+- Artifact success requires a passed, available container image for Builds.
+- Execution tables have RLS and tenancy triggers.
+- The console exposes metadata only.
+- No untrusted execution primitive exists in the API or reference client.
+- Alembic online migration, Ruff, strict mypy, pytest, frontend lint/typecheck/tests/build, all phase verifiers, and Compose validation pass.
