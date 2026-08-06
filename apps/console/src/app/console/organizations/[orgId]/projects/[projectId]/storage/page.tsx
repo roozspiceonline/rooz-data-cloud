@@ -1,5 +1,10 @@
-import { SectionPlaceholder } from "@/components/section-placeholder";
+import { StorageManager } from "@/components/storage-manager";
 
-export default function Page() {
-  return <SectionPlaceholder title="Storage" description="Storage management is outside Phase 1A and remains a disabled future route." status="future" />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}) {
+  const { projectId } = await params;
+  return <StorageManager projectId={projectId} />;
 }
