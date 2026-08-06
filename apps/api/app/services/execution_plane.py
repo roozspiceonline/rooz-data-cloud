@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select, text
@@ -82,10 +83,10 @@ def lease_summary(record: ExecutionLease) -> ExecutionLeaseSummary:
         worker_id=record.worker_id,
         organization_id=record.organization_id,
         project_id=record.project_id,
-        work_kind=record.work_kind,  # type: ignore[arg-type]
+        work_kind=record.work_kind,
         build_id=record.build_id,
         run_id=record.run_id,
-        status=record.status,  # type: ignore[arg-type]
+        status=record.status,
         attempt=record.attempt,
         claimed_at=record.claimed_at,
         expires_at=record.expires_at,
@@ -103,14 +104,14 @@ def artifact_summary(record: ExecutionArtifact) -> ExecutionArtifactSummary:
         build_id=record.build_id,
         run_id=record.run_id,
         lease_id=record.lease_id,
-        kind=record.kind,  # type: ignore[arg-type]
+        kind=record.kind,
         digest_algorithm=record.digest_algorithm,
         digest=record.digest,
         object_key=record.object_key,
         media_type=record.media_type,
         size_bytes=record.size_bytes,
-        status=record.status,  # type: ignore[arg-type]
-        scan_status=record.scan_status,  # type: ignore[arg-type]
+        status=record.status,
+        scan_status=record.scan_status,
         provenance=dict(record.provenance),
         created_at=record.created_at,
     )
@@ -426,7 +427,7 @@ async def _select_source(
     now: datetime,
 ) -> BuildDispatchOutbox | RunCommandOutbox | None:
     if kind == "BUILD":
-        return await session.scalar(
+        source = await session.scalar(
             select(BuildDispatchOutbox)
             .where(
                 BuildDispatchOutbox.status == "PENDING",
@@ -439,8 +440,9 @@ async def _select_source(
             .with_for_update(skip_locked=True)
             .limit(1)
         )
+        return cast(BuildDispatchOutbox | None, source)
     command = "START" if kind == "RUN_START" else "CANCEL"
-    return await session.scalar(
+    source = await session.scalar(
         select(RunCommandOutbox)
         .where(
             RunCommandOutbox.status == "PENDING",
@@ -454,6 +456,7 @@ async def _select_source(
         .with_for_update(skip_locked=True)
         .limit(1)
     )
+    return cast(RunCommandOutbox | None, source)
 
 
 async def _lock_worker_claims(
@@ -613,7 +616,7 @@ async def claim_work(
         )
         return LeaseClaim(
             id=lease.id,
-            work_kind=kind,  # type: ignore[arg-type]
+            work_kind=kind,
             organization_id=organization_id,
             project_id=project_id,
             build_id=build_id,
@@ -859,16 +862,18 @@ async def _source_for_lease(
     lease: ExecutionLease,
 ) -> BuildDispatchOutbox | RunCommandOutbox | None:
     if lease.work_kind == "BUILD":
-        return await session.scalar(
+        source = await session.scalar(
             select(BuildDispatchOutbox).where(
                 BuildDispatchOutbox.id == lease.source_outbox_id
             )
         )
-    return await session.scalar(
+        return cast(BuildDispatchOutbox | None, source)
+    source = await session.scalar(
         select(RunCommandOutbox).where(
             RunCommandOutbox.id == lease.source_outbox_id
         )
     )
+    return cast(RunCommandOutbox | None, source)
 
 
 async def complete_lease(
