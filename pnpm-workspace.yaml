@@ -7,3 +7,6 @@ catalog:
   react: 19.2.8
   react-dom: 19.2.8
   typescript: 6.0.3
+
+allowBuilds:
+  sharp: true
