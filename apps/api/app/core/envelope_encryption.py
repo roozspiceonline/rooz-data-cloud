@@ -34,7 +34,7 @@ def secret_aad(
     return (
         "rdc/project-secret/v1:"
         f"{organization_id}:{project_id}:{secret_id}:{name}:{version}"
-    ).encode("utf-8")
+    ).encode()
 
 
 def encrypt_project_secret(
@@ -59,7 +59,7 @@ def encrypt_project_secret(
     )
     ciphertext = AESGCM(data_key).encrypt(
         value_nonce,
-        plaintext.encode("utf-8"),
+        plaintext.encode(),
         aad,
     )
     wrapped_data_key = AESGCM(_master_key()).encrypt(
