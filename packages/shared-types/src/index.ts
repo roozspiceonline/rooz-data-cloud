@@ -145,6 +145,7 @@ export interface AgentManifest {
   schemas: AgentManifestSchemas;
   capabilities: AgentManifestCapabilities;
   resources: AgentManifestResources;
+  secrets?: ReadonlyArray<string>;
   extensions?: Record<string, unknown>;
 }
 
@@ -312,4 +313,69 @@ export interface RunEventEnvelope {
   sequence: number;
   timestamp: string;
   payload: Record<string, unknown>;
+}
+
+
+export type ExecutionWorkKind = "BUILD" | "RUN_START" | "RUN_CANCEL";
+
+export type ExecutionLeaseStatus =
+  | "ACTIVE"
+  | "COMPLETED"
+  | "FAILED"
+  | "EXPIRED"
+  | "CANCELLED";
+
+export interface ExecutionLeaseSummary {
+  id: string;
+  worker_id: string;
+  organization_id: string;
+  project_id: string;
+  work_kind: ExecutionWorkKind;
+  build_id: string | null;
+  run_id: string | null;
+  status: ExecutionLeaseStatus;
+  attempt: number;
+  claimed_at: string;
+  expires_at: string;
+  completed_at: string | null;
+  failure_code: string | null;
+  failure_summary: string | null;
+}
+
+export type ExecutionArtifactKind =
+  | "CONTAINER_IMAGE"
+  | "SBOM"
+  | "PROVENANCE"
+  | "RUN_OUTPUT"
+  | "LOG_BUNDLE";
+
+export type ExecutionArtifactStatus =
+  | "AVAILABLE"
+  | "QUARANTINED"
+  | "REJECTED"
+  | "DELETED";
+
+export type ExecutionArtifactScanStatus =
+  | "PENDING"
+  | "PASSED"
+  | "FAILED"
+  | "NOT_REQUIRED";
+
+export interface ExecutionArtifactSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  build_id: string | null;
+  run_id: string | null;
+  lease_id: string;
+  kind: ExecutionArtifactKind;
+  digest_algorithm: string;
+  digest: string;
+  object_key: string;
+  media_type: string;
+  size_bytes: number;
+  status: ExecutionArtifactStatus;
+  scan_status: ExecutionArtifactScanStatus;
+  provenance: Record<string, unknown>;
+  created_at: string;
 }
