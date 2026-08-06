@@ -4,6 +4,7 @@ import type {
   AgentManifest,
   AgentSummary,
   AgentVersionSummary,
+  StorageObjectSummary,
 } from "@rdc/shared-types";
 import { Card, StatusBadge } from "@rdc/ui";
 import Link from "next/link";
@@ -12,6 +13,7 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 
 import { rdcApi } from "@/lib/rdc-api";
+import { SourceUploadPanel } from "@/components/source-upload-panel";
 
 function errorMessage(error: unknown): string {
   if (error instanceof SyntaxError) {
@@ -68,6 +70,7 @@ export function AgentDetail({
   const [status, setStatus] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
   const [manifestText, setManifestText] = useState("");
   const [releaseNotes, setReleaseNotes] = useState("");
+  const [sourceObject, setSourceObject] = useState<StorageObjectSummary | null>(null);
 
   const root = `/console/organizations/${organizationId}/projects/${projectId}`;
 
@@ -144,17 +147,22 @@ export function AgentDetail({
 
   async function publish(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!agent) return;
+    if (!agent || !sourceObject) {
+      setMessage("Upload and verify the source ZIP before creating a version.");
+      return;
+    }
     setPublishing(true);
     setMessage(null);
     try {
       const parsed = JSON.parse(manifestText) as AgentManifest;
       const version = await rdcApi.createAgentVersion(agent.id, {
+        source_object_id: sourceObject.id,
         manifest: parsed,
         release_notes: releaseNotes.trim() || null,
       });
       setVersions((current) => [version, ...current]);
       setReleaseNotes("");
+      setSourceObject(null);
       const next = manifestTemplate(agent.slug);
       const parts = version.semantic_version.split(".");
       const patch = Number(parts[2] ?? "0") + 1;
@@ -247,11 +255,14 @@ export function AgentDetail({
         </form>
       </Card>
 
+      <SourceUploadPanel agentId={agent.id} onAvailable={setSourceObject} />
+
       <Card>
         <h2 style={{ marginTop: 0 }}>Create immutable version</h2>
         <p>
-          The manifest is validated and stored as metadata only. Build and Run
-          execution remain disabled in Phase 1C.
+          The manifest must exactly match the verified archive manifest. The
+          source object and manifest digest are then bound immutably to this version.
+          Build and Run execution remain disabled in Phase 1G; BuildKit is also deferred.
         </p>
         <form onSubmit={publish} style={{ display: "grid", gap: "1rem" }}>
           <label style={{ display: "grid", gap: "0.35rem" }}>
@@ -274,7 +285,10 @@ export function AgentDetail({
             Release notes
             <textarea disabled={publishing} maxLength={8000} onChange={(event) => setReleaseNotes(event.target.value)} rows={4} style={{ padding: "0.7rem" }} value={releaseNotes} />
           </label>
-          <button aria-busy={publishing} disabled={publishing} style={{ minHeight: 44, width: "fit-content" }} type="submit">
+          <p aria-live="polite" role="status">
+            {sourceObject ? `Verified source: ${sourceObject.file_name}` : "A verified source archive is required."}
+          </p>
+          <button aria-busy={publishing} disabled={publishing || !sourceObject} style={{ minHeight: 44, width: "fit-content" }} type="submit">
             {publishing ? "Creating version…" : "Create immutable version"}
           </button>
         </form>
