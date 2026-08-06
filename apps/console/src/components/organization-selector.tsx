@@ -26,17 +26,11 @@ export function OrganizationSelector() {
       try {
         await rdcApi.session();
         const result = await rdcApi.organizations();
-        if (active) {
-          setOrganizations(result);
-        }
+        if (active) setOrganizations(result);
       } catch {
-        if (active) {
-          router.replace("/login");
-        }
+        if (active) router.replace("/login");
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     }
 
@@ -46,9 +40,7 @@ export function OrganizationSelector() {
     };
   }, [router]);
 
-  async function openOrganization(
-    organization: OrganizationSummary,
-  ) {
+  async function openOrganization(organization: OrganizationSummary) {
     setOpeningId(organization.id);
     setMessage(null);
 
@@ -58,7 +50,7 @@ export function OrganizationSelector() {
       const firstProject = projects.at(0);
       if (!firstProject) {
         setMessage(
-          `${organization.name} does not have a project yet.`,
+          `${organization.name} does not have an active project available.`,
         );
         return;
       }
@@ -66,13 +58,21 @@ export function OrganizationSelector() {
         `/console/organizations/${organization.id}/projects/` +
           `${firstProject.id}/dashboard`,
       );
+    } catch {
+      setMessage(
+        `Unable to access projects for ${organization.name}. Please try again.`,
+      );
     } finally {
       setOpeningId(null);
     }
   }
 
   if (loading) {
-    return <p role="status">Loading organizations…</p>;
+    return (
+      <div aria-live="polite" role="status" style={{ padding: "1rem 0" }}>
+        Loading organizations…
+      </div>
+    );
   }
 
   if (organizations.length === 0) {
@@ -88,33 +88,49 @@ export function OrganizationSelector() {
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gap: "1rem",
-        marginTop: "2rem",
-      }}
-    >
-      {organizations.map((organization) => (
-        <Card key={organization.id}>
-          <h2 style={{ marginTop: 0 }}>{organization.name}</h2>
-          <p style={{ color: "var(--muted-foreground)" }}>
-            {organization.slug}
-          </p>
-          <button
-            disabled={openingId === organization.id}
-            onClick={() => void openOrganization(organization)}
-            style={{ minHeight: 44 }}
-            type="button"
-          >
-            {openingId === organization.id
-              ? "Opening…"
-              : "Open organization"}
-          </button>
-        </Card>
-      ))}
+    <div style={{ marginTop: "2rem" }}>
+      <ul
+        aria-label="Organizations"
+        style={{
+          display: "grid",
+          gap: "1rem",
+          listStyle: "none",
+          margin: 0,
+          padding: 0,
+        }}
+      >
+        {organizations.map((organization) => (
+          <li key={organization.id}>
+            <Card>
+              <h2 style={{ marginTop: 0 }}>{organization.name}</h2>
+              <p style={{ color: "var(--muted-foreground)" }}>
+                {organization.slug}
+              </p>
+              <button
+                aria-busy={openingId === organization.id}
+                disabled={openingId !== null}
+                onClick={() => void openOrganization(organization)}
+                style={{ minHeight: 44 }}
+                type="button"
+              >
+                {openingId === organization.id
+                  ? "Opening…"
+                  : "Open organization"}
+              </button>
+            </Card>
+          </li>
+        ))}
+      </ul>
 
-      {message ? <p role="status">{message}</p> : null}
+      {message ? (
+        <p
+          aria-live="polite"
+          role="status"
+          style={{ color: "var(--danger)", marginTop: "1rem" }}
+        >
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
