@@ -71,6 +71,13 @@ jobs:
       RDC_CURSOR_SIGNING_KEY: ci-cursor-signing-key-with-more-than-thirty-two-characters
       RDC_PROJECT_SECRET_MASTER_KEY_B64: ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE=
       RDC_PROJECT_SECRET_MASTER_KEY_VERSION: ci-v1
+      RDC_WORKER_BOOTSTRAP_TOKEN: ci-worker-bootstrap-token-with-more-than-thirty-two-characters
+      RDC_WORKER_TOKEN_PEPPER: ci-worker-token-pepper-with-more-than-thirty-two-characters
+      RDC_LEASE_TOKEN_PEPPER: ci-lease-token-pepper-with-more-than-thirty-two-characters
+      RDC_WORKER_LEASE_SECONDS: "60"
+      RDC_WORKER_LEASE_MAX_SECONDS: "300"
+      RDC_WORKER_MAX_ATTEMPTS: "5"
+      RDC_WORKER_SECRET_ENVELOPE_SECONDS: "60"
     defaults:
       run:
         working-directory: apps/api
@@ -99,4 +106,5 @@ jobs:
       - run: python3 scripts/verify-phase1c.py
       - run: python3 scripts/verify-phase1d.py
       - run: python3 scripts/verify-phase1e.py
+      - run: python3 scripts/verify-phase1f.py
       - run: docker compose config --quiet
