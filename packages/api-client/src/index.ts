@@ -14,6 +14,8 @@ import type {
   ProjectSecretSummary,
   ReplaceProjectSecretInput,
   CreateRunInput,
+  ExecutionArtifactSummary,
+  ExecutionLeaseSummary,
   RunSummary,
   OrganizationSummary,
   ProjectSummary,
@@ -372,6 +374,32 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     return { data: response.data, page: response.meta.page };
   }
 
+  async function projectExecutionLeases(
+    projectId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<ExecutionLeaseSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<
+      ApiCollectionSuccess<ExecutionLeaseSummary>
+    >(`/projects/${encodeURIComponent(projectId)}/execution-leases${query}`);
+    return { data: response.data, page: response.meta.page };
+  }
+
+  async function projectExecutionArtifacts(
+    projectId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<ExecutionArtifactSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<
+      ApiCollectionSuccess<ExecutionArtifactSummary>
+    >(`/projects/${encodeURIComponent(projectId)}/execution-artifacts${query}`);
+    return { data: response.data, page: response.meta.page };
+  }
+
   async function cancelRun(
     runId: string,
     idempotencyKey: string,
@@ -413,6 +441,8 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     logout,
     organizations,
     projects,
+    projectExecutionArtifacts,
+    projectExecutionLeases,
     projectRuns,
     projectSecrets,
     request,

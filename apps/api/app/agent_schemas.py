@@ -30,6 +30,14 @@ ManifestName = Annotated[
         max_length=63,
     ),
 ]
+ManifestSecretName = Annotated[
+    str,
+    StringConstraints(
+        pattern=r"^[A-Z][A-Z0-9_]{0,63}$",
+        min_length=1,
+        max_length=64,
+    ),
+]
 SemanticVersion = Annotated[
     str,
     StringConstraints(
@@ -160,7 +168,18 @@ class AgentManifest(StrictModel):
     schemas: ManifestSchemas
     capabilities: ManifestCapabilities
     resources: ManifestResources
+    secrets: list[ManifestSecretName] = Field(
+        default_factory=list,
+        max_length=64,
+    )
     extensions: dict[str, object] = Field(default_factory=dict)
+
+    @field_validator("secrets")
+    @classmethod
+    def unique_secret_names(cls, values: list[str]) -> list[str]:
+        if len(set(values)) != len(values):
+            raise ValueError("Manifest secret names must be unique.")
+        return values
 
     @model_validator(mode="after")
     def enforce_serialized_size(self) -> "AgentManifest":

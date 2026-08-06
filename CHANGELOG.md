@@ -1,5 +1,16 @@
 # Changelog
 
+## Phase 1F — Isolated Execution-Plane Foundation
+
+- Added the private `/internal/v1` worker protocol.
+- Added worker registration, heartbeat, draining, capabilities, and concurrency.
+- Added durable Build and Run command leasing with bounded renewal and retries.
+- Added worker Run-event ingestion and completion state transitions.
+- Added digest-addressed artifact metadata, scan status, and provenance.
+- Added lease-scoped X25519/HKDF/AES-GCM secret envelopes.
+- Added execution-plane RLS, tenancy triggers, audit policy, schemas, tests, and console visibility.
+- Kept untrusted Agent execution and container invocation disabled.
+
 ## 0.5.0-phase1e — 2026-08-06
 
 - Added idempotent Run creation from successful immutable-version Build artifacts.

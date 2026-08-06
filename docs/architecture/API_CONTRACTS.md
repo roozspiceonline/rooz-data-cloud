@@ -247,6 +247,7 @@ build.read
 run.create
 run.read
 run.cancel
+execution.read
 dataset.read
 dataset.export
 secret.read_metadata
@@ -926,3 +927,37 @@ The following do not block this baseline but require later documented decisions:
 6. Exact rate-limit tiers
 7. Data-export size thresholds and asynchronous-export rules
 8. Permanent-deletion and legal-retention workflow
+
+
+---
+
+## Phase 1F internal execution-plane contract
+
+The internal execution-plane protocol is rooted at `/internal/v1`. It is not a browser API, is excluded from the public OpenAPI document, and does not accept browser sessions, CSRF tokens, API keys, or personal access tokens.
+
+Worker bootstrap registration returns a write-only worker token. All subsequent worker calls require that token. Every claimed command additionally receives a short-lived lease token that is valid only for the assigned worker and lease.
+
+Initial internal routes:
+
+```text
+POST /internal/v1/workers/register
+GET  /internal/v1/workers/me
+POST /internal/v1/workers/me/heartbeat
+POST /internal/v1/leases/claim
+POST /internal/v1/leases/{lease_id}/renew
+POST /internal/v1/leases/{lease_id}/status
+POST /internal/v1/leases/{lease_id}/events
+POST /internal/v1/leases/{lease_id}/secret-envelope
+POST /internal/v1/leases/{lease_id}/complete
+```
+
+Public metadata routes:
+
+```text
+GET /api/v1/projects/{project_id}/execution-leases
+GET /api/v1/projects/{project_id}/execution-artifacts
+```
+
+Claims MUST be transactionally leased, MUST prevent concurrent duplicate claims, MUST expire, and MUST have bounded retries. Secret envelopes MUST be limited to declared Agent-manifest names, matching project and environment, the active `RUN_START` lease, and a short expiry. Artifact registration MUST be digest-addressed and tenant-bound.
+
+Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.

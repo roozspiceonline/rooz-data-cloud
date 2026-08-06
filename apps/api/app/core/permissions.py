@@ -21,6 +21,7 @@ PERMISSIONS = frozenset(
         "run.create",
         "run.read",
         "run.cancel",
+        "execution.read",
         "secret.read_metadata",
         "secret.create",
         "secret.replace",
@@ -51,6 +52,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "run.create",
             "run.read",
             "run.cancel",
+            "execution.read",
             "secret.read_metadata",
             "secret.create",
             "secret.replace",
@@ -68,6 +70,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "agent.read",
             "build.read",
             "run.read",
+            "execution.read",
             "api_key.read_metadata",
         }
     ),
@@ -81,6 +84,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "run.create",
             "run.read",
             "run.cancel",
+            "execution.read",
         }
     ),
     "viewer": frozenset(
@@ -90,6 +94,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "agent.read",
             "build.read",
             "run.read",
+            "execution.read",
         }
     ),
     "billing_manager": frozenset({"organization.read"}),

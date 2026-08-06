@@ -75,3 +75,30 @@ def encrypt_project_secret(
         algorithm="AES-256-GCM",
         master_key_version=settings.project_secret_master_key_version,
     )
+
+
+def decrypt_project_secret(
+    *,
+    ciphertext: bytes,
+    value_nonce: bytes,
+    wrapped_data_key: bytes,
+    key_nonce: bytes,
+    organization_id: UUID,
+    project_id: UUID,
+    secret_id: UUID,
+    name: str,
+    version: int,
+) -> bytes:
+    aad = secret_aad(
+        organization_id=organization_id,
+        project_id=project_id,
+        secret_id=secret_id,
+        name=name,
+        version=version,
+    )
+    data_key = AESGCM(_master_key()).decrypt(
+        key_nonce,
+        wrapped_data_key,
+        aad,
+    )
+    return AESGCM(data_key).decrypt(value_nonce, ciphertext, aad)

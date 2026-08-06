@@ -118,7 +118,10 @@ def main() -> None:
     require("run.replay_reset" in event_types, "replay reset missing")
     require("run.completed" in event_types, "terminal event missing")
 
-    require('"phase": "1E"' in main_api, "foundation status not Phase 1E")
+    require(
+        '"phase": "1E"' in main_api or '"phase": "1F"' in main_api,
+        "foundation status is earlier than Phase 1E",
+    )
     require(
         '"run_execution_enabled": False' in main_api,
         "public API execution boundary changed",

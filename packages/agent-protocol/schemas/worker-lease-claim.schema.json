@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.roozdata.cloud/worker-lease-claim.schema.json",
+  "title": "RDC Worker Lease Claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "work_kind",
+    "organization_id",
+    "project_id",
+    "attempt",
+    "claimed_at",
+    "expires_at",
+    "lease_token",
+    "payload"
+  ],
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "work_kind": {
+      "enum": ["BUILD", "RUN_START", "RUN_CANCEL"]
+    },
+    "organization_id": { "type": "string", "format": "uuid" },
+    "project_id": { "type": "string", "format": "uuid" },
+    "build_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "run_id": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "attempt": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "claimed_at": { "type": "string", "format": "date-time" },
+    "expires_at": { "type": "string", "format": "date-time" },
+    "lease_token": {
+      "type": "string",
+      "minLength": 32,
+      "maxLength": 256,
+      "pattern": "^rdc_lease_"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["schema_version", "work_kind", "execution_enabled"],
+      "properties": {
+        "schema_version": { "const": "1" },
+        "work_kind": {
+          "enum": ["BUILD", "RUN_START", "RUN_CANCEL"]
+        },
+        "execution_enabled": { "const": false }
+      }
+    }
+  }
+}
