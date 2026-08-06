@@ -9,6 +9,7 @@ export const projectNavigation: readonly ProjectNavigationItem[] = [
   { href: "/agents", label: "Agents" },
   { href: "/builds", label: "Builds" },
   { href: "/runs", label: "Runs" },
+  { href: "/execution", label: "Execution plane" },
   { href: "/secrets", label: "Secrets" },
   { href: "/audit", label: "Audit" },
   { href: "/settings", label: "Settings" },
