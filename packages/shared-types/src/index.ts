@@ -231,3 +231,85 @@ export interface BuildSummary {
   error_message: string | null;
   status_url: string;
 }
+
+export type RunStatus =
+  | "DRAFT"
+  | "READY"
+  | "QUEUED"
+  | "STARTING"
+  | "RUNNING"
+  | "PAUSING"
+  | "PAUSED"
+  | "SUCCEEDED"
+  | "PARTIALLY_SUCCEEDED"
+  | "FAILED"
+  | "TIMING_OUT"
+  | "TIMED_OUT"
+  | "ABORTING"
+  | "ABORTED";
+
+export interface RunRuntimeConfiguration {
+  memory_mb: number;
+  cpu_millis: number;
+  timeout_seconds: number;
+}
+
+export interface CreateRunInput {
+  build_id: string;
+  input: Record<string, unknown>;
+  runtime: {
+    memory_mb?: number;
+    cpu_millis?: number;
+    timeout_seconds?: number;
+  };
+}
+
+export interface RunSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  agent_id: string;
+  agent_version_id: string;
+  build_id: string;
+  status: RunStatus;
+  input_reference: {
+    kind: "inline";
+    value: Record<string, unknown>;
+  };
+  runtime_configuration: RunRuntimeConfiguration;
+  memory_mb: number;
+  cpu_millis: number;
+  timeout_seconds: number;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  cancel_requested_at: string | null;
+  failure_code: string | null;
+  failure_summary: string | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  status_url: string;
+  events_url: string;
+  cancel_url: string;
+}
+
+export type RunEventType =
+  | "run.connected"
+  | "run.status"
+  | "run.log"
+  | "run.metric"
+  | "run.warning"
+  | "run.completed"
+  | "run.failed"
+  | "run.heartbeat"
+  | "run.replay_reset";
+
+export interface RunEventEnvelope {
+  schema_version: "1";
+  event_type: RunEventType;
+  run_id: string;
+  sequence: number;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}
