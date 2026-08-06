@@ -197,6 +197,7 @@ class AgentManifest(StrictModel):
 
 
 class CreateAgentVersionRequest(StrictModel):
+    source_object_id: UUID
     manifest: AgentManifest
     release_notes: str | None = Field(default=None, max_length=8000)
 
@@ -224,6 +225,7 @@ class AgentVersionSummary(ORMModel):
     semantic_version: str
     manifest_schema_version: str
     manifest_digest: str
+    source_object_id: UUID | None
     release_notes: str | None
     created_at: datetime
 
