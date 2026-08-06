@@ -1,4 +1,3 @@
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
@@ -204,9 +203,7 @@ async def require_csrf(
     return context
 
 
-def require_organization_permission(
-    permission: str,
-) -> Callable[..., Awaitable[AuthContext]]:
+def require_organization_permission(permission: str):
     async def dependency(
         organization_id: Annotated[UUID, Path()],
         context: Annotated[
