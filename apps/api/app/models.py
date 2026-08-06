@@ -1,0 +1,353 @@
+from datetime import datetime
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    MetaData,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+NAMING_CONVENTION = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+
+
+class UUIDPrimaryKeyMixin:
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid4,
+    )
+
+
+class TimestampMixin:
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "users"
+    __table_args__ = {"schema": "identity"}
+
+    email_normalized: Mapped[str] = mapped_column(
+        String(320),
+        nullable=False,
+        unique=True,
+    )
+    email_display: Mapped[str] = mapped_column(String(320), nullable=False)
+    password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    password_algorithm: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="argon2id",
+    )
+    display_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="ACTIVE",
+    )
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    deactivated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class Session(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "sessions"
+    __table_args__ = {"schema": "identity"}
+
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    token_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32),
+        nullable=False,
+        unique=True,
+    )
+    csrf_token_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    idle_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    absolute_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoke_reason: Mapped[str | None] = mapped_column(String(100))
+    user_agent_hash: Mapped[str | None] = mapped_column(String(64))
+    ip_prefix_hash: Mapped[str | None] = mapped_column(String(64))
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class Organization(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "organizations"
+    __table_args__ = {"schema": "identity"}
+
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    slug: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="ACTIVE",
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class OrganizationMembership(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "organization_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "user_id",
+            name="uq_organization_memberships_organization_user",
+        ),
+        {"schema": "identity"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="ACTIVE",
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "projects"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "slug",
+            name="uq_projects_organization_slug",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    slug: Mapped[str] = mapped_column(String(80), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="ACTIVE",
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class ApiKey(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "public_prefix",
+            name="uq_api_keys_organization_prefix",
+        ),
+        {"schema": "security"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    public_prefix: Mapped[str] = mapped_column(String(24), nullable=False)
+    last_four: Mapped[str] = mapped_column(String(4), nullable=False)
+    token_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32),
+        nullable=False,
+        unique=True,
+    )
+    scopes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    environment: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="live",
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoke_reason: Mapped[str | None] = mapped_column(String(100))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditEvent(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "audit_events"
+    __table_args__ = {"schema": "security"}
+
+    organization_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="SET NULL"),
+        index=True,
+    )
+    project_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="SET NULL"),
+        index=True,
+    )
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(120), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(100))
+    request_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    details: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+
+class IdempotencyRecord(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "idempotency_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "principal_id",
+            "endpoint",
+            "key_digest",
+            name="uq_idempotency_scope",
+        ),
+        {"schema": "security"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    principal_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(160), nullable=False)
+    key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+    )
+    resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
