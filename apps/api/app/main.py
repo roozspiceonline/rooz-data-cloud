@@ -14,6 +14,7 @@ from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
 from .api.routes.internal_execution import router as internal_execution_router
 from .api.routes.runs import router as runs_router
+from .api.routes.storage import router as storage_router
 from .core.config import get_settings
 from .core.errors import (
     ApiError,
@@ -26,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.6.0-phase1f",
+    version="0.7.0-phase1g",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -122,15 +123,16 @@ v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
 v1_router.include_router(runs_router)
 v1_router.include_router(execution_router)
+v1_router.include_router(storage_router)
 
 
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1F",
+        "phase": "1G",
         "service": "rdc-api",
-        "status": "isolated-execution-plane-foundation",
+        "status": "secure-source-artifact-delivery",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -150,6 +152,9 @@ async def foundation_status() -> dict[str, object]:
         "worker_leasing_enabled": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
+        "secure_source_ingestion_enabled": True,
+        "artifact_object_delivery_enabled": True,
+        "sandbox_execution_enabled": False,
         "untrusted_agent_execution_enabled": False,
     }
 
