@@ -961,3 +961,13 @@ GET /api/v1/projects/{project_id}/execution-artifacts
 Claims MUST be transactionally leased, MUST prevent concurrent duplicate claims, MUST expire, and MUST have bounded retries. Secret envelopes MUST be limited to declared Agent-manifest names, matching project and environment, the active `RUN_START` lease, and a short expiry. Artifact registration MUST be digest-addressed and tenant-bound.
 
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
+
+
+## Phase 1G storage contracts
+
+- `POST /api/v1/agents/{agent_id}/source-uploads` creates a pending `AGENT_SOURCE` object and exact-size presigned POST.
+- `POST /api/v1/storage-objects/{storage_object_id}/complete` verifies object metadata, SHA-256, and safe-ZIP policy.
+- `GET /api/v1/projects/{project_id}/storage-objects` and `GET /api/v1/storage-objects/{storage_object_id}` expose metadata only.
+- `POST /api/v1/storage-objects/{storage_object_id}/download-grant` creates a short-lived tenant download capability.
+- `POST /internal/v1/leases/{lease_id}/source-download` is excluded from public OpenAPI and requires worker plus lease credentials.
+- Presigned URLs are returned once and never persisted by the control plane.
