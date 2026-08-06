@@ -9,6 +9,10 @@ import type {
   ApiSuccess,
   CreateAgentInput,
   CreateAgentVersionInput,
+  BuildSummary,
+  CreateProjectSecretInput,
+  ProjectSecretSummary,
+  ReplaceProjectSecretInput,
   OrganizationSummary,
   ProjectSummary,
   SessionData,
@@ -241,20 +245,115 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     return response.data;
   }
 
+
+  async function projectSecrets(
+    projectId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<ProjectSecretSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<
+      ApiCollectionSuccess<ProjectSecretSummary>
+    >(`/projects/${encodeURIComponent(projectId)}/secrets${query}`);
+    return { data: response.data, page: response.meta.page };
+  }
+
+  async function createProjectSecret(
+    projectId: string,
+    input: CreateProjectSecretInput,
+  ): Promise<ProjectSecretSummary> {
+    const response = await request<ApiSuccess<ProjectSecretSummary>>(
+      `/projects/${encodeURIComponent(projectId)}/secrets`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+      },
+    );
+    return response.data;
+  }
+
+  async function replaceProjectSecret(
+    secretId: string,
+    input: ReplaceProjectSecretInput,
+    etag: string,
+    idempotencyKey: string,
+  ): Promise<ProjectSecretSummary> {
+    const response = await request<ApiSuccess<ProjectSecretSummary>>(
+      `/secrets/${encodeURIComponent(secretId)}`,
+      {
+        method: "PUT",
+        headers: {
+          "Idempotency-Key": idempotencyKey,
+          "If-Match": etag,
+        },
+        body: JSON.stringify(input),
+      },
+    );
+    return response.data;
+  }
+
+  async function deleteProjectSecret(secretId: string): Promise<void> {
+    await request<void>(`/secrets/${encodeURIComponent(secretId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  async function createBuild(
+    versionId: string,
+    idempotencyKey: string,
+  ): Promise<BuildSummary> {
+    const response = await request<ApiSuccess<BuildSummary>>(
+      `/agent-versions/${encodeURIComponent(versionId)}/builds`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
+    return response.data;
+  }
+
+  async function build(buildId: string): Promise<BuildSummary> {
+    const response = await request<ApiSuccess<BuildSummary>>(
+      `/builds/${encodeURIComponent(buildId)}`,
+    );
+    return response.data;
+  }
+
+  async function agentBuilds(
+    agentId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<BuildSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<ApiCollectionSuccess<BuildSummary>>(
+      `/agents/${encodeURIComponent(agentId)}/builds${query}`,
+    );
+    return { data: response.data, page: response.meta.page };
+  }
+
   return {
     agent,
+    agentBuilds,
     agentVersion,
     agentVersions,
     agents,
     apiKeys,
+    build,
     createAgent,
     createAgentVersion,
+    createBuild,
+    createProjectSecret,
     login,
     logout,
     organizations,
     projects,
+    projectSecrets,
     request,
     session,
+    deleteProjectSecret,
+    replaceProjectSecret,
     updateAgent,
   };
 }
