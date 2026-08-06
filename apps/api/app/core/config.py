@@ -1,19 +1,65 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="RDC_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="RDC_",
+        extra="ignore",
+    )
 
     env: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "postgresql+asyncpg://rdc:rdc@localhost:5432/rdc"
     redis_url: str = "redis://localhost:6379/0"
+
     s3_endpoint: str = "http://localhost:9000"
     s3_bucket: str = "rdc-local"
     s3_access_key: str = "rdc_local"
     s3_secret_key: str = "rdc_local_only_change_me"
+
+    allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    session_cookie_name: str = "rdc_session"
+    session_cookie_secure: bool = False
+    session_idle_minutes: int = 30
+    session_absolute_hours: int = 168
+
+    session_token_pepper: str = "development-session-token-pepper-change-me"
+    csrf_token_pepper: str = "development-csrf-token-pepper-change-me"
+    api_key_pepper: str = "development-api-key-pepper-change-me"
+    api_key_issuance_secret: str = "development-api-key-issuance-secret-change-me"
+    rate_limit_key: str = "development-rate-limit-key-change-me"
+
+    auth_rate_limit_requests: int = 20
+    auth_rate_limit_window_seconds: int = 300
+
+    @model_validator(mode="after")
+    def validate_security_secrets(self) -> "Settings":
+        values = {
+            "session_token_pepper": self.session_token_pepper,
+            "csrf_token_pepper": self.csrf_token_pepper,
+            "api_key_pepper": self.api_key_pepper,
+            "api_key_issuance_secret": self.api_key_issuance_secret,
+            "rate_limit_key": self.rate_limit_key,
+        }
+        too_short = [name for name, value in values.items() if len(value) < 32]
+        if too_short:
+            raise ValueError(
+                "Security settings must be at least 32 characters: " + ", ".join(too_short)
+            )
+        if self.env in {"staging", "production"}:
+            defaults = [name for name, value in values.items() if "change-me" in value]
+            if defaults:
+                raise ValueError(
+                    "Default security settings are prohibited outside local environments: "
+                    + ", ".join(defaults)
+                )
+            if not self.session_cookie_secure:
+                raise ValueError("Secure session cookies are mandatory outside local environments")
+        return self
 
 
 @lru_cache
