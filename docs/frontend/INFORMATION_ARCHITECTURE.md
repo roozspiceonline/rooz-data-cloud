@@ -364,3 +364,8 @@ Rules:
 - `GET /api/v1/organizations/{organization_id}/audit-events`
 
 No other endpoint may be assumed without a contract change.
+
+
+## Phase 1F project navigation
+
+`Execution plane` is a first-class project page after `Runs`. It displays tenant-scoped lease attempts and artifact metadata. It does not expose worker registration, credentials, lease tokens, secret grants, or decrypted values. Operational worker administration remains a future organization-level module.
