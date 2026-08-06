@@ -47,7 +47,6 @@ from ..dependencies import (
     require_csrf,
     require_organization_permission,
     require_session_auth,
-    resolve_auth_context,
 )
 
 router = APIRouter()
