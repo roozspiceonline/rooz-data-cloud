@@ -41,8 +41,8 @@ def needs_password_rehash(password_hash: str) -> bool:
 
 def secret_digest(value: str, pepper: str) -> bytes:
     return hmac.new(
-        pepper.encode("utf-8"),
-        value.encode("utf-8"),
+        pepper.encode(),
+        value.encode(),
         hashlib.sha256,
     ).digest()
 
@@ -59,7 +59,7 @@ def derive_csrf_token(
 ) -> str:
     material = session_id.bytes + session_token_digest
     digest = hmac.new(
-        pepper.encode("utf-8"),
+        pepper.encode(),
         material,
         hashlib.sha256,
     ).digest()
@@ -93,7 +93,7 @@ def canonical_fingerprint(value: Any) -> str:
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
-    ).encode("utf-8")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -114,14 +114,14 @@ def derive_api_key(
 ) -> IssuedApiKey:
     scope = (
         f"{environment}:{organization_id}:{principal_id}:{idempotency_key}"
-    ).encode("utf-8")
+    ).encode()
     prefix_digest = hmac.new(
-        issuance_secret.encode("utf-8"),
+        issuance_secret.encode(),
         b"prefix:" + scope,
         hashlib.sha256,
     ).digest()
     secret_digest_bytes = hmac.new(
-        issuance_secret.encode("utf-8"),
+        issuance_secret.encode(),
         b"secret:" + scope,
         hashlib.sha256,
     ).digest()
