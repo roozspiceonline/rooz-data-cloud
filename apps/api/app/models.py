@@ -340,6 +340,174 @@ class AgentVersion(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class ProjectSecret(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "project_secrets"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "name",
+            name="uq_project_secrets_project_name",
+        ),
+        {"schema": "security"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    environment: Mapped[str] = mapped_column(String(24), nullable=False)
+    encrypted_value: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    value_nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    wrapped_data_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    encryption_algorithm: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="AES-256-GCM",
+    )
+    master_key_version: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    updated_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+
+
+class Build(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "builds"
+    __table_args__ = {"schema": "control"}
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agent_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    manifest_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="QUEUED",
+    )
+    requested_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id"),
+        nullable=False,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    artifact_digest: Mapped[str | None] = mapped_column(String(120))
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+
+
+class BuildDispatchOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "build_dispatch_outbox"
+    __table_args__ = (
+        UniqueConstraint(
+            "build_id",
+            name="uq_build_dispatch_outbox_build",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    build_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.builds.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    topic: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        default="rdc.build.requested.v1",
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="PENDING",
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    delivered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+
+
 class ApiKey(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "api_keys"
     __table_args__ = (
@@ -445,6 +613,8 @@ class IdempotencyRecord(UUIDPrimaryKeyMixin, Base):
     )
     resource_type: Mapped[str] = mapped_column(String(80), nullable=False)
     resource_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_snapshot: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
