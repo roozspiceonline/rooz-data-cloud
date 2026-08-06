@@ -1025,3 +1025,24 @@ Destructive migration requires:
 7. Permanent deletion and privacy-erasure sequencing
 8. Idempotency table retention
 9. Object-storage references for large Run inputs and logs
+
+
+## Phase 1F execution-plane tables
+
+### `security.worker_identities`
+
+Stores worker metadata, public token prefix, last-four display, token digest, capabilities, concurrency, protocol/software versions, lifecycle state, heartbeat time, expiry, and revocation. Raw worker tokens are never stored.
+
+### `control.execution_leases`
+
+Stores one bounded attempt to process a Build or Run command. It binds the worker, tenant, project, source outbox record, target Build or Run, lease-token digest, immutable payload snapshot and digest, attempt, expiry, renewal, completion, and safe failure metadata. A partial unique index prevents two active leases for the same source command.
+
+### `control.execution_artifacts`
+
+Stores digest-addressed artifact metadata and provenance. Artifact bytes remain in object storage. Each record is bound to one lease and either one Build or one Run.
+
+### `security.secret_injection_grants`
+
+Stores only encrypted worker envelopes and metadata. It binds one active `RUN_START` lease, worker, tenant, project, Run, requested secret names, environment, worker public-key digest, encryption algorithm, expiry, and lifecycle state.
+
+All Phase 1F tenant-owned tables use RLS and tenancy triggers. Worker access is based on transaction-local `rdc.current_worker_id` and active lease relationships.
