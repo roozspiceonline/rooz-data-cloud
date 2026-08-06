@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
 
+    run_sse_poll_interval_seconds: float = 1.0
+    run_sse_heartbeat_seconds: float = 15.0
+    run_sse_max_connections: int = 100
+    run_sse_replay_limit: int = 500
+
     @model_validator(mode="after")
     def validate_security_secrets(self) -> "Settings":
         values = {
