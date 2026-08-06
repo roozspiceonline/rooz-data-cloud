@@ -691,9 +691,12 @@ Rules:
 
 - Status transitions are explicit.
 - Cancellation is a command.
-- Input payloads above a small threshold are stored in object storage and referenced.
-- Runtime configuration is validated against hard policy limits.
-- RLS by organization and project.
+- Phase 1E accepts inline JSON object inputs up to 64 KiB; larger object-storage inputs remain deferred.
+- Runtime configuration is validated against both hard limits and immutable Agent-version limits.
+- Run creation and cancellation use a durable command outbox.
+- Persisted events are append-only and receive a monotonically increasing per-Run sequence under a transaction-scoped advisory lock.
+- Event payloads are size-limited, sanitized, and redact sensitive key names.
+- RLS applies to Runs, Run events, and Run command records by organization and project.
 
 ---
 
