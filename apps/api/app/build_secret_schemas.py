@@ -78,6 +78,7 @@ class BuildSummary(ORMModel):
     agent_id: UUID
     agent_version_id: UUID
     manifest_digest: str
+    source_object_id: UUID | None
     status: BuildStatus
     created_at: datetime
     updated_at: datetime
