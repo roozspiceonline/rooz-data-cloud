@@ -477,3 +477,21 @@ Alerts or investigations are triggered by:
 - High residual risk requires a dated remediation plan.
 - No accepted exception may weaken tenant isolation, credential confidentiality, or API/execution separation without a new architecture decision.
 - Exceptions expire and must be re-reviewed.
+
+
+## Phase 1F execution-plane threats and controls
+
+| Threat | Control |
+|---|---|
+| Stolen worker token | Write-only high-entropy token, HMAC digest at rest, revocation/expiry fields, separate internal route group |
+| Stolen lease token | Separate short-lived credential, worker binding, HMAC digest, hard maximum lifetime, row lock on access |
+| Duplicate work | `SKIP LOCKED`, active-source unique index, worker advisory lock, source attempt counter |
+| Worker abandonment | Expiry reaping, bounded exponential retry, terminal failure after maximum attempts |
+| Cross-tenant worker access | Worker context, active-lease RLS, explicit service predicates, tenancy triggers |
+| Secret overreach | Immutable manifest declaration, project/environment match, active `RUN_START` lease, short-lived X25519 envelope |
+| Secret leakage | No public reveal route, no browser exposure, no audit/log values, mutable plaintext buffer cleared after encryption |
+| Artifact substitution | SHA-256 digest, target/lease tenancy trigger, scan status, provenance, successful Build requires passed image metadata |
+| Internal API discovery | Internal routes excluded from public OpenAPI; separate authentication contract |
+| Premature code execution | Claim payload fixed to `execution_enabled: false`; no Docker, Kubernetes, BuildKit, shell, subprocess, `eval`, or `exec` primitive |
+
+The reference worker client is protocol-only. Production sandboxing, image execution, object-store credentials, network policy, kernel isolation, and runtime attestation remain separate merge gates.
