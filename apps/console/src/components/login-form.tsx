@@ -1,5 +1,6 @@
 "use client";
 
+import { RdcApiError } from "@rdc/api-client";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
@@ -16,30 +17,31 @@ export function LoginForm() {
     setSubmitting(true);
 
     const form = new FormData(event.currentTarget);
-    const email = String(form.get("email") ?? "").trim();
+    const email = String(form.get("email") ?? "");
     const password = String(form.get("password") ?? "");
 
     try {
       await rdcApi.login(email, password);
       router.replace("/console/select-org");
       router.refresh();
-    } catch {
-      setError("Invalid email address or password.");
+    } catch (caught) {
+      setError(
+        caught instanceof RdcApiError
+          ? caught.message
+          : "Sign in could not be completed.",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form noValidate onSubmit={submit} style={{ display: "grid", gap: "1rem" }}>
+    <form onSubmit={submit} style={{ display: "grid", gap: "1rem" }}>
       <div style={{ display: "grid", gap: "0.4rem" }}>
-        <label htmlFor="login-email">Email address</label>
+        <label htmlFor="email">Email address</label>
         <input
-          aria-describedby={error ? "login-error" : undefined}
-          aria-invalid={error ? true : undefined}
           autoComplete="email"
-          disabled={submitting}
-          id="login-email"
+          id="email"
           name="email"
           required
           type="email"
@@ -48,13 +50,10 @@ export function LoginForm() {
       </div>
 
       <div style={{ display: "grid", gap: "0.4rem" }}>
-        <label htmlFor="login-password">Password</label>
+        <label htmlFor="password">Password</label>
         <input
-          aria-describedby={error ? "login-error" : undefined}
-          aria-invalid={error ? true : undefined}
           autoComplete="current-password"
-          disabled={submitting}
-          id="login-password"
+          id="password"
           name="password"
           required
           type="password"
@@ -63,18 +62,12 @@ export function LoginForm() {
       </div>
 
       {error ? (
-        <p
-          aria-live="assertive"
-          id="login-error"
-          role="alert"
-          style={{ color: "var(--danger)", margin: 0 }}
-        >
+        <p role="alert" style={{ color: "var(--danger)", margin: 0 }}>
           {error}
         </p>
       ) : null}
 
       <button
-        aria-busy={submitting}
         disabled={submitting}
         style={{ minHeight: 44 }}
         type="submit"
