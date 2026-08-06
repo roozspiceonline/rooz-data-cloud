@@ -284,6 +284,82 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class StorageObject(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "storage_objects"
+    __table_args__ = (
+        UniqueConstraint(
+            "bucket",
+            "object_key",
+            name="uq_storage_objects_bucket_key",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agents.id", ondelete="CASCADE"),
+        index=True,
+    )
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    provider: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="S3"
+    )
+    bucket: Mapped[str] = mapped_column(String(160), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    media_type: Mapped[str] = mapped_column(String(160), nullable=False)
+    expected_size_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    expected_sha256_digest: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    sha256_digest: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="PENDING_UPLOAD"
+    )
+    scan_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="PENDING"
+    )
+    rejection_code: Mapped[str | None] = mapped_column(String(80))
+    metadata_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    uploaded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    available_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+
 class AgentVersion(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "agent_versions"
     __table_args__ = (
@@ -327,6 +403,13 @@ class AgentVersion(UUIDPrimaryKeyMixin, Base):
     )
     manifest_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     manifest: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    source_object_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.storage_objects.id", ondelete="RESTRICT"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     release_notes: Mapped[str | None] = mapped_column(Text)
     created_by_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
@@ -428,6 +511,12 @@ class Build(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     manifest_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_object_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.storage_objects.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -822,6 +911,61 @@ class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class StorageGrant(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "storage_grants"
+    __table_args__ = {"schema": "security"}
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    storage_object_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.storage_objects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    lease_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.execution_leases.id", ondelete="CASCADE"),
+        index=True,
+    )
+    worker_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.worker_identities.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    issued_to_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="S3_PRESIGNED"
+    )
+    capability_digest: Mapped[bytes] = mapped_column(
+        LargeBinary(32), nullable=False, unique=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
 
 
 class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
