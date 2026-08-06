@@ -1,0 +1,20 @@
+from fastapi.testclient import TestClient
+
+from app.main import app
+
+client = TestClient(app)
+
+
+def test_liveness() -> None:
+    response = client.get("/health/live")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+
+def test_foundation_contract() -> None:
+    response = client.get("/api/v1/system/foundation")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["arbitrary_code_in_api"] is False
+    assert payload["tenant_rls_required"] is True
+    assert payload["write_only_secrets_required"] is True

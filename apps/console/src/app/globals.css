@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f7fb;
+  --surface: #ffffff;
+  --surface-muted: #eef2f7;
+  --foreground: #111827;
+  --muted-foreground: #667085;
+  --border: #d9e0ea;
+  --primary: #3157d5;
+  --primary-foreground: #ffffff;
+  --success: #137a4b;
+  --warning: #9a5b00;
+  --danger: #b42318;
+  --focus: #3157d5;
+  --radius: 0.75rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0c111b;
+    --surface: #151c28;
+    --surface-muted: #1d2634;
+    --foreground: #f3f6fb;
+    --muted-foreground: #a9b4c5;
+    --border: #2d394b;
+    --primary: #7ea2ff;
+    --primary-foreground: #08101f;
+    --success: #55d59a;
+    --warning: #ffbf69;
+    --danger: #ff8b85;
+    --focus: #9ab6ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at top left,
+      rgb(49 87 213 / 0.08),
+      transparent 28rem
+    ),
+    var(--background);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: fixed;
+  left: 1rem;
+  top: 1rem;
+  z-index: 100;
+  transform: translateY(-180%);
+  border-radius: 0.5rem;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 700;
+  padding: 0.75rem 1rem;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.shell-body {
+  display: grid;
+  grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+  min-height: calc(100vh - 68px);
+}
+
+.project-sidebar {
+  border-right: 1px solid var(--border);
+}
+
+@media (max-width: 768px) {
+  .shell-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-sidebar {
+    border-bottom: 1px solid var(--border);
+    border-right: 0;
+  }
+
+  .shell-body > main {
+    padding: 1.25rem !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
