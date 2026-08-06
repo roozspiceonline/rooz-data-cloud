@@ -13,6 +13,8 @@ import type {
   CreateProjectSecretInput,
   ProjectSecretSummary,
   ReplaceProjectSecretInput,
+  CreateRunInput,
+  RunSummary,
   OrganizationSummary,
   ProjectSummary,
   SessionData,
@@ -333,6 +335,67 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     return { data: response.data, page: response.meta.page };
   }
 
+
+  async function createRun(
+    versionId: string,
+    input: CreateRunInput,
+    idempotencyKey: string,
+  ): Promise<RunSummary> {
+    const response = await request<ApiSuccess<RunSummary>>(
+      `/agent-versions/${encodeURIComponent(versionId)}/runs`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+        body: JSON.stringify(input),
+      },
+    );
+    return response.data;
+  }
+
+  async function run(runId: string): Promise<RunSummary> {
+    const response = await request<ApiSuccess<RunSummary>>(
+      `/runs/${encodeURIComponent(runId)}`,
+    );
+    return response.data;
+  }
+
+  async function projectRuns(
+    projectId: string,
+    cursor: string | null = null,
+  ): Promise<CollectionResult<RunSummary>> {
+    const query = cursor
+      ? `?cursor=${encodeURIComponent(cursor)}`
+      : "";
+    const response = await request<ApiCollectionSuccess<RunSummary>>(
+      `/projects/${encodeURIComponent(projectId)}/runs${query}`,
+    );
+    return { data: response.data, page: response.meta.page };
+  }
+
+  async function cancelRun(
+    runId: string,
+    idempotencyKey: string,
+  ): Promise<RunSummary> {
+    const response = await request<ApiSuccess<RunSummary>>(
+      `/runs/${encodeURIComponent(runId)}/cancel`,
+      {
+        method: "POST",
+        headers: { "Idempotency-Key": idempotencyKey },
+      },
+    );
+    return response.data;
+  }
+
+  function runEventsUrl(
+    runId: string,
+    lastEventId = 0,
+  ): string {
+    const query = lastEventId > 0
+      ? `?last_event_id=${encodeURIComponent(String(lastEventId))}`
+      : "";
+    return `${options.baseUrl}/runs/${encodeURIComponent(runId)}/events${query}`;
+  }
+
   return {
     agent,
     agentBuilds,
@@ -345,13 +408,18 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     createAgentVersion,
     createBuild,
     createProjectSecret,
+    createRun,
     login,
     logout,
     organizations,
     projects,
+    projectRuns,
     projectSecrets,
     request,
+    run,
+    runEventsUrl,
     session,
+    cancelRun,
     deleteProjectSecret,
     replaceProjectSecret,
     updateAgent,
