@@ -83,7 +83,7 @@ def test_manifest_rejects_path_traversal_and_unknown_fields() -> None:
 
 def test_manifest_digest_is_canonical() -> None:
     payload = CreateAgentVersionRequest.model_validate(
-        {"manifest": valid_manifest(), "release_notes": "Initial"}
+        {"source_object_id": str(uuid4()), "manifest": valid_manifest(), "release_notes": "Initial"}
     )
     first = canonical_manifest(payload)
     second = canonical_manifest(payload)
