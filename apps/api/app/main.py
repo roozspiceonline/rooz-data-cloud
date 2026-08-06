@@ -1,9 +1,11 @@
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
@@ -49,7 +51,10 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def request_context(request: Request, call_next):
+async def request_context(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
     incoming = request.headers.get("X-Request-ID", "")
     valid = 1 <= len(incoming) <= 100 and all(
         character.isalnum() or character in "._-"
@@ -64,10 +69,28 @@ async def request_context(request: Request, call_next):
     return response
 
 
-app.add_exception_handler(ApiError, api_error_handler)
+async def handle_api_error(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    if not isinstance(exc, ApiError):
+        raise exc
+    return await api_error_handler(request, exc)
+
+
+async def handle_validation_error(
+    request: Request,
+    exc: Exception,
+) -> JSONResponse:
+    if not isinstance(exc, RequestValidationError):
+        raise exc
+    return await validation_error_handler(request, exc)
+
+
+app.add_exception_handler(ApiError, handle_api_error)
 app.add_exception_handler(
     RequestValidationError,
-    validation_error_handler,
+    handle_validation_error,
 )
 
 
