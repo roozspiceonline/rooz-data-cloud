@@ -79,6 +79,8 @@ services:
       RDC_API_KEY_ISSUANCE_SECRET: ${RDC_API_KEY_ISSUANCE_SECRET:-change-me-api-key-issuance-secret-at-least-32-characters}
       RDC_RATE_LIMIT_KEY: ${RDC_RATE_LIMIT_KEY:-change-me-rate-limit-key-at-least-32-characters}
       RDC_CURSOR_SIGNING_KEY: ${RDC_CURSOR_SIGNING_KEY:-change-me-cursor-signing-key-at-least-32-characters}
+      RDC_PROJECT_SECRET_MASTER_KEY_B64: ${RDC_PROJECT_SECRET_MASTER_KEY_B64:-ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE=}
+      RDC_PROJECT_SECRET_MASTER_KEY_VERSION: ${RDC_PROJECT_SECRET_MASTER_KEY_VERSION:-local-v1}
     ports:
       - "127.0.0.1:${RDC_API_PORT:-8000}:8000"
     depends_on:
