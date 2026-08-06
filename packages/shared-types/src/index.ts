@@ -21,6 +21,19 @@ export interface ApiSuccess<T> {
   };
 }
 
+export interface ApiPageMeta {
+  has_more: boolean;
+  next_cursor: string | null;
+}
+
+export interface ApiCollectionSuccess<T> {
+  data: ReadonlyArray<T>;
+  meta: {
+    request_id: string;
+    page: ApiPageMeta;
+  };
+}
+
 export interface MembershipSummary {
   id: string;
   organization_id: string;
@@ -69,4 +82,91 @@ export interface ApiKeySummary {
   created_at: string;
   expires_at: string | null;
   revoked_at: string | null;
+}
+
+export interface AgentSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  status: "ACTIVE" | "ARCHIVED";
+  created_at: string;
+  updated_at: string;
+  version: number;
+}
+
+export interface CreateAgentInput {
+  name: string;
+  slug: string;
+  description: string | null;
+}
+
+export interface UpdateAgentInput {
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  status?: "ACTIVE" | "ARCHIVED";
+}
+
+export interface AgentManifestRuntime {
+  kind: "container";
+  entrypoint: ReadonlyArray<string>;
+}
+
+export interface AgentManifestSchemas {
+  input: string;
+  output: string;
+  dataset?: string;
+}
+
+export interface AgentManifestCapabilities {
+  network: "none" | "web-egress";
+  browser: boolean;
+  dataset: boolean;
+  keyValueStore: boolean;
+  requestQueue: boolean;
+}
+
+export interface AgentManifestResources {
+  memoryMb: number;
+  cpuUnits: number;
+  timeoutSeconds: number;
+  maxProcesses: number;
+  ephemeralDiskMb: number;
+}
+
+export interface AgentManifest {
+  protocol: "rooz.agent/v1";
+  name: string;
+  version: string;
+  runtime: AgentManifestRuntime;
+  schemas: AgentManifestSchemas;
+  capabilities: AgentManifestCapabilities;
+  resources: AgentManifestResources;
+  extensions?: Record<string, unknown>;
+}
+
+export interface CreateAgentVersionInput {
+  manifest: AgentManifest;
+  release_notes: string | null;
+}
+
+export interface AgentVersionSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  agent_id: string;
+  version_number: number;
+  protocol: string;
+  semantic_version: string;
+  manifest_schema_version: string;
+  manifest_digest: string;
+  release_notes: string | null;
+  created_at: string;
+}
+
+export interface AgentVersionDetail extends AgentVersionSummary {
+  manifest: AgentManifest;
 }
