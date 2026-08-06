@@ -1,5 +1,10 @@
-import { SectionPlaceholder } from "@/components/section-placeholder";
+import { RunControlPlane } from "@/components/run-control-plane";
 
-export default function Page() {
-  return <SectionPlaceholder title="Runs" description="Run records and SSE monitoring will be implemented without executing Agent code inside the API." status="foundation" />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}) {
+  const { projectId } = await params;
+  return <RunControlPlane projectId={projectId} />;
 }
