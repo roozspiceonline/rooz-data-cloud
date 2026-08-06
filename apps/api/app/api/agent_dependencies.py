@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.database import get_db, set_tenant_context
 from ..core.errors import ApiError
 from ..core.permissions import role_has_permission
-from ..models import Agent, AgentVersion, OrganizationMembership, Project
+from ..models import (
+    Agent,
+    AgentVersion,
+    Build,
+    OrganizationMembership,
+    Project,
+    ProjectSecret,
+)
 from .dependencies import AuthContext, resolve_auth_context
 
 
@@ -32,6 +39,18 @@ class AgentVersionAccess:
     agent_version: AgentVersion
 
 
+@dataclass(frozen=True)
+class ProjectSecretAccess:
+    context: AuthContext
+    secret: ProjectSecret
+
+
+@dataclass(frozen=True)
+class BuildAccess:
+    context: AuthContext
+    build: Build
+
+
 async def _resolved_organization_id(
     db: AsyncSession,
     *,
@@ -42,6 +61,8 @@ async def _resolved_organization_id(
         "rdc_project_org",
         "rdc_agent_org",
         "rdc_agent_version_org",
+        "rdc_project_secret_org",
+        "rdc_build_org",
     }
     if function_name not in allowed:
         raise RuntimeError("Unsupported organization resolver")
@@ -219,5 +240,78 @@ def require_agent_version_permission(
             context=context,
             agent_version=record,
         )
+
+    return dependency
+
+
+
+def require_project_secret_permission(
+    permission: str,
+) -> Callable[..., Awaitable[ProjectSecretAccess]]:
+    async def dependency(
+        secret_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> ProjectSecretAccess:
+        organization_id = await _resolved_organization_id(
+            db,
+            function_name="rdc_project_secret_org",
+            resource_id=secret_id,
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(ProjectSecret).where(
+                ProjectSecret.id == secret_id,
+                ProjectSecret.organization_id == organization_id,
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return ProjectSecretAccess(context=context, secret=record)
+
+    return dependency
+
+
+def require_build_permission(
+    permission: str,
+) -> Callable[..., Awaitable[BuildAccess]]:
+    async def dependency(
+        build_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> BuildAccess:
+        organization_id = await _resolved_organization_id(
+            db,
+            function_name="rdc_build_org",
+            resource_id=build_id,
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(Build).where(
+                Build.id == build_id,
+                Build.organization_id == organization_id,
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return BuildAccess(context=context, build=record)
 
     return dependency

@@ -206,7 +206,7 @@ async def require_csrf(
 
 def require_organization_permission(
     permission: str,
-) -> Callable[..., Awaitable[AuthContext]]:
+) -> Callable[[UUID, AuthContext, AsyncSession], Awaitable[AuthContext]]:
     async def dependency(
         organization_id: Annotated[UUID, Path()],
         context: Annotated[

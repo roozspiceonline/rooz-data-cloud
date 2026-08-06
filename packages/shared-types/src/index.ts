@@ -170,3 +170,64 @@ export interface AgentVersionSummary {
 export interface AgentVersionDetail extends AgentVersionSummary {
   manifest: AgentManifest;
 }
+
+
+export type SecretEnvironment =
+  | "development"
+  | "test"
+  | "staging"
+  | "production";
+
+export interface ProjectSecretSummary {
+  id: string;
+  project_id: string;
+  name: string;
+  description: string | null;
+  environment: SecretEnvironment;
+  has_value: true;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  version: number;
+  etag: string;
+}
+
+export interface CreateProjectSecretInput {
+  name: string;
+  value: string;
+  description: string | null;
+  environment: SecretEnvironment;
+}
+
+export interface ReplaceProjectSecretInput {
+  value: string;
+  description: string | null;
+  environment?: SecretEnvironment;
+}
+
+export type BuildStatus =
+  | "QUEUED"
+  | "STARTING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "CANCELLED"
+  | "TIMED_OUT";
+
+export interface BuildSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  agent_id: string;
+  agent_version_id: string;
+  manifest_digest: string;
+  status: BuildStatus;
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  artifact_digest: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  status_url: string;
+}

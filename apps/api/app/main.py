@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
 from .api.routes.agents import router as agents_router
+from .api.routes.builds_secrets import router as builds_secrets_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
 from .core.config import get_settings
@@ -22,7 +23,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.3.0-phase1c",
+    version="0.4.0-phase1d",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -113,15 +114,20 @@ app.include_router(health_router)
 v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
+v1_router.include_router(builds_secrets_router)
 
 
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1C",
+        "phase": "1D",
         "service": "rdc-api",
-        "status": "agent-registry-foundation",
+        "status": "project-secrets-build-control-plane",
+        "write_only_project_secrets": True,
+        "envelope_encryption_required": True,
+        "durable_build_dispatch_outbox": True,
+        "build_execution_isolated": True,
         "tenant_rls_required": True,
         "write_only_secrets_required": True,
         "tenant_rls_enabled": True,

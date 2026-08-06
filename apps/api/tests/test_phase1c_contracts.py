@@ -137,5 +137,5 @@ def test_phase1c_routes_match_approved_inventory() -> None:
     assert "/api/v1/agents/{agent_id}" in paths
     assert "/api/v1/agents/{agent_id}/versions" in paths
     assert "/api/v1/agent-versions/{version_id}" in paths
-    assert "/api/v1/builds/{build_id}" not in paths
+    assert "/api/v1/builds/{build_id}" in paths
     assert "/api/v1/runs/{run_id}" not in paths

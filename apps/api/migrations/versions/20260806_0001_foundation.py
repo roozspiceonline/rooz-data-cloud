@@ -16,16 +16,8 @@ def upgrade() -> None:
     op.execute('CREATE EXTENSION IF NOT EXISTS "citext"')
     op.create_table(
         "platform_schema_metadata",
-        sa.Column(
-            "key",
-            sa.String(length=100),
-            primary_key=True,
-        ),
-        sa.Column(
-            "value",
-            sa.String(length=500),
-            nullable=False,
-        ),
+        sa.Column("key", sa.String(length=100), primary_key=True),
+        sa.Column("value", sa.String(length=500), nullable=False),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -34,10 +26,8 @@ def upgrade() -> None:
         ),
     )
     op.execute(
-        """
-        INSERT INTO platform_schema_metadata (key, value)
-        VALUES ('foundation_phase', '1A')
-        """
+        "INSERT INTO platform_schema_metadata (key, value) "
+        "VALUES ('foundation_phase', '1A')"
     )
 
 

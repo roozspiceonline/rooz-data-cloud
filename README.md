@@ -1,54 +1,34 @@
-# Rooz Data Cloud — Phase 1A Engineering Foundation
+# Rooz Data Cloud — Phase 1D
 
-Phase 1A converts the approved Phase 0 contracts into a runnable engineering baseline.
+Phase 1D extends the merged identity, tenancy, and Agent registry foundation with write-only project secrets and the metadata-only Build control plane.
 
 ## Included
 
-- pnpm/Turborepo monorepo
-- Next.js console shell
-- FastAPI control-plane API shell
-- PostgreSQL, Redis, and local S3-compatible storage
-- Docker Compose development topology
-- Shared UI, shared types, and API client packages
-- Alembic migration foundation
-- Liveness and dependency-aware readiness endpoints
-- GitHub Actions CI
-- Automated RDC Team Bridge and GitHub kickoff
+- Envelope-encrypted project-secret storage
+- Secret metadata list, create, replace, and delete APIs
+- No secret reveal or plaintext-return endpoint
+- ETag concurrency and idempotent secret replacement
+- Build creation from immutable Agent versions
+- Build read and Agent Build-history APIs
+- Transactional Build dispatch outbox
+- PostgreSQL RLS, explicit tenant predicates, resource resolvers, and tenancy guards
+- Security audit events
+- Secrets and Builds console flows
+- Alembic, backend, frontend, scaffold, and Compose CI
 
-## Explicitly excluded
+## Execution boundary
 
-- Production authentication and session issuance
-- Organization/project persistence APIs
-- Agent, Build, and Run domain operations
-- Build workers or runtime workers
-- Billing, marketplace, pipelines, datasets, or connectors
-- Secret reveal behavior or arbitrary code execution
+The public API stores and queues metadata only. It does not decrypt secrets for users, invoke BuildKit, call Docker, execute Agent code, start Runs, or inject runtime secrets. Build execution remains delegated to a future isolated execution-plane worker.
 
-## Start the module
+## Start the phase
 
 Keep RDC Team Bridge running, then execute:
 
 ```bash
 cd ~/Downloads
-unzip -o RDC-P1A-ENGINEERING-FOUNDATION.zip
-cd RDC-P1A-ENGINEERING-FOUNDATION
-python3 start-phase1a.py
+unzip -o RDC-P1D-SECRETS-BUILDS.zip
+cd RDC-P1D-SECRETS-BUILDS
+python3 start-phase1d.py
 ```
 
-The script opens a draft pull request and never merges automatically.
-
-## Local stack after merge
-
-```bash
-cp .env.example .env
-docker compose up -d --build
-docker compose ps
-```
-
-Open:
-
-- Console: http://localhost:3000
-- API docs: http://localhost:8000/api/docs
-- API liveness: http://localhost:8000/health/live
-- API readiness: http://localhost:8000/health/ready
-- MinIO console: http://localhost:9001
+The script creates Phase 1D Bridge tasks and GitHub Issues, uploads the implementation to `feat/phase-1d-secrets-build-control-plane`, opens a draft pull request, and dispatches the UX/accessibility review to Gemini. It never merges automatically.

@@ -1,5 +1,10 @@
-import { SectionPlaceholder } from "@/components/section-placeholder";
+import { BuildControlPlane } from "@/components/build-control-plane";
 
-export default function Page() {
-  return <SectionPlaceholder title="Builds" description="Build metadata will dispatch jobs to an isolated worker; this API process will never build user code." status="foundation" />;
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ projectId: string }>;
+}) {
+  const { projectId } = await params;
+  return <BuildControlPlane projectId={projectId} />;
 }

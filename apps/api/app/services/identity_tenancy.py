@@ -245,11 +245,13 @@ async def login(
             message="The email or password is invalid.",
         )
 
-    if (
-        user.status != "ACTIVE"
-        or (user.locked_until is not None and user.locked_until > now)
-        or not verify_password(user.password_hash, payload.password)
-    ):
+    valid = (
+        user.status == "ACTIVE"
+        and (user.locked_until is None or user.locked_until <= now)
+        and verify_password(user.password_hash, payload.password)
+    )
+
+    if not valid:
         user.failed_login_count += 1
         if user.failed_login_count >= 10:
             user.locked_until = now + timedelta(minutes=15)
