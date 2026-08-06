@@ -124,6 +124,7 @@ export function ProjectSecretManager({
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
       setReplacementValue("");
+      setReplacementId("");
       setMessage(`Secret ${updated.name} was replaced. Its value remains write-only.`);
     } catch (error) {
       setMessage(errorMessage(error));
@@ -148,6 +149,8 @@ export function ProjectSecretManager({
     }
   }
 
+  const activeReplacementSecret = secrets.find((s) => s.id === replacementId);
+
   return (
     <div style={{ display: "grid", gap: "1.5rem" }}>
       <header>
@@ -170,9 +173,11 @@ export function ProjectSecretManager({
       <Card>
         <h2 style={{ marginTop: 0 }}>Create secret</h2>
         <form onSubmit={create} style={{ display: "grid", gap: "1rem" }}>
-          <label style={{ display: "grid", gap: "0.35rem" }}>
-            Name
+          <div style={{ display: "grid", gap: "0.35rem" }}>
+            <label htmlFor="create-secret-name">Name</label>
             <input
+              id="create-secret-name"
+              aria-describedby="create-secret-name-hint"
               autoCapitalize="characters"
               autoComplete="off"
               disabled={submitting}
@@ -184,10 +189,14 @@ export function ProjectSecretManager({
               style={{ minHeight: 44, padding: "0.7rem" }}
               value={name}
             />
-          </label>
-          <label style={{ display: "grid", gap: "0.35rem" }}>
-            Secret value
+            <span id="create-secret-name-hint" style={{ color: "var(--muted-foreground)", fontSize: "0.85rem" }}>
+              Uppercase letters, numbers, and underscores. Must start with a letter (e.g. DATABASE_URL).
+            </span>
+          </div>
+          <div style={{ display: "grid", gap: "0.35rem" }}>
+            <label htmlFor="create-secret-value">Secret value</label>
             <input
+              id="create-secret-value"
               autoComplete="new-password"
               disabled={submitting}
               maxLength={16384}
@@ -198,52 +207,99 @@ export function ProjectSecretManager({
               type="password"
               value={value}
             />
-          </label>
-          <label style={{ display: "grid", gap: "0.35rem" }}>
-            Environment
-            <select disabled={submitting} onChange={(event) => setEnvironment(event.target.value as SecretEnvironment)} style={{ minHeight: 44, padding: "0.7rem" }} value={environment}>
+          </div>
+          <div style={{ display: "grid", gap: "0.35rem" }}>
+            <label htmlFor="create-secret-env">Environment</label>
+            <select
+              id="create-secret-env"
+              disabled={submitting}
+              onChange={(event) => setEnvironment(event.target.value as SecretEnvironment)}
+              style={{ minHeight: 44, padding: "0.7rem" }}
+              value={environment}
+            >
               <option value="development">Development</option>
               <option value="test">Test</option>
               <option value="staging">Staging</option>
               <option value="production">Production</option>
             </select>
-          </label>
-          <label style={{ display: "grid", gap: "0.35rem" }}>
-            Description
-            <textarea disabled={submitting} maxLength={1000} onChange={(event) => setDescription(event.target.value)} rows={3} style={{ padding: "0.7rem" }} value={description} />
-          </label>
+          </div>
+          <div style={{ display: "grid", gap: "0.35rem" }}>
+            <label htmlFor="create-secret-desc">Description</label>
+            <textarea
+              id="create-secret-desc"
+              disabled={submitting}
+              maxLength={1000}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={3}
+              style={{ padding: "0.7rem" }}
+              value={description}
+            />
+          </div>
           <button aria-busy={submitting} disabled={submitting} style={{ minHeight: 44, width: "fit-content" }} type="submit">
             {submitting ? "Encrypting…" : "Create write-only secret"}
           </button>
         </form>
       </Card>
 
-      {replacementId ? (
+      {replacementId && activeReplacementSecret ? (
         <Card>
-          <h2 style={{ marginTop: 0 }}>Replace secret value</h2>
-          <form onSubmit={replace} style={{ display: "grid", gap: "1rem" }}>
-            <label style={{ display: "grid", gap: "0.35rem" }}>
-              New value
-              <input autoComplete="new-password" disabled={replacing} maxLength={16384} onChange={(event) => setReplacementValue(event.target.value)} required spellCheck={false} style={{ minHeight: 44, padding: "0.7rem" }} type="password" value={replacementValue} />
-            </label>
-            <label style={{ display: "grid", gap: "0.35rem" }}>
-              Environment
-              <select disabled={replacing} onChange={(event) => setReplacementEnvironment(event.target.value as SecretEnvironment)} style={{ minHeight: 44, padding: "0.7rem" }} value={replacementEnvironment}>
+          <h2 id="replace-secret-heading" style={{ marginTop: 0 }}>
+            Replace value for {activeReplacementSecret.name}
+          </h2>
+          <form aria-labelledby="replace-secret-heading" onSubmit={replace} style={{ display: "grid", gap: "1rem" }}>
+            <div style={{ display: "grid", gap: "0.35rem" }}>
+              <label htmlFor="replace-secret-value">New secret value</label>
+              <input
+                id="replace-secret-value"
+                autoComplete="new-password"
+                disabled={replacing}
+                maxLength={16384}
+                onChange={(event) => setReplacementValue(event.target.value)}
+                required
+                spellCheck={false}
+                style={{ minHeight: 44, padding: "0.7rem" }}
+                type="password"
+                value={replacementValue}
+              />
+            </div>
+            <div style={{ display: "grid", gap: "0.35rem" }}>
+              <label htmlFor="replace-secret-env">Environment</label>
+              <select
+                id="replace-secret-env"
+                disabled={replacing}
+                onChange={(event) => setReplacementEnvironment(event.target.value as SecretEnvironment)}
+                style={{ minHeight: 44, padding: "0.7rem" }}
+                value={replacementEnvironment}
+              >
                 <option value="development">Development</option>
                 <option value="test">Test</option>
                 <option value="staging">Staging</option>
                 <option value="production">Production</option>
               </select>
-            </label>
-            <label style={{ display: "grid", gap: "0.35rem" }}>
-              Description
-              <textarea disabled={replacing} maxLength={1000} onChange={(event) => setReplacementDescription(event.target.value)} rows={3} style={{ padding: "0.7rem" }} value={replacementDescription} />
-            </label>
+            </div>
+            <div style={{ display: "grid", gap: "0.35rem" }}>
+              <label htmlFor="replace-secret-desc">Description</label>
+              <textarea
+                id="replace-secret-desc"
+                disabled={replacing}
+                maxLength={1000}
+                onChange={(event) => setReplacementDescription(event.target.value)}
+                rows={3}
+                style={{ padding: "0.7rem" }}
+                value={replacementDescription}
+              />
+            </div>
             <div style={{ display: "flex", gap: "0.75rem" }}>
               <button aria-busy={replacing} disabled={replacing} style={{ minHeight: 44 }} type="submit">
                 {replacing ? "Replacing…" : "Replace encrypted value"}
               </button>
-              <button disabled={replacing} onClick={() => setReplacementId("")} style={{ minHeight: 44 }} type="button">
+              <button
+                aria-label={`Cancel replacement for ${activeReplacementSecret.name}`}
+                disabled={replacing}
+                onClick={() => setReplacementId("")}
+                style={{ minHeight: 44 }}
+                type="button"
+              >
                 Cancel
               </button>
             </div>
@@ -273,14 +329,45 @@ export function ProjectSecretManager({
                     <StatusBadge tone="success">Encrypted</StatusBadge>
                   </div>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem" }}>
-                    <button onClick={() => selectForReplacement(secret)} style={{ minHeight: 44 }} type="button">Replace value</button>
+                    <button
+                      aria-label={`Replace value for ${secret.name}`}
+                      onClick={() => selectForReplacement(secret)}
+                      style={{ minHeight: 44 }}
+                      type="button"
+                    >
+                      Replace value
+                    </button>
                     {deleteTargetId === secret.id ? (
                       <>
-                        <button aria-busy={deleting} disabled={deleting} onClick={() => void remove(secret.id)} style={{ minHeight: 44 }} type="button">Confirm delete</button>
-                        <button disabled={deleting} onClick={() => setDeleteTargetId(null)} style={{ minHeight: 44 }} type="button">Cancel</button>
+                        <button
+                          aria-busy={deleting}
+                          aria-label={`Confirm deletion of ${secret.name}`}
+                          disabled={deleting}
+                          onClick={() => void remove(secret.id)}
+                          style={{ minHeight: 44 }}
+                          type="button"
+                        >
+                          Confirm delete
+                        </button>
+                        <button
+                          aria-label={`Cancel deletion of ${secret.name}`}
+                          disabled={deleting}
+                          onClick={() => setDeleteTargetId(null)}
+                          style={{ minHeight: 44 }}
+                          type="button"
+                        >
+                          Cancel
+                        </button>
                       </>
                     ) : (
-                      <button onClick={() => setDeleteTargetId(secret.id)} style={{ minHeight: 44 }} type="button">Delete</button>
+                      <button
+                        aria-label={`Delete ${secret.name}`}
+                        onClick={() => setDeleteTargetId(secret.id)}
+                        style={{ minHeight: 44 }}
+                        type="button"
+                      >
+                        Delete
+                      </button>
                     )}
                   </div>
                 </Card>
