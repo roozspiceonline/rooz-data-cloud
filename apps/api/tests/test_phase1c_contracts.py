@@ -10,6 +10,7 @@ from app.agent_schemas import (
     UpdateAgentRequest,
 )
 from app.api.routes.agents import agent_etag, parse_agent_if_match
+from app.core.errors import ApiError
 from app.core.pagination import decode_cursor, encode_cursor
 from app.core.permissions import role_has_permission, validate_scopes
 from app.services.agents import canonical_manifest, manifest_digest
@@ -107,7 +108,7 @@ def test_cursor_round_trip_and_tamper_rejection() -> None:
     decoded = decode_cursor(cursor)
     assert decoded is not None
     assert decoded.resource_id == resource_id
-    with pytest.raises(Exception):
+    with pytest.raises(ApiError):
         decode_cursor(cursor[:-1] + ("A" if cursor[-1] != "A" else "B"))
 
 
