@@ -126,25 +126,55 @@ export function BuildControlPlane({ projectId }: { projectId: string }) {
           <p>Create an Agent and immutable Agent version before queueing a Build.</p>
         ) : (
           <div style={{ display: "grid", gap: "1rem" }}>
-            <label style={{ display: "grid", gap: "0.35rem" }}>
-              Agent
-              <select disabled={queueing} onChange={(event) => void chooseAgent(event.target.value)} style={{ minHeight: 44, padding: "0.7rem" }} value={agentId}>
+            <div style={{ display: "grid", gap: "0.35rem" }}>
+              <label htmlFor="select-agent">Agent</label>
+              <select
+                id="select-agent"
+                disabled={queueing}
+                onChange={(event) => void chooseAgent(event.target.value)}
+                style={{ minHeight: 44, padding: "0.7rem" }}
+                value={agentId}
+              >
                 <option value="">Select an Agent</option>
-                {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
               </select>
-            </label>
-            {loadingAgent ? <p aria-live="polite" role="status">Loading versions and Builds…</p> : null}
-            {agentId && !loadingAgent ? (
-              <label style={{ display: "grid", gap: "0.35rem" }}>
-                Immutable Agent version
-                <select disabled={queueing || versions.length === 0} onChange={(event) => setVersionId(event.target.value)} style={{ minHeight: 44, padding: "0.7rem" }} value={versionId}>
-                  <option value="">Select a version</option>
-                  {versions.map((version) => <option key={version.id} value={version.id}>v{version.semantic_version} · revision {version.version_number}</option>)}
-                </select>
-              </label>
+            </div>
+            {loadingAgent ? (
+              <p aria-live="polite" role="status">Loading versions and Builds…</p>
             ) : null}
-            {agentId && !loadingAgent && versions.length === 0 ? <p>No immutable versions exist for this Agent.</p> : null}
-            <button aria-busy={queueing} disabled={!versionId || queueing} onClick={() => void queueBuild()} style={{ minHeight: 44, width: "fit-content" }} type="button">
+            {agentId && !loadingAgent ? (
+              <div style={{ display: "grid", gap: "0.35rem" }}>
+                <label htmlFor="select-agent-version">Immutable Agent version</label>
+                <select
+                  id="select-agent-version"
+                  disabled={queueing || versions.length === 0}
+                  onChange={(event) => setVersionId(event.target.value)}
+                  style={{ minHeight: 44, padding: "0.7rem" }}
+                  value={versionId}
+                >
+                  <option value="">Select a version</option>
+                  {versions.map((version) => (
+                    <option key={version.id} value={version.id}>
+                      v{version.semantic_version} · revision {version.version_number}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {agentId && !loadingAgent && versions.length === 0 ? (
+              <p aria-live="polite" role="status">No immutable versions exist for this Agent.</p>
+            ) : null}
+            <button
+              aria-busy={queueing}
+              disabled={!versionId || queueing}
+              onClick={() => void queueBuild()}
+              style={{ minHeight: 44, width: "fit-content" }}
+              type="button"
+            >
               {queueing ? "Queueing…" : "Queue Build metadata"}
             </button>
           </div>
@@ -166,10 +196,14 @@ export function BuildControlPlane({ projectId }: { projectId: string }) {
                     <div>
                       <h3 style={{ marginTop: 0 }}>Build {build.id}</h3>
                       <p>Agent version {build.agent_version_id}</p>
-                      <p style={{ color: "var(--muted-foreground)", fontFamily: "monospace", overflowWrap: "anywhere" }}>Manifest SHA-256 {build.manifest_digest}</p>
+                      <p style={{ color: "var(--muted-foreground)", fontFamily: "monospace", overflowWrap: "anywhere" }}>
+                        Manifest SHA-256 {build.manifest_digest}
+                      </p>
                       <p>Created {new Date(build.created_at).toLocaleString()}</p>
                     </div>
-                    <StatusBadge tone={build.status === "SUCCEEDED" ? "success" : build.status === "FAILED" ? "danger" : "info"}>{build.status}</StatusBadge>
+                    <StatusBadge tone={build.status === "SUCCEEDED" ? "success" : build.status === "FAILED" ? "danger" : "info"}>
+                      {build.status}
+                    </StatusBadge>
                   </div>
                 </Card>
               </li>
