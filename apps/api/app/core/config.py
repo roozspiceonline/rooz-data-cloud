@@ -1,3 +1,4 @@
+import base64
 from functools import lru_cache
 from typing import Literal
 
@@ -33,6 +34,10 @@ class Settings(BaseSettings):
     api_key_issuance_secret: str = "development-api-key-issuance-secret-change-me"
     rate_limit_key: str = "development-rate-limit-key-change-me"
     cursor_signing_key: str = "development-cursor-signing-key-change-me"
+    project_secret_master_key_b64: str = (
+        "ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE="
+    )
+    project_secret_master_key_version: str = "local-v1"
 
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
@@ -52,12 +57,38 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Security settings must be at least 32 characters: " + ", ".join(too_short)
             )
+        try:
+            master_key = base64.b64decode(
+                self.project_secret_master_key_b64,
+                validate=True,
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "Project-secret master key must be valid base64."
+            ) from exc
+        if len(master_key) != 32:
+            raise ValueError(
+                "Project-secret master key must decode to exactly 32 bytes."
+            )
+        if not self.project_secret_master_key_version.strip():
+            raise ValueError(
+                "Project-secret master key version cannot be empty."
+            )
         if self.env in {"staging", "production"}:
             defaults = [name for name, value in values.items() if "change-me" in value]
             if defaults:
                 raise ValueError(
                     "Default security settings are prohibited outside local environments: "
                     + ", ".join(defaults)
+                )
+            if (
+                self.project_secret_master_key_version == "local-v1"
+                or self.project_secret_master_key_b64
+                == "ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE="
+            ):
+                raise ValueError(
+                    "The local project-secret master key is prohibited "
+                    "outside local environments."
                 )
             if not self.session_cookie_secure:
                 raise ValueError("Secure session cookies are mandatory outside local environments")
