@@ -18,6 +18,7 @@ from ..models import (
     Project,
     ProjectSecret,
     Run,
+    StorageObject,
 )
 from .dependencies import AuthContext, resolve_auth_context
 
@@ -58,6 +59,12 @@ class RunAccess:
     run: Run
 
 
+@dataclass(frozen=True)
+class StorageObjectAccess:
+    context: AuthContext
+    storage_object: StorageObject
+
+
 async def _resolved_organization_id(
     db: AsyncSession,
     *,
@@ -71,6 +78,7 @@ async def _resolved_organization_id(
         "rdc_project_secret_org",
         "rdc_build_org",
         "rdc_run_org",
+        "rdc_storage_object_org",
     }
     if function_name not in allowed:
         raise RuntimeError("Unsupported organization resolver")
@@ -356,5 +364,42 @@ def require_run_permission(
                 message="The requested resource was not found.",
             )
         return RunAccess(context=context, run=record)
+
+    return dependency
+
+
+def require_storage_object_permission(
+    permission: str,
+) -> Callable[..., Awaitable[StorageObjectAccess]]:
+    async def dependency(
+        storage_object_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> StorageObjectAccess:
+        organization_id = await _resolved_organization_id(
+            db,
+            function_name="rdc_storage_object_org",
+            resource_id=storage_object_id,
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(StorageObject).where(
+                StorageObject.id == storage_object_id,
+                StorageObject.organization_id == organization_id,
+                StorageObject.deleted_at.is_(None),
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return StorageObjectAccess(context=context, storage_object=record)
 
     return dependency
