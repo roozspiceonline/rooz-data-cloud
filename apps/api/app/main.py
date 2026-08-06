@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from .api.routes.agents import router as agents_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
 from .core.config import get_settings
@@ -21,7 +22,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.2.0-phase1b",
+    version="0.3.0-phase1c",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -60,9 +61,7 @@ async def request_context(
         character.isalnum() or character in "._-"
         for character in incoming
     )
-    request.state.request_id = (
-        incoming if valid else f"req_{uuid4().hex}"
-    )
+    request.state.request_id = incoming if valid else f"req_{uuid4().hex}"
     response = await call_next(request)
     response.headers["X-Request-ID"] = request.state.request_id
     response.headers["Cache-Control"] = "no-store"
@@ -113,20 +112,24 @@ app.include_router(health_router)
 
 v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(identity_router)
+v1_router.include_router(agents_router)
 
 
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1B",
+        "phase": "1C",
         "service": "rdc-api",
-        "status": "identity-tenancy-foundation",
+        "status": "agent-registry-foundation",
         "tenant_rls_required": True,
         "write_only_secrets_required": True,
         "tenant_rls_enabled": True,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
+        "agent_versions_immutable": True,
+        "build_execution_enabled": False,
+        "run_execution_enabled": False,
     }
 
 
