@@ -119,6 +119,21 @@ export function AgentRegistry({
         </p>
       </header>
 
+      {message ? (
+        <div
+          aria-live="polite"
+          role="status"
+          style={{
+            padding: "0.75rem 1rem",
+            borderRadius: "0.375rem",
+            backgroundColor: "var(--surface-subtle, #f4f4f5)",
+            borderLeft: "4px solid var(--border-accent, #0052cc)",
+          }}
+        >
+          <p style={{ margin: 0 }}>{message}</p>
+        </div>
+      ) : null}
+
       <Card>
         <h2 style={{ marginTop: 0 }}>Create Agent</h2>
         <form onSubmit={create} style={{ display: "grid", gap: "1rem" }}>
@@ -137,15 +152,20 @@ export function AgentRegistry({
             Slug
             <input
               autoCapitalize="none"
+              aria-describedby="slug-help"
               disabled={submitting}
               maxLength={80}
               onChange={(event) => setSlug(event.target.value)}
               pattern="[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?"
               required
+              spellCheck={false}
               style={{ minHeight: 44, padding: "0.7rem" }}
               value={slug}
             />
           </label>
+          <p id="slug-help" style={{ color: "var(--muted-foreground)", margin: 0, fontSize: "0.875rem" }}>
+            Lowercase letters, numbers, and hyphens only (e.g., <code>my-agent-1</code>).
+          </p>
           <label style={{ display: "grid", gap: "0.35rem" }}>
             Description
             <textarea
@@ -230,12 +250,6 @@ export function AgentRegistry({
           </button>
         ) : null}
       </section>
-
-      {message ? (
-        <p aria-live="polite" role="status" style={{ margin: 0 }}>
-          {message}
-        </p>
-      ) : null}
     </div>
   );
 }
