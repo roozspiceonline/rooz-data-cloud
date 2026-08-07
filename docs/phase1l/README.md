@@ -39,3 +39,20 @@ Browser activation additionally depends on the existing sandbox canary and
 Phase 1J web-egress gate.
 
 General untrusted browser execution remains release-blocked.
+
+## Browser runtime skeleton
+
+The first browser process boundary lives under `workers/browser-runtime/`.
+
+It pins Playwright Python `1.61.0` and the matching official Noble image,
+runs as the non-root `pwuser`, exposes no remote CDP port, and currently accepts
+only an explicit `about:blank` self-test.
+
+The runtime is deliberately not imported or launched by
+`workers/sandbox-runtime/worker.py`. Live navigation remains disabled until a
+later Phase 1L integration supplies browser-specific seccomp and egress
+enforcement.
+
+This separation proves the Chromium process boundary without changing the Agent
+container, which remains `--network none`.
+
