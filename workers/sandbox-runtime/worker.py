@@ -7,6 +7,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from browser_policy import (
+    BrowserPolicy,
+    BrowserPolicyError,
+    validate_browser_plan,
+)
 from build_executor import LocalArtifact, build_agent
 from config import SandboxWorkerConfig
 from egress_broker import broker_web_requests
@@ -64,11 +69,30 @@ def _worker_egress_policy(
     )
 
 
+def _worker_browser_policy(
+    config: SandboxWorkerConfig,
+) -> BrowserPolicy | None:
+    if not config.browser_enabled:
+        return None
+    return BrowserPolicy.create(
+        enabled=True,
+        allowed_hosts=config.web_egress_allowed_hosts,
+        max_pages=config.browser_max_pages,
+        max_actions=config.browser_max_actions,
+        navigation_timeout_seconds=(
+            config.browser_navigation_timeout_seconds
+        ),
+        max_dom_bytes=config.browser_max_dom_bytes,
+        max_screenshot_bytes=config.browser_max_screenshot_bytes,
+    )
+
+
 def _require_canary_activation(
     payload: dict[str, Any],
     *,
     worker_name: str,
     egress_policy: EgressPolicy | None,
+    browser_policy: BrowserPolicy | None,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -116,19 +140,24 @@ def _require_canary_activation(
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         raise SandboxPolicyError("Canary Agent capabilities are missing.")
+    browser = capabilities.get("browser")
+    if not isinstance(browser, bool):
+        raise SandboxPolicyError(
+            "Canary Agent browser capability is invalid."
+        )
     if (
-        capabilities.get("browser") is not False
-        or capabilities.get("dataset") is not False
+        capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
     ):
         raise SandboxPolicyError(
-            "Canary Agent requested an unsupported Phase 1J capability."
+            "Canary Agent requested an unsupported storage capability."
         )
 
     profile = activation.get("capability_profile")
     network = capabilities.get("network")
     egress_digest = activation.get("egress_policy_digest")
+    browser_digest = activation.get("browser_policy_digest")
 
     if profile == "offline-minimal":
         if network != "none":
@@ -140,6 +169,10 @@ def _require_canary_activation(
                 "Offline-minimal activation cannot carry an egress digest."
             )
     elif profile == "brokered-web-egress":
+        if browser is not False:
+            raise SandboxPolicyError(
+                "Brokered web-egress activation cannot enable browser."
+            )
         if network != "web-egress":
             raise SandboxPolicyError(
                 "Brokered web-egress activation requires network=web-egress."
@@ -153,6 +186,58 @@ def _require_canary_activation(
                 "Canary activation egress-policy digest does not match "
                 "the worker policy."
             )
+        if browser_digest is not None:
+            raise SandboxPolicyError(
+                "Brokered web-egress activation cannot carry browser policy."
+            )
+    elif profile == "controlled-browser":
+        if payload.get("work_kind") != "RUN_START":
+            raise SandboxPolicyError(
+                "Controlled-browser activation is valid only for RUN_START."
+            )
+        if browser is not True or network != "web-egress":
+            raise SandboxPolicyError(
+                "Controlled browser requires browser=true and web-egress."
+            )
+        if egress_policy is None or browser_policy is None:
+            raise SandboxPolicyError(
+                "Worker browser or web-egress policy is unavailable."
+            )
+        if egress_digest != egress_policy.digest:
+            raise SandboxPolicyError(
+                "Controlled-browser egress-policy digest mismatch."
+            )
+        if browser_digest != browser_policy.digest:
+            raise SandboxPolicyError(
+                "Controlled-browser policy digest mismatch."
+            )
+
+        input_reference = payload.get("input_reference")
+        if not isinstance(input_reference, dict):
+            raise SandboxPolicyError(
+                "Controlled-browser claim lacks an input reference."
+            )
+        browser_plan = input_reference.get("browser")
+        stored_policy = input_reference.get("browser_policy")
+        stored_digest = input_reference.get("browser_policy_digest")
+        if not isinstance(stored_policy, dict):
+            raise SandboxPolicyError(
+                "Controlled-browser claim lacks a policy receipt."
+            )
+        if _canonical_digest(stored_policy) != browser_policy.digest:
+            raise SandboxPolicyError(
+                "Stored browser policy receipt does not match worker policy."
+            )
+        if stored_digest != browser_policy.digest:
+            raise SandboxPolicyError(
+                "Stored browser policy digest does not match worker policy."
+            )
+        try:
+            validate_browser_plan(browser_plan, policy=browser_policy)
+        except BrowserPolicyError as exc:
+            raise SandboxPolicyError(
+                "Browser plan failed independent worker validation."
+            ) from exc
     else:
         raise SandboxPolicyError(
             "Canary activation capability profile is unsupported."
@@ -229,10 +314,12 @@ def _build(
     workspace = private_temp_dir(config.workspace_root, "build-")
     try:
         egress_policy = _worker_egress_policy(config)
+        browser_policy = _worker_browser_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
             egress_policy=egress_policy,
+            browser_policy=browser_policy,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -316,11 +403,29 @@ def _run(
     workspace = private_temp_dir(config.workspace_root, "run-")
     try:
         egress_policy = _worker_egress_policy(config)
+        browser_policy = _worker_browser_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
             egress_policy=egress_policy,
+            browser_policy=browser_policy,
         )
+        if activation.get("capability_profile") == "controlled-browser":
+            client.complete(
+                lease_id,
+                token,
+                {
+                    "outcome": "FAILED",
+                    "retryable": False,
+                    "error_code": "BROWSER_RUNTIME_NOT_WIRED",
+                    "error_summary": (
+                        "Controlled browser policy was verified, but live "
+                        "browser execution is not wired in Phase 1L yet."
+                    ),
+                },
+            )
+            return
+
         artifact_grant = _data(client.artifact_download(lease_id, token))
         image_path = workspace / "image.oci.tar"
         download_file(
