@@ -225,6 +225,53 @@ def main() -> None:
         "Phase 1L browser Run regression tests are missing",
     )
 
+    execution_schemas = read("apps/api/app/execution_schemas.py")
+    for marker in [
+        '"controlled-browser"',
+        "browser_policy_digest: str | None",
+        "Controlled browser requires an egress-policy digest.",
+        "Controlled browser requires a browser-policy digest.",
+    ]:
+        require(
+            marker in execution_schemas,
+            "browser activation schema missing: " + marker,
+        )
+
+    execution_plane = read("apps/api/app/services/execution_plane.py")
+    for marker in [
+        "_browser_policy_payload",
+        'capability_profile = "controlled-browser"',
+        "browser_policy_digest=browser_policy_digest",
+        "canonical_fingerprint(stored_policy)",
+        "settings.sandbox_canary_browser_enabled",
+    ]:
+        require(
+            marker in execution_plane,
+            "control-plane browser activation guard missing: " + marker,
+        )
+
+    worker_source = read("workers/sandbox-runtime/worker.py")
+    for marker in [
+        "def _worker_browser_policy",
+        'profile == "controlled-browser"',
+        "browser_digest != browser_policy.digest",
+        "validate_browser_plan(browser_plan, policy=browser_policy)",
+        '"BROWSER_RUNTIME_NOT_WIRED"',
+    ]:
+        require(
+            marker in worker_source,
+            "worker browser activation verification missing: " + marker,
+        )
+
+    activation_tests = read(
+        "apps/api/tests/test_phase1l_activation_receipt.py"
+    )
+    require(
+        "test_phase1l_controlled_browser_requires_both_policy_digests"
+        in activation_tests,
+        "controlled-browser activation schema tests are missing",
+    )
+
     runbook = read("docs/phase1l/RUNBOOK.md")
     require(
         "Do not enable browser execution during the Phase 1L foundation." in runbook,
@@ -243,6 +290,8 @@ def main() -> None:
     print("  isolated Playwright/Chromium skeleton: PASS")
     print("  Run browser contract + immutable policy receipt: PASS")
     print("  worker browser policy reconstruction config: PASS")
+    print("  controlled-browser activation receipt: PASS")
+    print("  worker independent browser-policy verification: PASS")
     print("  browser runtime live navigation wiring: NOT IMPLEMENTED")
     print("  general untrusted browser execution: BLOCKED")
 
