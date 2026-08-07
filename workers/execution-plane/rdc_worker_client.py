@@ -93,6 +93,7 @@ class RdcWorkerClient:
         software_version: str,
         active_lease_count: int,
         draining: bool = False,
+        sandbox: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         response = self._request(
             "POST",
@@ -101,6 +102,7 @@ class RdcWorkerClient:
                 "status": "DRAINING" if draining else "ACTIVE",
                 "software_version": software_version,
                 "active_lease_count": active_lease_count,
+                "sandbox": sandbox,
                 "metadata": {"reference_client": True},
             },
         )
@@ -147,6 +149,86 @@ class RdcWorkerClient:
         )
         if response is None:
             raise WorkerProtocolError("Source-download response was empty.")
+        return response
+
+    def status(
+        self,
+        lease_id: str,
+        lease_token: str,
+        *,
+        status: str,
+        message: str | None = None,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/status",
+            {"status": status, "message": message},
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Lease status response was empty.")
+        return response
+
+    def events(
+        self,
+        lease_id: str,
+        lease_token: str,
+        events: list[dict[str, object]],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/events",
+            {"events": events},
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Event response was empty.")
+        return response
+
+    def artifact_upload(
+        self,
+        lease_id: str,
+        lease_token: str,
+        artifact: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/artifact-upload",
+            artifact,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Artifact-upload response was empty.")
+        return response
+
+    def artifact_download(
+        self,
+        lease_id: str,
+        lease_token: str,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/artifact-download",
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Artifact-download response was empty.")
+        return response
+
+    def complete(
+        self,
+        lease_id: str,
+        lease_token: str,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/complete",
+            payload,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Lease completion response was empty.")
         return response
 
     def request_secret_envelope(
