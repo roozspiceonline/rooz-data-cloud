@@ -89,6 +89,52 @@ class WebFetchEnvelopeInput(StrictModel):
         return self
 
 
+class BrowserSnapshotActionInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["snapshot"] = "snapshot"
+    include_html: bool
+
+
+class BrowserSessionInput(StrictModel):
+    schema_version: Literal["rdc.browser/v1"] = "rdc.browser/v1"
+    start_url: str = Field(min_length=9, max_length=8192)
+    wait_until: Literal["domcontentloaded", "load"] = "domcontentloaded"
+    actions: list[BrowserSnapshotActionInput] = Field(min_length=1, max_length=16)
+
+    @field_validator("start_url")
+    @classmethod
+    def validate_start_url(cls, value: str) -> str:
+        if not value.startswith("https://"):
+            raise ValueError("Browser start URL must use lowercase https://.")
+        try:
+            parsed = urlsplit(value)
+        except ValueError as exc:
+            raise ValueError("Browser start URL is malformed.") from exc
+        if not parsed.hostname:
+            raise ValueError("Browser start URL requires a hostname.")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("Browser URL credentials are not allowed.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_session(self) -> "BrowserSessionInput":
+        action_ids = [action.id for action in self.actions]
+        if len(action_ids) != len(set(action_ids)):
+            raise ValueError("Browser action ids must be unique.")
+        encoded = json.dumps(
+            self.model_dump(mode="json"),
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+        if len(encoded) > 65_536:
+            raise ValueError("Browser session envelope cannot exceed 64 KiB.")
+        return self
+
+
 class RuntimeConfigurationInput(StrictModel):
     memory_mb: int | None = Field(default=None, ge=128, le=32768)
     cpu_millis: int | None = Field(default=None, ge=100, le=16000)
@@ -99,6 +145,7 @@ class CreateRunRequest(StrictModel):
     build_id: UUID
     input: dict[str, object] = Field(default_factory=dict)
     web_fetch: WebFetchEnvelopeInput | None = None
+    browser: BrowserSessionInput | None = None
     runtime: RuntimeConfigurationInput = Field(
         default_factory=RuntimeConfigurationInput
     )
@@ -115,6 +162,10 @@ class CreateRunRequest(StrictModel):
             raise ValueError("Run input must contain valid JSON values.") from exc
         if len(encoded) > 65_536:
             raise ValueError("Inline Run input cannot exceed 64 KiB.")
+        if self.web_fetch is not None and self.browser is not None:
+            raise ValueError(
+                "Phase 1L does not allow web_fetch and browser in one Run."
+            )
         return self
 
 
