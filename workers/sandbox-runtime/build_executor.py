@@ -44,6 +44,9 @@ def build_agent(
     source_dir: Path,
     workspace: Path,
     build_id: str,
+    agent_version_id: str,
+    source_sha256: str,
+    activation: dict[str, object],
     timeout_seconds: int,
 ) -> list[LocalArtifact]:
     validate_dockerfile(source_dir / "Dockerfile", config.approved_base_images)
@@ -107,6 +110,9 @@ def build_agent(
         "runtime": "containerd-rootless",
         "network_policy": "deny-all",
         "image_ref": image_ref,
+        "agent_version_id": agent_version_id,
+        "source_sha256": source_sha256,
+        "activation": dict(activation),
     }
     provenance_path.write_text(json.dumps(provenance, sort_keys=True), encoding="utf-8")
     artifacts: list[LocalArtifact] = []
@@ -118,8 +124,24 @@ def build_agent(
             "PASSED",
             provenance,
         ),
-        ("SBOM", sbom_path, "application/vnd.cyclonedx+json", "NOT_REQUIRED", {}),
-        ("PROVENANCE", provenance_path, "application/json", "NOT_REQUIRED", provenance),
+        (
+            "SBOM",
+            sbom_path,
+            "application/vnd.cyclonedx+json",
+            "NOT_REQUIRED",
+            {
+                "agent_version_id": agent_version_id,
+                "source_sha256": source_sha256,
+                "activation": dict(activation),
+            },
+        ),
+        (
+            "PROVENANCE",
+            provenance_path,
+            "application/json",
+            "NOT_REQUIRED",
+            provenance,
+        ),
     ]:
         digest, size = sha256_file(path)
         artifacts.append(
