@@ -10,11 +10,16 @@ from typing import Any
 from build_executor import LocalArtifact, build_agent
 from config import SandboxWorkerConfig
 from egress_broker import broker_web_requests
-from egress_policy import EgressPolicy
+from egress_policy import EgressPolicy, EgressPolicyError
 from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
 from policy import SandboxPolicyError, verify_host
 from rdc_worker_client import RdcWorkerClient, decrypt_secret_envelope, generate_worker_key_pair
 from run_executor import cancel_run, load_image, run_agent
+from web_fetch_contract import (
+    WebFetchContractError,
+    phase1j_broker_adapter,
+    phase1j_broker_result_adapter,
+)
 
 
 def _data(response: dict[str, Any]) -> dict[str, Any]:
@@ -336,15 +341,70 @@ def _run(
         entrypoint = [str(value) for value in runtime["entrypoint"]]
         input_ref = dict(payload["input_reference"])
         input_value = dict(input_ref.get("value") or {})
-        if activation.get("capability_profile") == "brokered-web-egress":
+        web_fetch = input_ref.get("web_fetch")
+        profile = activation.get("capability_profile")
+
+        if web_fetch is not None and profile != "brokered-web-egress":
+            raise SandboxPolicyError(
+                "Web-fetch intent requires brokered-web-egress activation."
+            )
+
+        if profile == "brokered-web-egress":
             if egress_policy is None:
                 raise SandboxPolicyError(
                     "Brokered web-egress activation lacks worker policy."
                 )
-            input_value = broker_web_requests(
-                input_value,
-                policy=egress_policy,
-            )
+            if web_fetch is not None:
+                if "_rdc_web_requests" in input_value:
+                    raise SandboxPolicyError(
+                        "Versioned web fetch cannot be mixed with the "
+                        "legacy Phase 1J request key."
+                    )
+                try:
+                    broker_input = phase1j_broker_adapter(web_fetch)
+                    broker_output = broker_web_requests(
+                        broker_input,
+                        policy=egress_policy,
+                    )
+                    web_fetch_result = phase1j_broker_result_adapter(
+                        web_fetch,
+                        broker_output,
+                    )
+                except WebFetchContractError:
+                    client.complete(
+                        lease_id,
+                        token,
+                        {
+                            "outcome": "FAILED",
+                            "retryable": False,
+                            "error_code": "WEB_FETCH_CONTRACT_INVALID",
+                            "error_summary": (
+                                "The versioned web-fetch contract was invalid."
+                            ),
+                        },
+                    )
+                    return
+                except EgressPolicyError:
+                    client.complete(
+                        lease_id,
+                        token,
+                        {
+                            "outcome": "FAILED",
+                            "retryable": False,
+                            "error_code": "WEB_FETCH_POLICY_DENIED",
+                            "error_summary": (
+                                "Brokered web fetch was denied or failed "
+                                "within the operator policy."
+                            ),
+                        },
+                    )
+                    return
+                input_value["_rdc_web_fetch_result"] = web_fetch_result
+            else:
+                input_value = broker_web_requests(
+                    input_value,
+                    policy=egress_policy,
+                )
         secrets: dict[str, object] = {}
         names = [str(value) for value in manifest.get("secrets", [])]
         if names:

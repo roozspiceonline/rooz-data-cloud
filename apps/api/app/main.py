@@ -27,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.10.0-phase1j",
+    version="0.11.0-phase1k",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -130,9 +130,9 @@ v1_router.include_router(storage_router)
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1J",
+        "phase": "1K",
         "service": "rdc-api",
-        "status": "restricted-web-egress-canary",
+        "status": "generalized-web-fetch-runtime-contract",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -162,6 +162,11 @@ async def foundation_status() -> dict[str, object]:
         "sandbox_canary_web_egress_enabled": (
             settings.sandbox_canary_web_egress_enabled
         ),
+        "web_fetch_request_contract": "rdc.web-fetch/v1",
+        "web_fetch_result_contract": "rdc.web-fetch-result/v1",
+        "versioned_web_fetch_contract_available": True,
+        "web_fetch_activation_scope": "phase1j-single-canary",
+        "browser_execution_enabled": False,
         "brokered_web_egress_enabled": (
             settings.sandbox_execution_enabled
             and settings.sandbox_activation_mode == "canary"

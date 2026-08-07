@@ -129,6 +129,24 @@ def run_event_metadata(record: RunEvent) -> dict[str, object]:
     }
 
 
+def _manifest_network(version: AgentVersion) -> str:
+    capabilities = version.manifest.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise ApiError(
+            status_code=409,
+            code="AGENT_MANIFEST_INVALID",
+            message="The immutable Agent version has invalid capabilities.",
+        )
+    network = capabilities.get("network")
+    if network not in {"none", "web-egress"}:
+        raise ApiError(
+            status_code=409,
+            code="AGENT_MANIFEST_INVALID",
+            message="The immutable Agent version has invalid network capability.",
+        )
+    return str(network)
+
+
 def _manifest_resource(version: AgentVersion, key: str) -> int:
     resources = version.manifest.get("resources")
     if not isinstance(resources, dict):
@@ -294,11 +312,26 @@ async def create_run(
         )
 
     runtime = _runtime_configuration(version, payload)
+    web_fetch = (
+        payload.web_fetch.model_dump(mode="json")
+        if payload.web_fetch is not None
+        else None
+    )
+    if web_fetch is not None and _manifest_network(version) != "web-egress":
+        raise ApiError(
+            status_code=422,
+            code="WEB_FETCH_CAPABILITY_REQUIRED",
+            message=(
+                "This immutable Agent version does not declare "
+                "network=web-egress."
+            ),
+        )
     fingerprint = canonical_fingerprint(
         {
             "agent_version_id": str(version.id),
             "build_id": str(build.id),
             "input": payload.input,
+            "web_fetch": web_fetch,
             "runtime": runtime,
         }
     )
@@ -335,6 +368,13 @@ async def create_run(
         return dict(existing.response_snapshot)
 
     now = datetime.now(UTC)
+    input_reference: dict[str, object] = {
+        "kind": "inline",
+        "value": payload.input,
+    }
+    if web_fetch is not None:
+        input_reference["web_fetch"] = web_fetch
+
     record = Run(
         id=uuid4(),
         organization_id=version.organization_id,
@@ -343,7 +383,7 @@ async def create_run(
         agent_version_id=version.id,
         build_id=build.id,
         status="QUEUED",
-        input_reference={"kind": "inline", "value": payload.input},
+        input_reference=input_reference,
         runtime_configuration=runtime,
         memory_mb=runtime["memory_mb"],
         cpu_millis=runtime["cpu_millis"],

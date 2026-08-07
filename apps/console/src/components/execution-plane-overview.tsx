@@ -111,11 +111,11 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
     <section aria-labelledby="execution-plane-heading">
       <header style={{ marginBottom: "1.5rem" }}>
         <p style={{ color: "var(--muted-foreground)", margin: 0 }}>
-          Phase 1J
+          Phase 1K
         </p>
         <h1 id="execution-plane-heading">Isolated execution plane</h1>
         <p style={{ maxWidth: "72ch" }}>
-          Phase 1J extends the Phase 1I safety model.
+          Phase 1K builds on the Phase 1J and Phase 1I safety model.
           It permits one configured immutable AgentVersion on one exact single-concurrency worker
           after both the master gate and canary mode are enabled.
           General untrusted execution remains release-blocked.
@@ -155,6 +155,19 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
           worker-brokered GET/HEAD requests to the operator allowlist, with
           digest-bound policy, DNS/IP validation, redirect checks, and bounded
           request/byte/time budgets. The separate web-egress gate defaults off.
+        </p>
+      </Card>
+
+      <div style={{ height: "1rem" }} />
+
+      <Card>
+        <h2>Versioned web fetch</h2>
+        <p>
+          Phase 1K accepts top-level web_fetch intent using rdc.web-fetch/v1.
+          The worker independently validates it, uses the Phase 1J broker, and
+          injects only _rdc_web_fetch_result with rdc.web-fetch-result/v1,
+          request/body SHA-256 lineage, and bounded budget evidence.
+          Agent container stays --network none; the web-egress gate defaults off.
         </p>
       </Card>
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import re
 import socket
@@ -32,6 +33,7 @@ class BrokerResponse:
     body_text: str | None
     body_base64: str | None
     size_bytes: int
+    body_sha256: str
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -43,6 +45,7 @@ class BrokerResponse:
             "body_text": self.body_text,
             "body_base64": self.body_base64,
             "size_bytes": self.size_bytes,
+            "body_sha256": self.body_sha256,
         }
 
 
@@ -243,6 +246,7 @@ def _fetch(
             body_text=body_text,
             body_base64=body_base64,
             size_bytes=len(body),
+            body_sha256=hashlib.sha256(body).hexdigest(),
         )
 
 

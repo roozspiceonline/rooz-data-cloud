@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import socket
 import sys
 from pathlib import Path
@@ -17,6 +18,20 @@ def require(condition: bool, message: str) -> None:
 
 def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def foundation_phase_at_least(
+    source: str,
+    *,
+    minimum_major: int,
+    minimum_letter: str,
+) -> bool:
+    marker = re.search(r'"phase": "(\d+)([A-Z])"', source)
+    if marker is None:
+        return False
+    current = (int(marker.group(1)), ord(marker.group(2)))
+    minimum = (minimum_major, ord(minimum_letter))
+    return current >= minimum
 
 
 def load_policy_module() -> ModuleType:
@@ -424,7 +439,14 @@ def main() -> None:
     )
 
     main_api = read("apps/api/app/main.py")
-    require('"phase": "1J"' in main_api, "foundation phase is not 1J")
+    require(
+        foundation_phase_at_least(
+            main_api,
+            minimum_major=1,
+            minimum_letter="J",
+        ),
+        "foundation status is earlier than Phase 1J",
+    )
     require(
         '"brokered_web_egress_enabled"' in main_api,
         "Phase 1J status signal is missing",
