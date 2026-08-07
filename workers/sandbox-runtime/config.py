@@ -58,6 +58,9 @@ class SandboxWorkerConfig:
     browser_navigation_timeout_seconds: int
     browser_max_dom_bytes: int
     browser_max_screenshot_bytes: int
+    browser_runtime_image_ref: str
+    browser_seccomp_profile: Path
+    browser_runtime_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "SandboxWorkerConfig":
@@ -163,5 +166,18 @@ class SandboxWorkerConfig:
             ),
             browser_max_screenshot_bytes=int(
                 os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_SCREENSHOT_BYTES", "2097152")
+            ),
+            browser_runtime_image_ref=os.environ.get(
+                "RDC_SANDBOX_BROWSER_RUNTIME_IMAGE_REF",
+                "",
+            ).strip(),
+            browser_seccomp_profile=Path(
+                os.environ.get(
+                    "RDC_BROWSER_SECCOMP_PROFILE",
+                    "infrastructure/sandbox/seccomp-rdc-browser.json",
+                )
+            ).resolve(),
+            browser_runtime_timeout_seconds=int(
+                os.environ.get("RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS", "20")
             ),
         )
