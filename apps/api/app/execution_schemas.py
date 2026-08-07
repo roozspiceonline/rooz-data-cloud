@@ -3,7 +3,14 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 WorkerCapability = Literal[
     "BUILD",
@@ -45,12 +52,33 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SandboxAttestation(StrictModel):
+    schema_version: Literal["rdc.sandbox/v1"] = "rdc.sandbox/v1"
+    runtime: Literal["containerd-rootless"] = "containerd-rootless"
+    builder: Literal["buildkit-rootless"] = "buildkit-rootless"
+    rootless: Literal[True] = True
+    no_host_docker_socket: Literal[True] = True
+    no_new_privileges: Literal[True] = True
+    read_only_rootfs: Literal[True] = True
+    drop_all_capabilities: Literal[True] = True
+    seccomp_profile: Literal["rdc-default"] = "rdc-default"
+    apparmor_profile: str = Field(min_length=1, max_length=120)
+    network_policy: Literal["deny-all"] = "deny-all"
+    max_memory_mb: int = Field(ge=128, le=32768)
+    max_cpu_millis: int = Field(ge=100, le=16000)
+    max_pids: int = Field(ge=16, le=4096)
+    max_ephemeral_disk_mb: int = Field(ge=64, le=102400)
+    max_build_seconds: int = Field(ge=30, le=3600)
+    max_run_seconds: int = Field(ge=1, le=86400)
+
+
 class RegisterWorkerRequest(StrictModel):
     name: str = Field(min_length=3, max_length=160, pattern=r"^[a-z0-9][a-z0-9._-]+$")
     capabilities: list[WorkerCapability] = Field(min_length=1, max_length=5)
     max_concurrency: int = Field(ge=1, le=256)
     protocol_version: Literal["rdc.worker/v1"] = "rdc.worker/v1"
     software_version: str = Field(min_length=1, max_length=80)
+    sandbox: SandboxAttestation | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("capabilities")
@@ -82,6 +110,10 @@ class WorkerSummary(BaseModel):
     protocol_version: str
     software_version: str
     metadata: dict[str, object]
+    sandbox_profile: str | None
+    sandbox_attestation_digest: str | None
+    sandbox_execution_enabled: bool
+    sandbox_attested_at: datetime | None
     registered_at: datetime
     last_seen_at: datetime | None
     expires_at: datetime | None
@@ -97,6 +129,7 @@ class WorkerHeartbeatRequest(StrictModel):
     status: Literal["ACTIVE", "DRAINING"] = "ACTIVE"
     software_version: str = Field(min_length=1, max_length=80)
     active_lease_count: int = Field(ge=0, le=256)
+    sandbox: SandboxAttestation | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("metadata")
@@ -179,6 +212,32 @@ class ArtifactRegistration(StrictModel):
         return value
 
 
+class ArtifactUploadRequest(StrictModel):
+    kind: ArtifactKind
+    digest_algorithm: Literal["sha256"] = "sha256"
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    media_type: str = Field(min_length=1, max_length=160)
+    size_bytes: int = Field(ge=1, le=68_719_476_736)
+
+
+class ArtifactUploadIntent(BaseModel):
+    object_key: str
+    url: str
+    headers: dict[str, str]
+    expires_at: datetime
+
+
+class ArtifactDownloadGrant(BaseModel):
+    artifact_id: UUID
+    url: str
+    expires_at: datetime
+    digest_algorithm: str
+    digest: str
+    media_type: str
+    size_bytes: int
+    provenance: dict[str, object]
+
+
 class CompleteLeaseRequest(StrictModel):
     outcome: Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "CANCELLED"]
     retryable: bool = False
@@ -189,6 +248,17 @@ class CompleteLeaseRequest(StrictModel):
     )
     error_summary: str | None = Field(default=None, max_length=2000)
     artifact: ArtifactRegistration | None = None
+    artifacts: list[ArtifactRegistration] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_artifacts(self) -> "CompleteLeaseRequest":
+        if self.artifact is not None and self.artifacts:
+            raise ValueError("Use artifact or artifacts, not both.")
+        values = [self.artifact] if self.artifact is not None else self.artifacts
+        identities = [(item.kind, item.digest) for item in values if item is not None]
+        if len(set(identities)) != len(identities):
+            raise ValueError("Execution artifacts must be unique by kind and digest.")
+        return self
 
 
 class SecretEnvelopeRequest(StrictModel):
