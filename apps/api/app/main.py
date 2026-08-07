@@ -27,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.8.0-phase1h",
+    version="0.9.0-phase1i",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -130,7 +130,7 @@ v1_router.include_router(storage_router)
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1H",
+        "phase": "1I",
         "service": "rdc-api",
         "status": "sandbox-runtime-foundation",
         "write_only_project_secrets": True,
@@ -157,6 +157,13 @@ async def foundation_status() -> dict[str, object]:
         "sandbox_execution_enabled": settings.sandbox_execution_enabled,
         "sandbox_attestation_required": True,
         "sandbox_default_network_policy": "deny-all",
+        "sandbox_activation_mode": settings.sandbox_activation_mode,
+        "controlled_canary_execution_enabled": (
+            settings.sandbox_execution_enabled
+            and settings.sandbox_activation_mode == "canary"
+            and bool(settings.sandbox_canary_agent_version_id.strip())
+            and bool(settings.sandbox_canary_worker_name.strip())
+        ),
         "untrusted_agent_execution_enabled": False,
     }
 
