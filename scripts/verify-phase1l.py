@@ -153,10 +153,19 @@ def main() -> None:
             "browser runtime exposes forbidden live behavior: " + forbidden,
         )
 
-    require(
-        "not connected" in runtime_readme.casefold(),
-        "browser runtime README does not state inert integration",
-    )
+    for marker in [
+        "verified `controlled-browser` canary activation",
+        "opens only `about:blank`",
+        "accepts no URL",
+        "rdc.local/browser-runtime@sha256:<64-hex>",
+        "`--pull never`",
+        "`--network none`",
+        "public URL navigation",
+    ]:
+        require(
+            marker in runtime_readme,
+            "browser runtime README bridge boundary missing: " + marker,
+        )
     require(
         "General untrusted browser execution remains release-blocked."
         in runtime_readme,
