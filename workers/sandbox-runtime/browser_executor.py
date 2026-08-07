@@ -26,7 +26,9 @@ class BrowserRuntimeError(SandboxPolicyError):
 
 def validate_browser_self_test(value: object) -> dict[str, object]:
     if not isinstance(value, dict) or set(value) != _EXPECTED_KEYS:
-        raise BrowserRuntimeError("Browser self-test returned an invalid envelope.")
+        raise BrowserRuntimeError(
+            "Browser self-test returned an invalid envelope."
+        )
     expected = {
         "schema_version": "rdc.browser-runtime-self-test/v1",
         "browser": "chromium",
@@ -37,16 +39,54 @@ def validate_browser_self_test(value: object) -> dict[str, object]:
         "external_navigation": False,
     }
     if value != expected:
-        raise BrowserRuntimeError("Browser self-test did not preserve isolation.")
+        raise BrowserRuntimeError(
+            "Browser self-test did not preserve isolation."
+        )
     return {str(key): item for key, item in value.items()}
 
 
-def run_browser_self_test(
+def _browser_container_name(run_id: str) -> str:
+    normalized = "".join(
+        character for character in run_id if character.isalnum()
+    )[:32]
+    if not normalized:
+        raise BrowserRuntimeError("Browser Run id is invalid.")
+    return "rdc-browser-" + normalized
+
+
+def _cleanup_browser_container(
+    config: SandboxWorkerConfig,
+    name: str,
+) -> None:
+    command = [
+        "nerdctl",
+        "--address",
+        config.containerd_address,
+        "--namespace",
+        config.namespace,
+        "rm",
+        "-f",
+        name,
+    ]
+    try:
+        subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+
+def browser_self_test_command(
     *,
     config: SandboxWorkerConfig,
     run_id: str,
-    workspace: Path,
-) -> tuple[Path, Path]:
+) -> tuple[str, list[str]]:
     image_ref = config.browser_runtime_image_ref
     if _IMAGE_REF.fullmatch(image_ref) is None:
         raise BrowserRuntimeError(
@@ -54,10 +94,12 @@ def run_browser_self_test(
         )
     if not config.browser_seccomp_profile.is_file():
         raise BrowserRuntimeError("Browser seccomp profile is unavailable.")
+    if not 1 <= config.browser_runtime_timeout_seconds <= 30:
+        raise BrowserRuntimeError(
+            "Browser runtime timeout is outside the safe range."
+        )
 
-    output_path = workspace / "browser-runtime-output.json"
-    log_path = workspace / "browser-runtime.log"
-    name = "rdc-browser-" + run_id.replace("-", "")[:32]
+    name = _browser_container_name(run_id)
     command = [
         "nerdctl",
         "--address",
@@ -95,22 +137,48 @@ def run_browser_self_test(
         image_ref,
         "--self-test",
     ]
+    return name, command
+
+
+def run_browser_self_test(
+    *,
+    config: SandboxWorkerConfig,
+    run_id: str,
+    workspace: Path,
+) -> tuple[Path, Path]:
+    output_path = workspace / "browser-runtime-output.json"
+    log_path = workspace / "browser-runtime.log"
+    name, command = browser_self_test_command(
+        config=config,
+        run_id=run_id,
+    )
+
     try:
         completed = subprocess.run(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.DEVNULL,
             text=True,
             timeout=config.browser_runtime_timeout_seconds,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise BrowserRuntimeError("Browser self-test exceeded its timeout.") from exc
+        raise BrowserRuntimeError(
+            "Browser self-test exceeded its timeout."
+        ) from exc
+    except OSError as exc:
+        raise BrowserRuntimeError(
+            "Browser runtime process could not start."
+        ) from exc
+    finally:
+        _cleanup_browser_container(config, name)
 
     raw = completed.stdout.strip()
     log_path.write_text(
-        "browser-runtime self-test exit=" + str(completed.returncode) + "\n",
+        "browser-runtime self-test exit="
+        + str(completed.returncode)
+        + "\n",
         encoding="utf-8",
     )
     if completed.returncode != 0:
@@ -120,10 +188,18 @@ def run_browser_self_test(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise BrowserRuntimeError("Browser self-test output is not JSON.") from exc
+        raise BrowserRuntimeError(
+            "Browser self-test output is not JSON."
+        ) from exc
+
     validated = validate_browser_self_test(payload)
     output_path.write_text(
-        json.dumps(validated, sort_keys=True, separators=(",", ":")) + "\n",
+        json.dumps(
+            validated,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
         encoding="utf-8",
     )
     return output_path, log_path
