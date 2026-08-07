@@ -92,3 +92,22 @@ again.
 Even after all receipt checks pass, Phase 1L deliberately returns
 `BROWSER_RUNTIME_NOT_WIRED`. Chromium is not launched by this increment.
 
+## Isolated browser-runtime bridge
+
+The sandbox worker can now bridge a fully verified `controlled-browser`
+activation into one isolated Chromium process self-test. The bridge does **not**
+consume the Run's `start_url`; it launches the dedicated browser runtime only
+with `--self-test`, which opens `about:blank`.
+
+The browser runtime image must already exist in the rootless containerd
+namespace and must be configured by immutable local digest:
+`rdc.local/browser-runtime@sha256:<64-hex>`.
+
+The bridge uses `--pull never`, non-root `pwuser`, read-only rootfs,
+`no-new-privileges`, `cap-drop ALL`, bounded memory/CPU/PIDs, a dedicated
+Chromium-compatible seccomp profile, and `--network none`.
+
+A successful bridge emits only a bounded self-test result proving that downloads,
+service workers, remote CDP and external navigation remain disabled. Public web
+navigation is still not implemented in Phase 1L.
+
