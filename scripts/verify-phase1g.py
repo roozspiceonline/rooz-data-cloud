@@ -49,7 +49,10 @@ def main() -> None:
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
     require(
-        '"phase": "1G"' in main_source or '"phase": "1H"' in main_source,
+        any(
+            marker in main_source
+            for marker in ['"phase": "1G"', '"phase": "1H"', '"phase": "1I"']
+        ),
         "foundation phase is earlier than 1G",
     )
     require(
