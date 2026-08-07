@@ -1,32 +1,27 @@
-# Rooz Data Cloud — Phase 1F
+# Rooz Data Cloud — Phase 1G
 
-Phase 1F extends the merged identity, tenancy, Agent, project-secret, Build, and Run foundations with a separate authenticated execution-plane protocol.
+Phase 1G extends the merged control plane and authenticated execution-plane protocol with secure Agent source ingestion and short-lived object delivery.
 
 ## Included
 
-- Write-only worker registration tokens and worker heartbeats
-- Worker draining state and bounded concurrency
-- Durable Build, Run-start, and Run-cancel command leasing
-- PostgreSQL `FOR UPDATE SKIP LOCKED` claims and active-source uniqueness
-- Short-lived lease tokens, renewal limits, expiry reaping, and bounded retries
-- Worker status reporting and sanitized Run-event ingestion
-- Digest-addressed artifact metadata, scan state, and provenance
-- Lease-scoped X25519 project-secret envelopes
-- PostgreSQL RLS, worker context, tenancy guards, and audit events
-- Public project lease and artifact metadata APIs
-- Execution-plane visibility in the project console
-- Protocol schemas, reference worker client, migration, tests, and CI
+- Direct S3-compatible source ZIP uploads through exact-size presigned POSTs
+- SHA-256, media-type, provider-metadata, and byte-length verification
+- Safe ZIP inspection without extraction
+- Immutable source-object binding for Agent versions and Builds
+- Lease-bound source-download grants for Build workers
+- Tenant storage metadata APIs and a functional project Storage console
+- PostgreSQL RLS, tenancy guards, audit events, schemas, tests, and CI verification
 
 ## Execution boundary
 
-The public API still does not execute Agent code. The internal protocol is excluded from the public OpenAPI document and accepts only worker and lease credentials. Every claim advertises `execution_enabled: false`. Docker, Kubernetes, BuildKit, shells, subprocesses, and untrusted Agent execution remain disabled until a later sandbox-runtime phase proves the isolation boundary.
+The API does not extract or execute Agent code. BuildKit, Docker, Kubernetes, containers, subprocesses, and sandboxed Runs remain disabled. Every worker claim still advertises `execution_enabled: false`.
 
 ## Start the phase
 
-The generated `start-phase1f.py` reads the repository-scoped GitHub token from:
+The generated `start-phase1g.py` reads the repository-scoped GitHub token from:
 
 ```text
 ~/Downloads/rdc-team-bridge/.env
 ```
 
-The Bridge web server does not need to be running. The installer creates one Phase 1F issue, creates `feat/phase-1f-execution-plane-foundation`, uploads the implementation, and opens a draft pull request. It does not merge or delete branches.
+The Bridge web server does not need to be running. The installer creates one Phase 1G issue, creates `feat/phase-1g-secure-source-artifact-delivery`, uploads the implementation, and opens a draft pull request. It does not merge or delete branches.

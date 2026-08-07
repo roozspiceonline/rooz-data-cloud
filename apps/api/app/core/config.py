@@ -18,9 +18,18 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     s3_endpoint: str = "http://localhost:9000"
+    s3_public_endpoint: str = "http://localhost:9000"
+    s3_region: str = "us-east-1"
     s3_bucket: str = "rdc-local"
     s3_access_key: str = "rdc_local"
     s3_secret_key: str = "rdc_local_only_change_me"
+    storage_upload_grant_seconds: int = 900
+    storage_download_grant_seconds: int = 300
+    source_archive_max_bytes: int = 33_554_432
+    source_archive_max_expanded_bytes: int = 268_435_456
+    source_archive_max_files: int = 10_000
+    source_archive_max_single_file_bytes: int = 67_108_864
+    source_archive_max_compression_ratio: float = 100.0
 
     allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
     session_cookie_name: str = "rdc_session"
@@ -103,6 +112,26 @@ class Settings(BaseSettings):
             raise ValueError("Worker max attempts must be between 1 and 20.")
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
+        if not 60 <= self.storage_upload_grant_seconds <= 3600:
+            raise ValueError("Storage upload grants must expire between 60 and 3600 seconds.")
+        if not 30 <= self.storage_download_grant_seconds <= 900:
+            raise ValueError("Storage download grants must expire between 30 and 900 seconds.")
+        if not 1_048_576 <= self.source_archive_max_bytes <= 536_870_912:
+            raise ValueError("Source archive compressed limit is outside the safe range.")
+        if self.source_archive_max_expanded_bytes < self.source_archive_max_bytes:
+            raise ValueError("Expanded source limit must be at least the compressed limit.")
+        if not 1 <= self.source_archive_max_files <= 100_000:
+            raise ValueError("Source archive file limit must be between 1 and 100000.")
+        if not (
+            1_048_576
+            <= self.source_archive_max_single_file_bytes
+            <= self.source_archive_max_expanded_bytes
+        ):
+            raise ValueError(
+                "Source archive per-file limit is outside the safe range."
+            )
+        if not 1.0 <= self.source_archive_max_compression_ratio <= 1000.0:
+            raise ValueError("Source archive compression ratio limit is outside the safe range.")
         if self.env in {"staging", "production"}:
             defaults = [name for name, value in values.items() if "change-me" in value]
             if defaults:

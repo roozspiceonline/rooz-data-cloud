@@ -26,6 +26,7 @@ from ...services.execution_plane import (
     update_lease_status,
     worker_summary,
 )
+from ...services.storage_delivery import issue_build_source_download_grant
 from ..internal_dependencies import (
     LeaseAccess,
     WorkerContext,
@@ -186,6 +187,21 @@ async def complete_lease_route(
         lease=access.lease,
         worker=access.context.worker,
         payload=payload,
+        request_id=request_id(request),
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
+
+@router.post("/leases/{lease_id}/source-download")
+async def issue_source_download_route(
+    request: Request,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await issue_build_source_download_grant(
+        db,
+        lease=access.lease,
+        worker_id=access.context.worker.id,
         request_id=request_id(request),
     )
     return success_payload(request, result.model_dump(mode="json"))

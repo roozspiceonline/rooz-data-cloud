@@ -26,3 +26,13 @@ test("client exposes execution-plane metadata collections", async () => {
   assert.match(source, /execution-leases/);
   assert.match(source, /execution-artifacts/);
 });
+
+test("client exposes secure source and storage delivery operations", async () => {
+  const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /createSourceUpload/);
+  assert.match(source, /completeSourceUpload/);
+  assert.match(source, /projectStorageObjects/);
+  assert.match(source, /storageDownloadGrant/);
+  assert.match(source, /source-uploads/);
+  assert.match(source, /storage-objects/);
+});

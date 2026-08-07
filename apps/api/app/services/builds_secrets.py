@@ -22,6 +22,7 @@ from ..models import (
     BuildDispatchOutbox,
     IdempotencyRecord,
     ProjectSecret,
+    StorageObject,
 )
 from .identity_tenancy import append_audit_event
 
@@ -105,6 +106,7 @@ def build_metadata(record: Build) -> dict[str, object]:
         "agent_id": record.agent_id,
         "agent_version_id": record.agent_version_id,
         "manifest_digest": record.manifest_digest,
+        "source_object_id": record.source_object_id,
         "status": record.status,
         "created_at": record.created_at,
         "updated_at": record.updated_at,
@@ -378,10 +380,17 @@ async def create_build(
     request_id: str,
 ) -> dict[str, object]:
     validate_idempotency_key(idempotency_key)
+    if version.source_object_id is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_NOT_AVAILABLE",
+            message="This legacy Agent version has no verified source archive.",
+        )
     fingerprint = canonical_fingerprint(
         {
             "agent_version_id": str(version.id),
             "manifest_digest": version.manifest_digest,
+            "source_object_id": str(version.source_object_id),
         }
     )
     key_digest = hashlib.sha256(idempotency_key.encode()).hexdigest()
@@ -430,6 +439,24 @@ async def create_build(
             code="RESOURCE_NOT_FOUND",
             message="The requested resource was not found.",
         )
+    source_object = await session.scalar(
+        select(StorageObject).where(
+            StorageObject.id == version.source_object_id,
+            StorageObject.organization_id == version.organization_id,
+            StorageObject.project_id == version.project_id,
+            StorageObject.agent_id == version.agent_id,
+            StorageObject.kind == "AGENT_SOURCE",
+            StorageObject.status == "AVAILABLE",
+            StorageObject.scan_status == "PASSED",
+            StorageObject.deleted_at.is_(None),
+        )
+    )
+    if source_object is None:
+        raise ApiError(
+            status_code=409,
+            code="SOURCE_OBJECT_NOT_AVAILABLE",
+            message="The immutable Agent source archive is unavailable.",
+        )
     now = datetime.now(UTC)
     record = Build(
         organization_id=version.organization_id,
@@ -437,6 +464,7 @@ async def create_build(
         agent_id=version.agent_id,
         agent_version_id=version.id,
         manifest_digest=version.manifest_digest,
+        source_object_id=source_object.id,
         status="QUEUED",
         requested_by_user_id=user_id,
         version=1,
@@ -472,6 +500,9 @@ async def create_build(
                 "agent_id": str(record.agent_id),
                 "agent_version_id": str(record.agent_version_id),
                 "manifest_digest": record.manifest_digest,
+                "source_object_id": str(record.source_object_id),
+                "source_sha256_digest": source_object.sha256_digest,
+                "source_size_bytes": source_object.size_bytes,
             },
             status="PENDING",
             attempts=0,
@@ -507,6 +538,7 @@ async def create_build(
             "agent_id": str(record.agent_id),
             "agent_version_id": str(record.agent_version_id),
             "manifest_digest": record.manifest_digest,
+            "source_object_id": str(record.source_object_id),
         },
     )
     return snapshot

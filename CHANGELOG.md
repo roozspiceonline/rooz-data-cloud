@@ -1,5 +1,14 @@
 # Changelog
 
+## Phase 1G — Secure Source Ingestion and Artifact Delivery
+
+- Added S3-compatible direct Agent source uploads with exact presigned constraints.
+- Added SHA-256 verification and safe ZIP inspection without extraction.
+- Bound verified source objects to immutable Agent versions and Builds.
+- Added tenant and worker short-lived source-download grants.
+- Added storage RLS, tenancy guards, audit records, APIs, console UI, tests, and CI verification.
+- Kept BuildKit, containers, and untrusted Agent execution disabled.
+
 ## Phase 1F — Isolated Execution-Plane Foundation
 
 - Added the private `/internal/v1` worker protocol.

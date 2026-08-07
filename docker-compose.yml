@@ -57,7 +57,34 @@ services:
       - "127.0.0.1:${RDC_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./infrastructure/minio/cors.json:/config/cors.json:ro
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000
+      $${RDC_S3_ACCESS_KEY:-rdc-local-access}
+      $${RDC_S3_SECRET_KEY:-change-me-for-local-development} &&
+      mc mb --ignore-existing local/$${RDC_S3_BUCKET:-rdc-local} &&
+      mc cors set local/$${RDC_S3_BUCKET:-rdc-local} /config/cors.json
+      "
+    environment:
+      RDC_S3_BUCKET: ${RDC_S3_BUCKET:-rdc-local}
+      RDC_S3_ACCESS_KEY: ${RDC_S3_ACCESS_KEY:-rdc-local-access}
+      RDC_S3_SECRET_KEY: ${RDC_S3_SECRET_KEY:-change-me-for-local-development}
+    restart: "no"
 
   api:
     build:
@@ -67,9 +94,18 @@ services:
       RDC_DATABASE_URL: ${RDC_DATABASE_URL:-postgresql+asyncpg://rdc_app:change-me-for-local-development@postgres:5432/rooz_data_cloud}
       RDC_REDIS_URL: ${RDC_REDIS_URL:-redis://redis:6379/0}
       RDC_S3_ENDPOINT: ${RDC_S3_ENDPOINT:-http://minio:9000}
+      RDC_S3_PUBLIC_ENDPOINT: ${RDC_S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      RDC_S3_REGION: ${RDC_S3_REGION:-us-east-1}
       RDC_S3_BUCKET: ${RDC_S3_BUCKET:-rdc-local}
       RDC_S3_ACCESS_KEY: ${RDC_S3_ACCESS_KEY:-rdc-local-access}
       RDC_S3_SECRET_KEY: ${RDC_S3_SECRET_KEY:-change-me-for-local-development}
+      RDC_STORAGE_UPLOAD_GRANT_SECONDS: ${RDC_STORAGE_UPLOAD_GRANT_SECONDS:-900}
+      RDC_STORAGE_DOWNLOAD_GRANT_SECONDS: ${RDC_STORAGE_DOWNLOAD_GRANT_SECONDS:-300}
+      RDC_SOURCE_ARCHIVE_MAX_BYTES: ${RDC_SOURCE_ARCHIVE_MAX_BYTES:-33554432}
+      RDC_SOURCE_ARCHIVE_MAX_EXPANDED_BYTES: ${RDC_SOURCE_ARCHIVE_MAX_EXPANDED_BYTES:-268435456}
+      RDC_SOURCE_ARCHIVE_MAX_FILES: ${RDC_SOURCE_ARCHIVE_MAX_FILES:-10000}
+      RDC_SOURCE_ARCHIVE_MAX_SINGLE_FILE_BYTES: ${RDC_SOURCE_ARCHIVE_MAX_SINGLE_FILE_BYTES:-67108864}
+      RDC_SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO: ${RDC_SOURCE_ARCHIVE_MAX_COMPRESSION_RATIO:-100}
       RDC_ALLOWED_ORIGINS: '${RDC_ALLOWED_ORIGINS:-["http://localhost:3000"]}'
       RDC_SESSION_COOKIE_NAME: ${RDC_SESSION_COOKIE_NAME:-rdc_session}
       RDC_SESSION_COOKIE_SECURE: ${RDC_SESSION_COOKIE_SECURE:-false}
@@ -100,7 +136,9 @@ services:
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     healthcheck:
       test:
         [

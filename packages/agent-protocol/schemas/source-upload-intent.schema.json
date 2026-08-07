@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.roozdata.cloud/source-upload-intent.schema.json",
+  "title": "Rooz Data Cloud source upload intent",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "object_id",
+    "file_name",
+    "media_type",
+    "size_bytes",
+    "sha256_digest"
+  ],
+  "properties": {
+    "kind": {
+      "const": "AGENT_SOURCE"
+    },
+    "object_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "file_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "\\.zip$"
+    },
+    "media_type": {
+      "enum": [
+        "application/zip",
+        "application/x-zip-compressed"
+      ]
+    },
+    "size_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 536870912
+    },
+    "sha256_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

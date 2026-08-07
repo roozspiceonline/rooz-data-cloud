@@ -492,3 +492,17 @@ Before a release:
 - The console exposes metadata only.
 - No untrusted execution primitive exists in the API or reference client.
 - Alembic online migration, Ruff, strict mypy, pytest, frontend lint/typecheck/tests/build, all phase verifiers, and Compose validation pass.
+
+
+## Phase 1G merge gates
+
+- Upload intent binds exact byte length, content type, object ID metadata, and declared SHA-256.
+- Completion recomputes SHA-256 and validates provider metadata before availability.
+- ZIP inspection rejects traversal, special files, encrypted entries, nested archives, and decompression abuse.
+- Root `agent.json` and referenced schemas are mandatory.
+- Immutable versions and Builds bind the verified source object.
+- Storage grants are short-lived and only capability digests are stored.
+- Tenant and worker storage access is protected by explicit predicates, RLS, and tenancy triggers.
+- Worker download requires an active BUILD lease.
+- No extraction, BuildKit, Docker, Kubernetes, container, shell, subprocess, or Agent execution is introduced.
+- Alembic, Ruff, strict mypy, pytest, frontend checks, all phase verifiers, and Compose validation pass.

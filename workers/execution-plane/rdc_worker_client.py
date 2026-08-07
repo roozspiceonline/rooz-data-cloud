@@ -135,6 +135,20 @@ class RdcWorkerClient:
             raise WorkerProtocolError("Lease renewal response was empty.")
         return response
 
+    def source_download(
+        self,
+        lease_id: str,
+        lease_token: str,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/source-download",
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Source-download response was empty.")
+        return response
+
     def request_secret_envelope(
         self,
         lease_id: str,

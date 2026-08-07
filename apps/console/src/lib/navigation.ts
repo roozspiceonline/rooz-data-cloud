@@ -15,6 +15,6 @@ export const projectNavigation: readonly ProjectNavigationItem[] = [
   { href: "/settings", label: "Settings" },
   { href: "/pipelines", label: "Pipelines", future: true },
   { href: "/datasets", label: "Datasets", future: true },
-  { href: "/storage", label: "Storage", future: true },
+  { href: "/storage", label: "Storage" },
   { href: "/connectors", label: "Connectors", future: true }
 ] as const;

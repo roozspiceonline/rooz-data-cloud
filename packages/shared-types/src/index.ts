@@ -150,6 +150,7 @@ export interface AgentManifest {
 }
 
 export interface CreateAgentVersionInput {
+  source_object_id: string;
   manifest: AgentManifest;
   release_notes: string | null;
 }
@@ -164,6 +165,7 @@ export interface AgentVersionSummary {
   semantic_version: string;
   manifest_schema_version: string;
   manifest_digest: string;
+  source_object_id: string | null;
   release_notes: string | null;
   created_at: string;
 }
@@ -222,6 +224,7 @@ export interface BuildSummary {
   agent_id: string;
   agent_version_id: string;
   manifest_digest: string;
+  source_object_id: string | null;
   status: BuildStatus;
   created_at: string;
   updated_at: string;
@@ -378,4 +381,64 @@ export interface ExecutionArtifactSummary {
   scan_status: ExecutionArtifactScanStatus;
   provenance: Record<string, unknown>;
   created_at: string;
+}
+
+export type StorageObjectStatus =
+  | "PENDING_UPLOAD"
+  | "QUARANTINED"
+  | "AVAILABLE"
+  | "REJECTED"
+  | "DELETED";
+
+export type StorageScanStatus =
+  | "PENDING"
+  | "PASSED"
+  | "FAILED"
+  | "NOT_REQUIRED";
+
+export interface StorageObjectSummary {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  agent_id: string | null;
+  kind: "AGENT_SOURCE";
+  provider: string;
+  bucket: string;
+  object_key: string;
+  file_name: string;
+  media_type: string;
+  expected_size_bytes: number;
+  size_bytes: number | null;
+  expected_sha256_digest: string;
+  sha256_digest: string | null;
+  status: StorageObjectStatus;
+  scan_status: StorageScanStatus;
+  rejection_code: string | null;
+  created_at: string;
+  uploaded_at: string | null;
+  available_at: string | null;
+}
+
+export interface CreateSourceUploadInput {
+  file_name: string;
+  media_type: "application/zip" | "application/x-zip-compressed";
+  size_bytes: number;
+  sha256_digest: string;
+}
+
+export interface SourceUploadIntent {
+  object: StorageObjectSummary;
+  upload: {
+    url: string;
+    fields: Record<string, string>;
+    expires_at: string;
+  };
+}
+
+export interface StorageDownloadGrant {
+  grant_id: string;
+  object_id: string;
+  url: string;
+  expires_at: string;
+  headers: Record<string, string>;
 }
