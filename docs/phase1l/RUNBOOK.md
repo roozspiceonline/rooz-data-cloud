@@ -29,3 +29,13 @@ secrets enter browser context, profiles persist between Runs, or downloads /
 uploads are enabled.
 
 General untrusted browser execution remains release-blocked.
+
+## Browser Run contract
+
+A browser Run uses top-level `rdc.browser/v1` intent. The immutable Agent must
+declare `browser=true` and `network=web-egress`. The control plane owns the
+`rdc.browser-policy/v1` receipt and digest. A future browser worker must
+independently reconstruct the policy and reject any mismatch before Chromium
+launch.
+
+Live browser navigation remains disabled in this increment.
