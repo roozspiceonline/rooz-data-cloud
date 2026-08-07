@@ -52,6 +52,22 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SandboxActivation(StrictModel):
+    mode: Literal["canary"] = "canary"
+    agent_version_id: UUID
+    worker_name: str = Field(
+        min_length=3,
+        max_length=160,
+        pattern=r"^[a-z0-9][a-z0-9._-]+$",
+    )
+    attestation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sandbox_policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    constraints_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    no_secrets: Literal[True] = True
+    capability_profile: Literal["offline-minimal"] = "offline-minimal"
+    max_concurrency: Literal[1] = 1
+
+
 class SandboxAttestation(StrictModel):
     schema_version: Literal["rdc.sandbox/v1"] = "rdc.sandbox/v1"
     runtime: Literal["containerd-rootless"] = "containerd-rootless"

@@ -127,6 +127,7 @@ def main() -> None:
                 '"phase": "1F"',
                 '"phase": "1G"',
                 '"phase": "1H"',
+                '"phase": "1I"',
             ]
         ),
         "foundation status is earlier than Phase 1E",

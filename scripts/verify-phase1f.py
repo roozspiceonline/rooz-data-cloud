@@ -70,7 +70,15 @@ def main() -> None:
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
     require(
-        any(marker in main_source for marker in ['"phase": "1F"', '"phase": "1G"', '"phase": "1H"']),
+        any(
+            marker in main_source
+            for marker in [
+                '"phase": "1F"',
+                '"phase": "1G"',
+                '"phase": "1H"',
+                '"phase": "1I"',
+            ]
+        ),
         "foundation phase is earlier than 1F",
     )
     require(
@@ -89,7 +97,16 @@ def main() -> None:
     for prohibited in ["subprocess", "docker run", "kubectl", "eval(", "exec("]:
         require(prohibited not in service_source, "prohibited primitive: " + prohibited)
     require(
-        'claim_payload["execution_enabled"] = sandbox_policy is not None' in service_source,
+        (
+            'claim_payload["execution_enabled"] = sandbox_policy is not None'
+            in service_source
+        )
+        or (
+            "execution_enabled = sandbox_policy is not None and activation is not None"
+            in service_source
+            and 'claim_payload["execution_enabled"] = execution_enabled'
+            in service_source
+        ),
         "claim payload sandbox gate is absent",
     )
 

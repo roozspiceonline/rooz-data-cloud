@@ -976,3 +976,27 @@ Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract d
 
 Worker heartbeats may include a strict `rdc.sandbox/v1` attestation. The control plane sets `execution_enabled: true` only when the global sandbox gate is enabled and the claiming worker has a current compliant attestation. Claim payloads include a `sandbox` policy block with immutable limits. Internal lease endpoints add `artifact-upload` and `artifact-download` grants; they remain excluded from public OpenAPI. Uploaded execution artifacts are accepted only after object metadata, byte length, media type, lease binding, and server-streamed SHA-256 verification match.
 
+
+
+## Phase 1I controlled sandbox activation
+
+Phase 1I does not add a public execution-enablement API. Activation is an
+operator configuration boundary. A worker claim may set `execution_enabled`
+to true only when the Phase 1H sandbox policy and the Phase 1I `activation`
+object both validate.
+
+The activation object is stored inside the immutable execution-lease payload
+snapshot and contains:
+
+- `mode = canary`
+- exact immutable `agent_version_id`
+- exact authenticated `worker_name`
+- sandbox attestation digest
+- sandbox-policy digest
+- canary-constraints digest
+- `no_secrets = true`
+- `capability_profile = offline-minimal`
+- `max_concurrency = 1`
+
+Artifact registration verifies that worker provenance reproduces the same
+activation object and expected source/image lineage.

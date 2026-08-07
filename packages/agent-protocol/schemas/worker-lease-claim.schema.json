@@ -74,7 +74,8 @@
         "schema_version",
         "work_kind",
         "execution_enabled",
-        "sandbox"
+        "sandbox",
+        "activation"
       ],
       "properties": {
         "schema_version": {
@@ -141,6 +142,16 @@
               "type": "null"
             }
           ]
+        },
+        "activation": {
+          "anyOf": [
+            {
+              "$ref": "sandbox-activation.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "allOf": [
@@ -156,6 +167,9 @@
             "properties": {
               "sandbox": {
                 "$ref": "sandbox-capabilities.schema.json"
+              },
+              "activation": {
+                "$ref": "sandbox-activation.schema.json"
               }
             }
           }

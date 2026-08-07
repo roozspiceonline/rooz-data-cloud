@@ -80,6 +80,9 @@ jobs:
       RDC_WORKER_SECRET_ENVELOPE_SECONDS: "60"
       RDC_SANDBOX_EXECUTION_ENABLED: "false"
       RDC_SANDBOX_REQUIRED_PROFILE: rdc.sandbox/v1
+      RDC_SANDBOX_ACTIVATION_MODE: disabled
+      RDC_SANDBOX_CANARY_AGENT_VERSION_ID: ""
+      RDC_SANDBOX_CANARY_WORKER_NAME: ""
     defaults:
       run:
         working-directory: apps/api
@@ -111,4 +114,5 @@ jobs:
       - run: python3 scripts/verify-phase1f.py
       - run: python3 scripts/verify-phase1g.py
       - run: python3 scripts/verify-phase1h.py
+      - run: python3 scripts/verify-phase1i.py
       - run: docker compose config --quiet

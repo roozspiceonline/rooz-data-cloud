@@ -40,6 +40,7 @@ from ..execution_schemas import (
     RegisteredWorkerResponse,
     RegisterWorkerRequest,
     RenewLeaseRequest,
+    SandboxActivation,
     SandboxAttestation,
     SecretEnvelopeRequest,
     SecretEnvelopeResponse,
@@ -82,6 +83,115 @@ def _sandbox_attestation_allowed(attestation: SandboxAttestation) -> bool:
     )
 
 
+def _canary_constraints() -> dict[str, object]:
+    return {
+        "memory_mb": settings.sandbox_canary_max_memory_mb,
+        "cpu_millis": settings.sandbox_canary_max_cpu_millis,
+        "pids": settings.sandbox_canary_max_pids,
+        "ephemeral_disk_mb": settings.sandbox_canary_max_ephemeral_disk_mb,
+        "build_timeout_seconds": settings.sandbox_canary_max_build_seconds,
+        "run_timeout_seconds": settings.sandbox_canary_max_run_seconds,
+        "network": "none",
+        "browser": False,
+        "dataset": False,
+        "key_value_store": False,
+        "request_queue": False,
+        "secrets": False,
+        "max_concurrency": 1,
+    }
+
+
+def _canary_activation(
+    worker: WorkerIdentity,
+    payload: dict[str, object],
+    sandbox_policy: dict[str, object] | None,
+) -> SandboxActivation | None:
+    if (
+        sandbox_policy is None
+        or not settings.sandbox_execution_enabled
+        or settings.sandbox_activation_mode != "canary"
+    ):
+        return None
+
+    configured_version_id = settings.sandbox_canary_agent_version_id.strip()
+    configured_worker = settings.sandbox_canary_worker_name.strip()
+    if not configured_version_id or not configured_worker:
+        return None
+    if worker.name != configured_worker or worker.max_concurrency != 1:
+        return None
+    if str(payload.get("agent_version_id", "")) != configured_version_id:
+        return None
+    if str(payload.get("work_kind", "")) not in {
+        "BUILD",
+        "RUN_START",
+        "RUN_CANCEL",
+    }:
+        return None
+
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        return None
+
+    secrets = manifest.get("secrets", [])
+    if not isinstance(secrets, list) or secrets:
+        return None
+
+    capabilities = manifest.get("capabilities")
+    resources = manifest.get("resources")
+    if not isinstance(capabilities, dict) or not isinstance(resources, dict):
+        return None
+
+    if (
+        capabilities.get("network") != "none"
+        or capabilities.get("browser") is not False
+        or capabilities.get("dataset") is not False
+        or capabilities.get("keyValueStore") is not False
+        or capabilities.get("requestQueue") is not False
+    ):
+        return None
+
+    try:
+        memory_mb = int(resources["memoryMb"])
+        cpu_millis = int(resources["cpuUnits"])
+        pids = int(resources["maxProcesses"])
+        disk_mb = int(resources["ephemeralDiskMb"])
+        timeout_seconds = int(resources["timeoutSeconds"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    work_kind = str(payload.get("work_kind"))
+    timeout_ceiling = (
+        settings.sandbox_canary_max_build_seconds
+        if work_kind == "BUILD"
+        else settings.sandbox_canary_max_run_seconds
+    )
+    if (
+        memory_mb > settings.sandbox_canary_max_memory_mb
+        or cpu_millis > settings.sandbox_canary_max_cpu_millis
+        or pids > settings.sandbox_canary_max_pids
+        or disk_mb > settings.sandbox_canary_max_ephemeral_disk_mb
+        or timeout_seconds > timeout_ceiling
+    ):
+        return None
+
+    constraints = _canary_constraints()
+    return SandboxActivation(
+        agent_version_id=UUID(configured_version_id),
+        worker_name=configured_worker,
+        attestation_digest=str(sandbox_policy["attestation_digest"]),
+        sandbox_policy_digest=canonical_fingerprint(sandbox_policy),
+        constraints_digest=canonical_fingerprint(constraints),
+    )
+
+
+def _activation_payload(
+    activation: SandboxActivation | None,
+) -> dict[str, object] | None:
+    if activation is None:
+        return None
+    return activation.model_dump(mode="json")
+
+
 def _apply_sandbox_attestation(
     worker: WorkerIdentity,
     attestation: SandboxAttestation | None,
@@ -96,6 +206,9 @@ def _apply_sandbox_attestation(
     worker.sandbox_attested_at = now
     worker.sandbox_execution_enabled = (
         settings.sandbox_execution_enabled
+        and settings.sandbox_activation_mode == "canary"
+        and worker.name == settings.sandbox_canary_worker_name.strip()
+        and worker.max_concurrency == 1
         and _sandbox_attestation_allowed(attestation)
     )
     worker.metadata_json = {
@@ -771,8 +884,15 @@ async def claim_work(
                 )
 
         sandbox_policy = _sandbox_claim_policy(worker, claim_payload)
-        claim_payload["execution_enabled"] = sandbox_policy is not None
-        claim_payload["sandbox"] = sandbox_policy
+        activation = _canary_activation(
+            worker,
+            claim_payload,
+            sandbox_policy,
+        )
+        execution_enabled = sandbox_policy is not None and activation is not None
+        claim_payload["execution_enabled"] = execution_enabled
+        claim_payload["sandbox"] = sandbox_policy if execution_enabled else None
+        claim_payload["activation"] = _activation_payload(activation)
         lease.payload_digest = canonical_fingerprint(claim_payload)
         lease.payload_snapshot = claim_payload
         await append_audit_event(
@@ -789,8 +909,16 @@ async def claim_work(
                 "work_kind": kind,
                 "attempt": lease.attempt,
                 "source_topic": lease.source_topic,
-                "execution_enabled": sandbox_policy is not None,
+                "execution_enabled": execution_enabled,
                 "sandbox_attestation_digest": worker.sandbox_attestation_digest,
+                "activation_mode": (
+                    activation.mode if activation is not None else "disabled"
+                ),
+                "activation_agent_version_id": (
+                    str(activation.agent_version_id)
+                    if activation is not None
+                    else None
+                ),
             },
         )
         return LeaseClaim(
@@ -1142,6 +1270,62 @@ async def issue_run_artifact_download_grant(
     )
 
 
+def _validate_activation_provenance(
+    lease: ExecutionLease,
+    payload: ArtifactRegistration,
+) -> None:
+    snapshot = dict(lease.payload_snapshot)
+    activation = snapshot.get("activation")
+    if not isinstance(activation, dict):
+        return
+
+    provenance = dict(payload.provenance)
+    if provenance.get("activation") != activation:
+        raise ApiError(
+            status_code=422,
+            code="ARTIFACT_ACTIVATION_MISMATCH",
+            message="Artifact provenance does not match the lease activation.",
+        )
+
+    if lease.work_kind == "BUILD":
+        source = snapshot.get("source")
+        if not isinstance(source, dict):
+            raise ApiError(
+                status_code=422,
+                code="ARTIFACT_LINEAGE_INVALID",
+                message="Build lease source lineage is unavailable.",
+            )
+        if (
+            provenance.get("source_sha256") != source.get("sha256_digest")
+            or provenance.get("agent_version_id")
+            != snapshot.get("agent_version_id")
+        ):
+            raise ApiError(
+                status_code=422,
+                code="ARTIFACT_LINEAGE_INVALID",
+                message="Build artifact provenance does not match source lineage.",
+            )
+        return
+
+    if lease.work_kind == "RUN_START":
+        artifact = snapshot.get("artifact")
+        if not isinstance(artifact, dict):
+            raise ApiError(
+                status_code=422,
+                code="ARTIFACT_LINEAGE_INVALID",
+                message="Run lease image lineage is unavailable.",
+            )
+        if (
+            provenance.get("image_digest") != artifact.get("digest")
+            or provenance.get("run_id") != snapshot.get("run_id")
+        ):
+            raise ApiError(
+                status_code=422,
+                code="ARTIFACT_LINEAGE_INVALID",
+                message="Run artifact provenance does not match image lineage.",
+            )
+
+
 async def _register_artifact(
     session: AsyncSession,
     *,
@@ -1149,6 +1333,7 @@ async def _register_artifact(
     worker: WorkerIdentity,
     payload: ArtifactRegistration,
 ) -> ExecutionArtifact:
+    _validate_activation_provenance(lease, payload)
     expected_key = _artifact_object_key(
         lease,
         kind=payload.kind,
@@ -1207,6 +1392,10 @@ async def _register_artifact(
             existing.object_key != payload.object_key
             or existing.size_bytes != payload.size_bytes
             or existing.media_type != payload.media_type
+            or (
+                isinstance(lease.payload_snapshot.get("activation"), dict)
+                and dict(existing.provenance) != dict(payload.provenance)
+            )
         ):
             raise ApiError(
                 status_code=409,

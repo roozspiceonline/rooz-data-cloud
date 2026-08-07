@@ -111,14 +111,14 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
     <section aria-labelledby="execution-plane-heading">
       <header style={{ marginBottom: "1.5rem" }}>
         <p style={{ color: "var(--muted-foreground)", margin: 0 }}>
-          Phase 1H
+          Phase 1I
         </p>
         <h1 id="execution-plane-heading">Isolated execution plane</h1>
         <p style={{ maxWidth: "72ch" }}>
-          Inspect worker leases and immutable artifact metadata. Controlled
-          sandbox execution is available only to explicitly attested workers;
-          the default global gate remains off and general untrusted execution
-          is still release-blocked.
+          Inspect worker leases and immutable artifact metadata. Phase 1I
+          permits only one configured immutable AgentVersion on one exact
+          single-concurrency worker after both the master gate and canary mode
+          are enabled. General untrusted execution remains release-blocked.
         </p>
       </header>
 

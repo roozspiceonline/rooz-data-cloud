@@ -235,4 +235,13 @@ def test_phase1f_does_not_execute_untrusted_agent_code() -> None:
         "exec(",
     ]:
         assert prohibited not in source
-    assert 'claim_payload["execution_enabled"] = sandbox_policy is not None' in source
+    assert (
+        'claim_payload["execution_enabled"] = sandbox_policy is not None'
+        in source
+        or (
+            "execution_enabled = sandbox_policy is not None and activation is not None"
+            in source
+            and 'claim_payload["execution_enabled"] = execution_enabled'
+            in source
+        )
+    )

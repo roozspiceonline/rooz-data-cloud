@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import zipfile
@@ -29,6 +30,77 @@ def _extract_zip(archive: Path, destination: Path) -> None:
             if name.startswith("/") or ".." in parts:
                 raise SandboxPolicyError("Source archive contains an unsafe path.")
         package.extractall(destination)
+
+
+def _canonical_digest(value: dict[str, object]) -> str:
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_canary_activation(
+    payload: dict[str, Any],
+    *,
+    worker_name: str,
+) -> dict[str, object]:
+    activation = payload.get("activation")
+    sandbox = payload.get("sandbox")
+    if not isinstance(activation, dict) or not isinstance(sandbox, dict):
+        raise SandboxPolicyError(
+            "The control plane did not provide a canary activation receipt."
+        )
+    if activation.get("mode") != "canary":
+        raise SandboxPolicyError("Only Phase 1I canary activation is accepted.")
+    if activation.get("worker_name") != worker_name:
+        raise SandboxPolicyError(
+            "Canary activation is bound to a different worker identity."
+        )
+    if activation.get("agent_version_id") != payload.get("agent_version_id"):
+        raise SandboxPolicyError(
+            "Canary activation does not match the immutable Agent version."
+        )
+    if activation.get("max_concurrency") != 1:
+        raise SandboxPolicyError(
+            "Canary activation requires single-concurrency execution."
+        )
+    if activation.get("no_secrets") is not True:
+        raise SandboxPolicyError("Canary execution cannot inject project secrets.")
+    if activation.get("capability_profile") != "offline-minimal":
+        raise SandboxPolicyError(
+            "Canary activation capability profile is not offline-minimal."
+        )
+    if activation.get("attestation_digest") != sandbox.get(
+        "attestation_digest"
+    ):
+        raise SandboxPolicyError(
+            "Canary activation does not match the sandbox attestation."
+        )
+    if activation.get("sandbox_policy_digest") != _canonical_digest(sandbox):
+        raise SandboxPolicyError(
+            "Canary activation does not match the sandbox policy digest."
+        )
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        raise SandboxPolicyError("Canary claim is missing the Agent manifest.")
+    if manifest.get("secrets"):
+        raise SandboxPolicyError("Canary Agent manifests cannot declare secrets.")
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise SandboxPolicyError("Canary Agent capabilities are missing.")
+    if (
+        capabilities.get("network") != "none"
+        or capabilities.get("browser") is not False
+        or capabilities.get("dataset") is not False
+        or capabilities.get("keyValueStore") is not False
+        or capabilities.get("requestQueue") is not False
+    ):
+        raise SandboxPolicyError(
+            "Canary Agent requested a capability outside offline-minimal."
+        )
+    return {str(key): value for key, value in activation.items()}
 
 
 def _upload_artifacts(
@@ -70,12 +142,21 @@ def _upload_artifacts(
     return result
 
 
-def _build(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, Any]) -> None:
+def _build(
+    client: RdcWorkerClient,
+    config: SandboxWorkerConfig,
+    claim: dict[str, Any],
+    *,
+    worker_name: str,
+) -> None:
     lease = _data(claim)
     payload = dict(lease["payload"])
     lease_id = str(lease["id"])
     token = str(lease["lease_token"])
-    if payload.get("execution_enabled") is not True or not isinstance(payload.get("sandbox"), dict):
+    if (
+        payload.get("execution_enabled") is not True
+        or not isinstance(payload.get("sandbox"), dict)
+    ):
         client.complete(
             lease_id,
             token,
@@ -89,6 +170,10 @@ def _build(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str
         return
     workspace = private_temp_dir(config.workspace_root, "build-")
     try:
+        activation = _require_canary_activation(
+            payload,
+            worker_name=worker_name,
+        )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
         source_dir.mkdir(mode=0o700)
@@ -105,6 +190,9 @@ def _build(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str
             source_dir=source_dir,
             workspace=workspace,
             build_id=str(payload["build_id"]),
+            agent_version_id=str(payload["agent_version_id"]),
+            source_sha256=str(source_meta["sha256_digest"]),
+            activation=activation,
             timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
         )
         registrations = _upload_artifacts(
@@ -133,7 +221,13 @@ def _build(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str
         cleanup_tree(workspace)
 
 
-def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, Any]) -> None:
+def _run(
+    client: RdcWorkerClient,
+    config: SandboxWorkerConfig,
+    claim: dict[str, Any],
+    *,
+    worker_name: str,
+) -> None:
     lease = _data(claim)
     payload = dict(lease["payload"])
     lease_id = str(lease["id"])
@@ -142,18 +236,36 @@ def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, 
         cancel_run(config=config, run_id=str(payload["run_id"]))
         client.complete(lease_id, token, {"outcome": "ABORTED", "retryable": False})
         return
-    if payload.get("execution_enabled") is not True or not isinstance(payload.get("sandbox"), dict):
+    if (
+        payload.get("execution_enabled") is not True
+        or not isinstance(payload.get("sandbox"), dict)
+    ):
         client.complete(
             lease_id,
             token,
-            {"outcome": "FAILED", "retryable": False, "error_code": "SANDBOX_POLICY_DENIED", "error_summary": "The control plane did not authorize sandbox execution."},
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_POLICY_DENIED",
+                "error_summary": (
+                    "The control plane did not authorize sandbox execution."
+                ),
+            },
         )
         return
     workspace = private_temp_dir(config.workspace_root, "run-")
     try:
+        activation = _require_canary_activation(
+            payload,
+            worker_name=worker_name,
+        )
         artifact_grant = _data(client.artifact_download(lease_id, token))
         image_path = workspace / "image.oci.tar"
-        download_file(str(artifact_grant["url"]), image_path, max_bytes=int(artifact_grant["size_bytes"]))
+        download_file(
+            str(artifact_grant["url"]),
+            image_path,
+            max_bytes=int(artifact_grant["size_bytes"]),
+        )
         digest, size = sha256_file(image_path)
         if digest != artifact_grant["digest"] or size != int(artifact_grant["size_bytes"]):
             raise SandboxPolicyError("Downloaded image artifact failed digest verification.")
@@ -197,14 +309,49 @@ def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, 
             workspace=workspace,
             policy=dict(payload["sandbox"]),
         )
+        image_digest = (
+            str(artifact_grant["digest_algorithm"])
+            + ":"
+            + str(artifact_grant["digest"])
+        )
+        run_provenance = {
+            "activation": activation,
+            "run_id": str(payload["run_id"]),
+            "image_digest": image_digest,
+        }
         artifacts: list[LocalArtifact] = []
         if output_path.is_file():
             digest, size = sha256_file(output_path)
-            artifacts.append(LocalArtifact("RUN_OUTPUT", output_path, "application/json", digest, size, "NOT_REQUIRED", {}))
+            artifacts.append(
+                LocalArtifact(
+                    "RUN_OUTPUT",
+                    output_path,
+                    "application/json",
+                    digest,
+                    size,
+                    "NOT_REQUIRED",
+                    dict(run_provenance),
+                )
+            )
         if log_path.is_file():
             digest, size = sha256_file(log_path)
-            artifacts.append(LocalArtifact("LOG_BUNDLE", log_path, "text/plain", digest, size, "NOT_REQUIRED", {}))
-        registrations = _upload_artifacts(client, lease_id=lease_id, lease_token=token, artifacts=artifacts)
+            artifacts.append(
+                LocalArtifact(
+                    "LOG_BUNDLE",
+                    log_path,
+                    "text/plain",
+                    digest,
+                    size,
+                    "NOT_REQUIRED",
+                    dict(run_provenance),
+                )
+            )
+        registrations = _upload_artifacts(
+            client,
+            lease_id=lease_id,
+            lease_token=token,
+            artifacts=artifacts,
+        )
         client.complete(
             lease_id,
             token,
@@ -220,7 +367,12 @@ def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, 
         client.complete(
             lease_id,
             token,
-            {"outcome": "FAILED", "retryable": False, "error_code": "SANDBOX_RUN_FAILED", "error_summary": str(exc)[:2000]},
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_RUN_FAILED",
+                "error_summary": str(exc)[:2000],
+            },
         )
     finally:
         cleanup_tree(workspace)
@@ -229,19 +381,46 @@ def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, 
 def main() -> None:
     config = SandboxWorkerConfig.from_env()
     probe = verify_host(config)
-    client = RdcWorkerClient(base_url=config.api_base_url, worker_token=config.worker_token)
-    client.heartbeat(software_version=config.software_version, active_lease_count=0, sandbox=probe.attestation)
+    client = RdcWorkerClient(
+        base_url=config.api_base_url,
+        worker_token=config.worker_token,
+    )
+    client.heartbeat(
+        software_version=config.software_version,
+        active_lease_count=0,
+        sandbox=probe.attestation,
+    )
+    worker = _data(client.worker())
+    worker_name = str(worker["name"])
+    if int(worker["max_concurrency"]) != 1:
+        raise SandboxPolicyError(
+            "Phase 1I canary worker must have max_concurrency=1."
+        )
     while True:
         claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
         if claim is None:
             time.sleep(config.poll_seconds)
-            client.heartbeat(software_version=config.software_version, active_lease_count=0, sandbox=probe.attestation)
+            client.heartbeat(
+                software_version=config.software_version,
+                active_lease_count=0,
+                sandbox=probe.attestation,
+            )
             continue
         data = _data(claim)
         if data["work_kind"] == "BUILD":
-            _build(client, config, claim)
+            _build(
+                client,
+                config,
+                claim,
+                worker_name=worker_name,
+            )
         else:
-            _run(client, config, claim)
+            _run(
+                client,
+                config,
+                claim,
+                worker_name=worker_name,
+            )
 
 
 if __name__ == "__main__":

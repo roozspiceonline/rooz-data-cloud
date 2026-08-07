@@ -511,3 +511,29 @@ Before a release:
 
 A Phase 1H merge is blocked unless: the global execution setting defaults to false; the API contains no subprocess/container-runtime primitive; the worker preflight rejects root, visible Docker sockets, and non-rootless runtime sockets; claim execution requires strict sandbox attestation; Phase 1H networking is deny-all; artifact uploads are recomputed with SHA-256 by the control plane; runtime argv contains non-root, read-only, all-capabilities-dropped, no-new-privileges, PID/CPU/memory/time limits; and all Phase 1A–1H CI checks pass.
 
+
+
+## Phase 1I controlled-activation merge gate
+
+A Phase 1I merge is blocked unless:
+
+- `RDC_SANDBOX_EXECUTION_ENABLED` still defaults to false.
+- `RDC_SANDBOX_ACTIVATION_MODE` defaults to `disabled`.
+- canary mode requires one valid immutable AgentVersion UUID.
+- canary mode requires one exact authenticated worker name.
+- the eligible worker has `max_concurrency=1`.
+- the canary manifest declares no secrets.
+- network, browser, dataset, key-value-store, and request-queue capabilities
+  are all disabled.
+- canary resource ceilings do not exceed Phase 1H sandbox ceilings.
+- execution requires both a valid sandbox policy and a valid canary
+  activation.
+- the worker recomputes and checks the sandbox-policy digest.
+- every Build artifact is bound to activation, AgentVersion, and source digest.
+- every Run artifact is bound to activation, Run ID, and container-image
+  digest.
+- the API rejects mismatched activation or lineage provenance.
+- the API still contains no container-runtime or subprocess primitive.
+- the reference canary uses no network or secrets.
+- all previous phase verifiers, the Phase 1I verifier, backend checks,
+  frontend checks, and Compose validation pass.

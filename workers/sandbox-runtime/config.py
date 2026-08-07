@@ -37,7 +37,7 @@ class SandboxWorkerConfig:
                 "RDC_INTERNAL_API_BASE_URL", "http://127.0.0.1:8000"
             ).rstrip("/"),
             worker_token=token,
-            software_version=os.environ.get("RDC_WORKER_SOFTWARE_VERSION", "phase1h-0.1"),
+            software_version=os.environ.get("RDC_WORKER_SOFTWARE_VERSION", "phase1i-0.1"),
             buildkit_address=os.environ.get(
                 "RDC_BUILDKIT_ADDRESS",
                 "unix:///run/user/1000/buildkit/buildkitd.sock",
