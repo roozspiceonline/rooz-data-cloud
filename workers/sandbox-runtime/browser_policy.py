@@ -42,6 +42,41 @@ class BrowserPolicy:
             "remote_cdp_enabled": False,
         }
 
+    @classmethod
+    def create(
+        cls,
+        *,
+        enabled: bool,
+        allowed_hosts: tuple[str, ...],
+        max_pages: int,
+        max_actions: int,
+        navigation_timeout_seconds: int,
+        max_dom_bytes: int,
+        max_screenshot_bytes: int,
+    ) -> "BrowserPolicy":
+        normalized_hosts = tuple(sorted({normalize_hostname(host) for host in allowed_hosts}))
+        if enabled and not normalized_hosts:
+            raise BrowserPolicyError("Enabled browser policy requires an operator allowlist.")
+        if not 1 <= max_pages <= 2:
+            raise BrowserPolicyError("Browser page limit is unsafe.")
+        if not 1 <= max_actions <= 16:
+            raise BrowserPolicyError("Browser action limit is unsafe.")
+        if not 1 <= navigation_timeout_seconds <= 30:
+            raise BrowserPolicyError("Browser navigation timeout is unsafe.")
+        if not 65_536 <= max_dom_bytes <= 4_194_304:
+            raise BrowserPolicyError("Browser DOM limit is unsafe.")
+        if not 65_536 <= max_screenshot_bytes <= 4_194_304:
+            raise BrowserPolicyError("Browser screenshot limit is unsafe.")
+        return cls(
+            enabled=enabled,
+            allowed_hosts=normalized_hosts,
+            max_pages=max_pages,
+            max_actions=max_actions,
+            navigation_timeout_seconds=navigation_timeout_seconds,
+            max_dom_bytes=max_dom_bytes,
+            max_screenshot_bytes=max_screenshot_bytes,
+        )
+
     @property
     def digest(self) -> str:
         encoded = json.dumps(
