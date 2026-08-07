@@ -83,7 +83,35 @@ def _sandbox_attestation_allowed(attestation: SandboxAttestation) -> bool:
     )
 
 
-def _canary_constraints() -> dict[str, object]:
+def _egress_policy_payload() -> dict[str, object]:
+    return {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_schemes": ["https"],
+        "allowed_methods": ["GET", "HEAD"],
+        "allowed_hosts": list(
+            settings.sandbox_canary_web_egress_allowed_hosts
+        ),
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "revalidate_redirects": True,
+        "container_network": "none",
+        "max_requests": settings.sandbox_canary_web_egress_max_requests,
+        "max_response_bytes": (
+            settings.sandbox_canary_web_egress_max_response_bytes
+        ),
+        "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
+        "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
+        "connect_timeout_seconds": (
+            settings.sandbox_canary_web_egress_connect_timeout_seconds
+        ),
+        "request_timeout_seconds": (
+            settings.sandbox_canary_web_egress_request_timeout_seconds
+        ),
+    }
+
+
+def _canary_constraints(*, network: str) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
         "cpu_millis": settings.sandbox_canary_max_cpu_millis,
@@ -91,7 +119,11 @@ def _canary_constraints() -> dict[str, object]:
         "ephemeral_disk_mb": settings.sandbox_canary_max_ephemeral_disk_mb,
         "build_timeout_seconds": settings.sandbox_canary_max_build_seconds,
         "run_timeout_seconds": settings.sandbox_canary_max_run_seconds,
-        "network": "none",
+        "network": (
+            "brokered-web-egress"
+            if network == "web-egress"
+            else "none"
+        ),
         "browser": False,
         "dataset": False,
         "key_value_store": False,
@@ -141,9 +173,16 @@ def _canary_activation(
     if not isinstance(capabilities, dict) or not isinstance(resources, dict):
         return None
 
+    network = str(capabilities.get("network", ""))
+    if network not in {"none", "web-egress"}:
+        return None
     if (
-        capabilities.get("network") != "none"
-        or capabilities.get("browser") is not False
+        network == "web-egress"
+        and not settings.sandbox_canary_web_egress_enabled
+    ):
+        return None
+    if (
+        capabilities.get("browser") is not False
         or capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
@@ -174,13 +213,26 @@ def _canary_activation(
     ):
         return None
 
-    constraints = _canary_constraints()
+    constraints = _canary_constraints(network=network)
+    capability_profile = (
+        "brokered-web-egress"
+        if network == "web-egress"
+        else "offline-minimal"
+    )
+    egress_policy_digest = (
+        canonical_fingerprint(_egress_policy_payload())
+        if network == "web-egress"
+        else None
+    )
+
     return SandboxActivation(
         agent_version_id=UUID(configured_version_id),
         worker_name=configured_worker,
         attestation_digest=str(sandbox_policy["attestation_digest"]),
         sandbox_policy_digest=canonical_fingerprint(sandbox_policy),
         constraints_digest=canonical_fingerprint(constraints),
+        capability_profile=capability_profile,
+        egress_policy_digest=egress_policy_digest,
     )
 
 
@@ -227,6 +279,7 @@ def _sandbox_claim_policy(
         or worker.sandbox_attestation_digest is None
     ):
         return None
+
     manifest = payload.get("manifest")
     if not isinstance(manifest, dict):
         return None
@@ -234,15 +287,37 @@ def _sandbox_claim_policy(
     resources = manifest.get("resources")
     if not isinstance(capabilities, dict) or not isinstance(resources, dict):
         return None
-    if capabilities.get("network") != "none" or capabilities.get("browser") is True:
+
+    network = str(capabilities.get("network", ""))
+    if network not in {"none", "web-egress"}:
         return None
-    memory_mb = int(resources.get("memoryMb", settings.sandbox_max_memory_mb))
-    cpu_millis = int(resources.get("cpuUnits", settings.sandbox_max_cpu_millis))
+    if (
+        network == "web-egress"
+        and not settings.sandbox_canary_web_egress_enabled
+    ):
+        return None
+    if capabilities.get("browser") is True:
+        return None
+
+    memory_mb = int(
+        resources.get("memoryMb", settings.sandbox_max_memory_mb)
+    )
+    cpu_millis = int(
+        resources.get("cpuUnits", settings.sandbox_max_cpu_millis)
+    )
     pids = int(resources.get("maxProcesses", settings.sandbox_max_pids))
     disk_mb = int(
-        resources.get("ephemeralDiskMb", settings.sandbox_max_ephemeral_disk_mb)
+        resources.get(
+            "ephemeralDiskMb",
+            settings.sandbox_max_ephemeral_disk_mb,
+        )
     )
-    timeout = int(resources.get("timeoutSeconds", settings.sandbox_max_run_seconds))
+    timeout = int(
+        resources.get(
+            "timeoutSeconds",
+            settings.sandbox_max_run_seconds,
+        )
+    )
     if (
         memory_mb > settings.sandbox_max_memory_mb
         or cpu_millis > settings.sandbox_max_cpu_millis
@@ -250,6 +325,7 @@ def _sandbox_claim_policy(
         or disk_mb > settings.sandbox_max_ephemeral_disk_mb
     ):
         return None
+
     work_kind = str(payload.get("work_kind", ""))
     if work_kind == "RUN_START" and payload.get("artifact") is None:
         return None
@@ -257,12 +333,14 @@ def _sandbox_claim_policy(
         timeout = min(timeout, settings.sandbox_max_build_seconds)
     else:
         timeout = min(timeout, settings.sandbox_max_run_seconds)
+
     return {
         "schema_version": settings.sandbox_required_profile,
         "attestation_digest": worker.sandbox_attestation_digest,
         "runtime": "containerd-rootless",
         "builder": "buildkit-rootless",
         "network_policy": "deny-all",
+        "brokered_web_egress": network == "web-egress",
         "rootless": True,
         "no_host_docker_socket": True,
         "no_new_privileges": True,

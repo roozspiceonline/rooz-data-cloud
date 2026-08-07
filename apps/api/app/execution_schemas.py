@@ -64,8 +64,33 @@ class SandboxActivation(StrictModel):
     sandbox_policy_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     constraints_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
     no_secrets: Literal[True] = True
-    capability_profile: Literal["offline-minimal"] = "offline-minimal"
+    capability_profile: Literal[
+        "offline-minimal",
+        "brokered-web-egress",
+    ] = "offline-minimal"
+    egress_policy_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     max_concurrency: Literal[1] = 1
+
+    @model_validator(mode="after")
+    def validate_capability_receipt(self) -> "SandboxActivation":
+        if (
+            self.capability_profile == "brokered-web-egress"
+            and self.egress_policy_digest is None
+        ):
+            raise ValueError(
+                "Brokered web egress requires an egress-policy digest."
+            )
+        if (
+            self.capability_profile == "offline-minimal"
+            and self.egress_policy_digest is not None
+        ):
+            raise ValueError(
+                "Offline-minimal activation cannot carry an egress-policy digest."
+            )
+        return self
 
 
 class SandboxAttestation(StrictModel):

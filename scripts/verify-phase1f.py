@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +31,20 @@ REQUIRED_FILES = [
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise SystemExit("PHASE1F VERIFICATION FAILED: " + message)
+
+
+def foundation_phase_at_least(
+    source: str,
+    *,
+    minimum_major: int,
+    minimum_letter: str,
+) -> bool:
+    marker = re.search(r'"phase": "(\d+)([A-Z])"', source)
+    if marker is None:
+        return False
+    current = (int(marker.group(1)), ord(marker.group(2)))
+    minimum = (minimum_major, ord(minimum_letter))
+    return current >= minimum
 
 
 def main() -> None:
@@ -70,14 +85,10 @@ def main() -> None:
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
     require(
-        any(
-            marker in main_source
-            for marker in [
-                '"phase": "1F"',
-                '"phase": "1G"',
-                '"phase": "1H"',
-                '"phase": "1I"',
-            ]
+        foundation_phase_at_least(
+            main_source,
+            minimum_major=1,
+            minimum_letter="F",
         ),
         "foundation phase is earlier than 1F",
     )

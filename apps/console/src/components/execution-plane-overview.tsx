@@ -111,14 +111,14 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
     <section aria-labelledby="execution-plane-heading">
       <header style={{ marginBottom: "1.5rem" }}>
         <p style={{ color: "var(--muted-foreground)", margin: 0 }}>
-          Phase 1I
+          Phase 1J
         </p>
         <h1 id="execution-plane-heading">Isolated execution plane</h1>
         <p style={{ maxWidth: "72ch" }}>
-          Inspect worker leases and immutable artifact metadata. Phase 1I
-          permits only one configured immutable AgentVersion on one exact
-          single-concurrency worker after both the master gate and canary mode
-          are enabled. General untrusted execution remains release-blocked.
+          Phase 1J extends the Phase 1I safety model.
+          It permits one configured immutable AgentVersion on one exact single-concurrency worker
+          after both the master gate and canary mode are enabled.
+          General untrusted execution remains release-blocked.
         </p>
       </header>
 
@@ -147,6 +147,18 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
           <div>Available and verified</div>
         </Card>
       </div>
+
+      <Card>
+        <h2>Brokered HTTPS canary</h2>
+        <p>
+          Agent container stays --network none. Phase 1J allows only
+          worker-brokered GET/HEAD requests to the operator allowlist, with
+          digest-bound policy, DNS/IP validation, redirect checks, and bounded
+          request/byte/time budgets. The separate web-egress gate defaults off.
+        </p>
+      </Card>
+
+      <div style={{ height: "1rem" }} />
 
       <Card>
         <h2>Execution leases</h2>

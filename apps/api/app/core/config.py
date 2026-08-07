@@ -1,4 +1,5 @@
 import base64
+import ipaddress
 import re
 from functools import lru_cache
 from typing import Literal
@@ -83,6 +84,17 @@ class Settings(BaseSettings):
     sandbox_canary_max_ephemeral_disk_mb: int = 256
     sandbox_canary_max_build_seconds: int = 300
     sandbox_canary_max_run_seconds: int = 120
+
+    sandbox_canary_web_egress_enabled: bool = False
+    sandbox_canary_web_egress_allowed_hosts: list[str] = Field(
+        default_factory=list
+    )
+    sandbox_canary_web_egress_max_requests: int = 8
+    sandbox_canary_web_egress_max_response_bytes: int = 1_048_576
+    sandbox_canary_web_egress_max_total_bytes: int = 4_194_304
+    sandbox_canary_web_egress_max_redirects: int = 3
+    sandbox_canary_web_egress_connect_timeout_seconds: int = 5
+    sandbox_canary_web_egress_request_timeout_seconds: int = 15
 
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
@@ -207,6 +219,111 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Canary limits must be positive and no broader than sandbox limits."
             )
+
+        normalized_egress_hosts: list[str] = []
+        for value in self.sandbox_canary_web_egress_allowed_hosts:
+            candidate = value.strip().rstrip(".").casefold()
+            if not candidate or "*" in candidate:
+                raise ValueError(
+                    "Canary web-egress hosts must be exact hostnames."
+                )
+            try:
+                ipaddress.ip_address(candidate)
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    "Canary web-egress hosts cannot be IP literals."
+                )
+            try:
+                normalized = candidate.encode("idna").decode("ascii")
+            except UnicodeError as exc:
+                raise ValueError(
+                    "Canary web-egress host is not valid IDNA."
+                ) from exc
+            labels = normalized.split(".")
+            if (
+                len(normalized) > 253
+                or len(labels) < 2
+                or normalized.endswith(".local")
+                or any(
+                    not label
+                    or len(label) > 63
+                    or label[0] == "-"
+                    or label[-1] == "-"
+                    or not all(
+                        character.isalnum() or character == "-"
+                        for character in label
+                    )
+                    for label in labels
+                )
+            ):
+                raise ValueError(
+                    "Canary web-egress host is outside the safe hostname contract."
+                )
+            normalized_egress_hosts.append(normalized)
+
+        self.sandbox_canary_web_egress_allowed_hosts = sorted(
+            set(normalized_egress_hosts)
+        )
+        if len(self.sandbox_canary_web_egress_allowed_hosts) > 32:
+            raise ValueError(
+                "Canary web-egress allowlist cannot exceed 32 hosts."
+            )
+        if self.sandbox_canary_web_egress_enabled:
+            if (
+                not self.sandbox_execution_enabled
+                or self.sandbox_activation_mode != "canary"
+            ):
+                raise ValueError(
+                    "Web egress requires the sandbox master gate and canary mode."
+                )
+            if not self.sandbox_canary_web_egress_allowed_hosts:
+                raise ValueError(
+                    "Web egress requires at least one operator-allowlisted host."
+                )
+
+        if not 1 <= self.sandbox_canary_web_egress_max_requests <= 32:
+            raise ValueError(
+                "Canary web-egress request limit is outside the safe range."
+            )
+        if not (
+            1_024
+            <= self.sandbox_canary_web_egress_max_response_bytes
+            <= 8_388_608
+        ):
+            raise ValueError(
+                "Canary web-egress response limit is outside the safe range."
+            )
+        if not (
+            self.sandbox_canary_web_egress_max_response_bytes
+            <= self.sandbox_canary_web_egress_max_total_bytes
+            <= 33_554_432
+        ):
+            raise ValueError(
+                "Canary web-egress total byte limit is outside the safe range."
+            )
+        if not 0 <= self.sandbox_canary_web_egress_max_redirects <= 5:
+            raise ValueError(
+                "Canary web-egress redirect limit is outside the safe range."
+            )
+        if not (
+            1
+            <= self.sandbox_canary_web_egress_connect_timeout_seconds
+            <= 15
+        ):
+            raise ValueError(
+                "Canary web-egress connect timeout is outside the safe range."
+            )
+        if not (
+            1
+            <= self.sandbox_canary_web_egress_request_timeout_seconds
+            <= 30
+        ):
+            raise ValueError(
+                "Canary web-egress request timeout is outside the safe range."
+            )
+
         if not 60 <= self.storage_upload_grant_seconds <= 3600:
             raise ValueError("Storage upload grants must expire between 60 and 3600 seconds.")
         if not 30 <= self.storage_download_grant_seconds <= 900:

@@ -2,6 +2,7 @@
 """Static verification for RDC Phase 1E Run control-plane and SSE scope."""
 
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,6 +26,20 @@ def require(condition: bool, message: str) -> None:
 
 def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def foundation_phase_at_least(
+    source: str,
+    *,
+    minimum_major: int,
+    minimum_letter: str,
+) -> bool:
+    marker = re.search(r'"phase": "(\d+)([A-Z])"', source)
+    if marker is None:
+        return False
+    current = (int(marker.group(1)), ord(marker.group(2)))
+    minimum = (minimum_major, ord(minimum_letter))
+    return current >= minimum
 
 
 def main() -> None:
@@ -120,15 +135,10 @@ def main() -> None:
     require("run.completed" in event_types, "terminal event missing")
 
     require(
-        any(
-            marker in main_api
-            for marker in [
-                '"phase": "1E"',
-                '"phase": "1F"',
-                '"phase": "1G"',
-                '"phase": "1H"',
-                '"phase": "1I"',
-            ]
+        foundation_phase_at_least(
+            main_api,
+            minimum_major=1,
+            minimum_letter="E",
         ),
         "foundation status is earlier than Phase 1E",
     )
