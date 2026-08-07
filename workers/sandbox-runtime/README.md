@@ -1,7 +1,31 @@
-# Phase 1H sandbox worker
+# RDC sandbox runtime worker
 
-This worker is the first RDC component permitted to invoke BuildKit or a container runtime. It must run on a dedicated Linux execution host as a non-root user. It refuses to start if a host Docker socket is visible, if the BuildKit/containerd sockets are not rootless per-user sockets, or if the required policy tooling is absent.
+The worker is the only Phase 1H/1I component allowed to invoke BuildKit or
+containerd/nerdctl. The API remains a pure control plane.
 
-Phase 1H defaults the control plane to `RDC_SANDBOX_EXECUTION_ENABLED=false`. Set it to true only after the host passes `preflight.py` and the operator has installed the AppArmor/seccomp profiles. Even when globally enabled, only workers that heartbeat with the strict `rdc.sandbox/v1` attestation receive claims with `execution_enabled: true`.
+## Phase 1I canary activation
 
-The initial network policy is `deny-all`; Agents requesting `web-egress` or browser capability are not execution-eligible in Phase 1H. Build and runtime containers run without the Docker socket or control-plane credentials, as a non-root UID, with all Linux capabilities dropped, `no-new-privileges`, a read-only root filesystem, PID/CPU/memory limits, and no network.
+The worker accepts executable Build and Run claims only when the claim contains
+both:
+
+- a valid `rdc.sandbox/v1` sandbox policy; and
+- a `canary` activation receipt bound to the authenticated worker name and
+  immutable AgentVersion.
+
+The worker requires `max_concurrency=1`, recomputes the sandbox-policy digest,
+rejects secrets and any capability outside `offline-minimal`, re-verifies
+source/image digests, and attaches activation/source/image lineage to every
+uploaded execution artifact.
+
+`RUN_CANCEL` remains available for cleanup even when execution is later
+disabled.
+
+## Host boundary
+
+A production worker host must remain non-root, must not expose a host Docker
+socket, and must use rootless BuildKit and rootless containerd sockets under
+`/run/user/<uid>`. Seccomp/AppArmor, read-only root filesystems, dropped
+capabilities, cgroup/time/output limits, and deny-all networking remain
+mandatory.
+
+General untrusted Agent execution is not authorized by Phase 1I.
