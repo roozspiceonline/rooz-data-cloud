@@ -235,6 +235,87 @@ def main() -> None:
         "Agent container no-network boundary changed",
     )
 
+    main_api = read("apps/api/app/main.py")
+    for marker in [
+        'version="0.11.0-phase1k"',
+        '"phase": "1K"',
+        '"status": "generalized-web-fetch-runtime-contract"',
+        '"web_fetch_request_contract": "rdc.web-fetch/v1"',
+        '"web_fetch_result_contract": "rdc.web-fetch-result/v1"',
+        '"web_fetch_activation_scope": "phase1j-single-canary"',
+        '"browser_execution_enabled": False',
+        '"untrusted_agent_execution_enabled": False',
+    ]:
+        require(marker in main_api, "foundation status missing: " + marker)
+
+    env_example = read(".env.example")
+    require(
+        "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED=false" in env_example,
+        "web-egress gate no longer defaults false",
+    )
+    require(
+        "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS=[]" in env_example,
+        "web-egress allowlist no longer defaults empty",
+    )
+
+    canary_manifest = json.loads(
+        read("examples/web-egress-canary/agent.json")
+    )
+    capabilities = canary_manifest["capabilities"]
+    require(
+        capabilities["network"] == "web-egress",
+        "legacy canary network declaration changed",
+    )
+    for capability in [
+        "browser",
+        "dataset",
+        "keyValueStore",
+        "requestQueue",
+    ]:
+        require(
+            capabilities[capability] is False,
+            "legacy canary capability broadened: " + capability,
+        )
+    require(
+        canary_manifest.get("secrets") == [],
+        "legacy canary now declares secrets",
+    )
+
+    console = read(
+        "apps/console/src/components/execution-plane-overview.tsx"
+    )
+    for marker in [
+        "Phase 1K",
+        "Phase 1J",
+        "Versioned web fetch",
+        "top-level web_fetch",
+        "rdc.web-fetch/v1",
+        "_rdc_web_fetch_result",
+        "rdc.web-fetch-result/v1",
+        "SHA-256 lineage",
+        "Agent container stays --network none",
+        "web-egress gate defaults off",
+        "General untrusted execution remains release-blocked",
+    ]:
+        require(marker in console, "console evidence missing: " + marker)
+
+    phase1k_console_test = read(
+        "apps/console/tests/phase1k-contract.test.mjs"
+    )
+    require(
+        "Phase 1K console exposes versioned web-fetch safety evidence"
+        in phase1k_console_test,
+        "Phase 1K console regression test is missing",
+    )
+    phase1j_console_test = read(
+        "apps/console/tests/phase1j-contract.test.mjs"
+    )
+    require(
+        "Phase 1J console explains brokered web-egress boundary"
+        in phase1j_console_test,
+        "Phase 1J console compatibility test is missing",
+    )
+
     readme = read("docs/phase1k/README.md")
     runbook = read("docs/phase1k/RUNBOOK.md")
     for marker in [
@@ -255,7 +336,10 @@ def main() -> None:
         "release boundary is missing",
     )
 
-    print("Phase 1K integration verification: PASS")
+    print("Phase 1K final verification: PASS")
+    print("  foundation status Phase 1K: PASS")
+    print("  console/operator evidence: PASS")
+    print("  Phase 1J compatibility regression: PASS")
     print("  versioned Run web_fetch contract: PASS")
     print("  API + worker independent validation: PASS")
     print("  Phase 1J broker compatibility: PASS")
