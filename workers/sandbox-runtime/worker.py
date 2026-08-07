@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from browser_executor import BrowserRuntimeError, run_browser_self_test
 from browser_policy import (
     BrowserPolicy,
     BrowserPolicyError,
@@ -411,17 +412,64 @@ def _run(
             browser_policy=browser_policy,
         )
         if activation.get("capability_profile") == "controlled-browser":
+            try:
+                client.status(lease_id, token, status="RUNNING")
+                browser_output, browser_log = run_browser_self_test(
+                    config=config,
+                    run_id=str(payload["run_id"]),
+                    workspace=workspace,
+                )
+            except BrowserRuntimeError:
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "BROWSER_RUNTIME_SELF_TEST_FAILED",
+                        "error_summary": (
+                            "The isolated browser runtime self-test failed closed."
+                        ),
+                    },
+                )
+                return
+
+            browser_provenance = {
+                "activation": activation,
+                "run_id": str(payload["run_id"]),
+                "browser_runtime_mode": "about-blank-self-test",
+                "external_navigation": False,
+            }
+            browser_artifacts: list[LocalArtifact] = []
+            for kind, path, media_type in [
+                ("RUN_OUTPUT", browser_output, "application/json"),
+                ("LOG_BUNDLE", browser_log, "text/plain"),
+            ]:
+                digest, size = sha256_file(path)
+                browser_artifacts.append(
+                    LocalArtifact(
+                        kind,
+                        path,
+                        media_type,
+                        digest,
+                        size,
+                        "NOT_REQUIRED",
+                        dict(browser_provenance),
+                    )
+                )
+            registrations = _upload_artifacts(
+                client,
+                lease_id=lease_id,
+                lease_token=token,
+                artifacts=browser_artifacts,
+            )
             client.complete(
                 lease_id,
                 token,
                 {
-                    "outcome": "FAILED",
+                    "outcome": "SUCCEEDED",
                     "retryable": False,
-                    "error_code": "BROWSER_RUNTIME_NOT_WIRED",
-                    "error_summary": (
-                        "Controlled browser policy was verified, but live "
-                        "browser execution is not wired in Phase 1L yet."
-                    ),
+                    "artifacts": registrations,
                 },
             )
             return
