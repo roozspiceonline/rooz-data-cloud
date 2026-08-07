@@ -1,5 +1,14 @@
 # Changelog
 
+## Phase 1H — Sandboxed Build & Runtime Foundation
+
+- Added strict sandbox worker attestation and an opt-in execution gate.
+- Added rootless BuildKit/containerd worker code with no host Docker socket.
+- Added non-root, read-only, capability-dropped runtime policy with seccomp/AppArmor and cgroup limits.
+- Added short-lived execution artifact upload/download grants and server-side SHA-256 verification.
+- Added OCI scanning, SBOM/provenance generation, cancellation, cleanup, tests, docs, and CI verification.
+- Kept the global execution gate disabled by default and blocked web-egress/browser Agents in Phase 1H.
+
 ## Phase 1G — Secure Source Ingestion and Artifact Delivery
 
 - Added S3-compatible direct Agent source uploads with exact presigned constraints.

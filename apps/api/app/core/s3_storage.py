@@ -141,6 +141,43 @@ class S3ObjectStorage:
 
         return await anyio.to_thread.run_sync(operation)
 
+    async def create_presigned_artifact_upload(
+        self,
+        *,
+        object_key: str,
+        lease_id: str,
+        artifact_kind: str,
+        content_type: str,
+        sha256_digest: str,
+        expires_seconds: int,
+    ) -> dict[str, object]:
+        await self.ensure_bucket()
+
+        def operation() -> dict[str, object]:
+            headers = {
+                "Content-Type": content_type,
+                "x-amz-meta-rdc-lease-id": lease_id,
+                "x-amz-meta-rdc-artifact-kind": artifact_kind,
+                "x-amz-meta-sha256": sha256_digest,
+            }
+            url = public_s3_client().generate_presigned_url(
+                "put_object",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": object_key,
+                    "ContentType": content_type,
+                    "Metadata": {
+                        "rdc-lease-id": lease_id,
+                        "rdc-artifact-kind": artifact_kind,
+                        "sha256": sha256_digest,
+                    },
+                },
+                ExpiresIn=expires_seconds,
+            )
+            return {"url": str(url), "headers": headers}
+
+        return await anyio.to_thread.run_sync(operation)
+
     async def create_presigned_download(
         self,
         *,
@@ -243,6 +280,46 @@ class S3ObjectStorage:
             finally:
                 body.close()
             return b"".join(chunks)
+
+        return await anyio.to_thread.run_sync(operation)
+
+    async def sha256_object(
+        self,
+        *,
+        object_key: str,
+        max_bytes: int,
+    ) -> tuple[str, int]:
+        await self.ensure_bucket()
+
+        def operation() -> tuple[str, int]:
+            try:
+                response = internal_s3_client().get_object(
+                    Bucket=self.bucket,
+                    Key=object_key,
+                )
+            except ClientError as exc:
+                raise StorageBackendError(
+                    "STORAGE_UNAVAILABLE",
+                    "Object storage content could not be verified.",
+                ) from exc
+            body = response["Body"]
+            digest = hashlib.sha256()
+            total = 0
+            try:
+                while True:
+                    chunk = body.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise StorageBackendError(
+                            "STORAGE_OBJECT_TOO_LARGE",
+                            "The artifact exceeds the configured verification limit.",
+                        )
+                    digest.update(chunk)
+            finally:
+                body.close()
+            return digest.hexdigest(), total
 
         return await anyio.to_thread.run_sync(operation)
 

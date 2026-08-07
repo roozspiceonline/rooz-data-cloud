@@ -111,13 +111,14 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
     <section aria-labelledby="execution-plane-heading">
       <header style={{ marginBottom: "1.5rem" }}>
         <p style={{ color: "var(--muted-foreground)", margin: 0 }}>
-          Phase 1F
+          Phase 1H
         </p>
         <h1 id="execution-plane-heading">Isolated execution plane</h1>
         <p style={{ maxWidth: "72ch" }}>
-          Inspect worker leases and immutable artifact metadata. The internal
-          protocol is active, but untrusted Agent execution remains disabled
-          until the isolation runtime is separately approved and verified.
+          Inspect worker leases and immutable artifact metadata. Controlled
+          sandbox execution is available only to explicitly attested workers;
+          the default global gate remains off and general untrusted execution
+          is still release-blocked.
         </p>
       </header>
 

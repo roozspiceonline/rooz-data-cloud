@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     worker_max_attempts: int = 5
     worker_secret_envelope_seconds: int = 60
 
+    sandbox_execution_enabled: bool = False
+    sandbox_required_profile: str = "rdc.sandbox/v1"
+    sandbox_max_memory_mb: int = 4096
+    sandbox_max_cpu_millis: int = 4000
+    sandbox_max_pids: int = 512
+    sandbox_max_ephemeral_disk_mb: int = 8192
+    sandbox_max_build_seconds: int = 900
+    sandbox_max_run_seconds: int = 600
+    sandbox_max_output_bytes: int = 16_777_216
+    sandbox_artifact_max_bytes: int = 8_589_934_592
+
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
 
@@ -112,6 +123,24 @@ class Settings(BaseSettings):
             raise ValueError("Worker max attempts must be between 1 and 20.")
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
+        if self.sandbox_required_profile != "rdc.sandbox/v1":
+            raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")
+        if not 128 <= self.sandbox_max_memory_mb <= 32768:
+            raise ValueError("Sandbox memory limit is outside the safe range.")
+        if not 100 <= self.sandbox_max_cpu_millis <= 16000:
+            raise ValueError("Sandbox CPU limit is outside the safe range.")
+        if not 16 <= self.sandbox_max_pids <= 4096:
+            raise ValueError("Sandbox PID limit is outside the safe range.")
+        if not 64 <= self.sandbox_max_ephemeral_disk_mb <= 102400:
+            raise ValueError("Sandbox disk limit is outside the safe range.")
+        if not 30 <= self.sandbox_max_build_seconds <= 3600:
+            raise ValueError("Sandbox Build timeout is outside the safe range.")
+        if not 1 <= self.sandbox_max_run_seconds <= 86400:
+            raise ValueError("Sandbox Run timeout is outside the safe range.")
+        if not 1_048_576 <= self.sandbox_max_output_bytes <= 268_435_456:
+            raise ValueError("Sandbox output limit is outside the safe range.")
+        if not 1_048_576 <= self.sandbox_artifact_max_bytes <= 68_719_476_736:
+            raise ValueError("Sandbox artifact limit is outside the safe range.")
         if not 60 <= self.storage_upload_grant_seconds <= 3600:
             raise ValueError("Storage upload grants must expire between 60 and 3600 seconds.")
         if not 30 <= self.storage_download_grant_seconds <= 900:

@@ -78,6 +78,8 @@ jobs:
       RDC_WORKER_LEASE_MAX_SECONDS: "300"
       RDC_WORKER_MAX_ATTEMPTS: "5"
       RDC_WORKER_SECRET_ENVELOPE_SECONDS: "60"
+      RDC_SANDBOX_EXECUTION_ENABLED: "false"
+      RDC_SANDBOX_REQUIRED_PROFILE: rdc.sandbox/v1
     defaults:
       run:
         working-directory: apps/api
@@ -108,4 +110,5 @@ jobs:
       - run: python3 scripts/verify-phase1e.py
       - run: python3 scripts/verify-phase1f.py
       - run: python3 scripts/verify-phase1g.py
+      - run: python3 scripts/verify-phase1h.py
       - run: docker compose config --quiet

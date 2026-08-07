@@ -1,27 +1,20 @@
-# Rooz Data Cloud — Phase 1G
+# Rooz Data Cloud — Phase 1H
 
-Phase 1G extends the merged control plane and authenticated execution-plane protocol with secure Agent source ingestion and short-lived object delivery.
+Phase 1H adds a separately isolated, attested sandbox worker for controlled Build and Run execution. The API remains a control plane and never receives BuildKit/containerd sockets.
 
 ## Included
 
-- Direct S3-compatible source ZIP uploads through exact-size presigned POSTs
-- SHA-256, media-type, provider-metadata, and byte-length verification
-- Safe ZIP inspection without extraction
-- Immutable source-object binding for Agent versions and Builds
-- Lease-bound source-download grants for Build workers
-- Tenant storage metadata APIs and a functional project Storage console
-- PostgreSQL RLS, tenancy guards, audit events, schemas, tests, and CI verification
+- Strict `rdc.sandbox/v1` worker attestation and execution gating
+- Rootless BuildKit and rootless containerd/nerdctl worker implementation
+- No host Docker socket, no privileged containers, no control-plane credentials
+- Non-root runtime, dropped capabilities, no-new-privileges, read-only root filesystem
+- Seccomp/AppArmor policy, cgroup/time/output limits, disposable workspaces
+- Phase 1H `deny-all` networking; web egress and browser Agents remain blocked
+- Short-lived worker artifact upload/download grants with server-side SHA-256 verification
+- OCI image scanning, SBOM and provenance generation
+- Build/Run cancellation and cleanup paths
+- Migration, protocol schemas, tests, documentation, and CI verification
 
-## Execution boundary
+## Safe default
 
-The API does not extract or execute Agent code. BuildKit, Docker, Kubernetes, containers, subprocesses, and sandboxed Runs remain disabled. Every worker claim still advertises `execution_enabled: false`.
-
-## Start the phase
-
-The generated `start-phase1g.py` reads the repository-scoped GitHub token from:
-
-```text
-~/Downloads/rdc-team-bridge/.env
-```
-
-The Bridge web server does not need to be running. The installer creates one Phase 1G issue, creates `feat/phase-1g-secure-source-artifact-delivery`, uploads the implementation, and opens a draft pull request. It does not merge or delete branches.
+`RDC_SANDBOX_EXECUTION_ENABLED=false` remains the default. Only explicitly attested workers can receive `execution_enabled: true` after an operator enables the Phase 1H gate. General untrusted Agent execution remains disabled.

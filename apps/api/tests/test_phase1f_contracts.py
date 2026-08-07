@@ -198,7 +198,7 @@ def test_phase1f_migration_has_leases_artifacts_secrets_rls_and_guards() -> None
         assert marker in migration
 
 
-def test_worker_protocol_schemas_are_strict_and_execution_is_disabled() -> None:
+def test_worker_protocol_schemas_remain_strict_and_execution_is_gated() -> None:
     schema_root = (
         Path(__file__).parents[3] / "packages/agent-protocol/schemas"
     )
@@ -211,7 +211,8 @@ def test_worker_protocol_schemas_are_strict_and_execution_is_disabled() -> None:
     assert claim["additionalProperties"] is False
     assert claim["properties"]["payload"]["properties"][
         "execution_enabled"
-    ] == {"const": False}
+    ] == {"type": "boolean"}
+    assert "sandbox" in claim["properties"]["payload"]["required"]
     assert envelope["properties"]["algorithm"]["const"] == (
         "X25519-HKDF-SHA256-AES-256-GCM"
     )
@@ -234,4 +235,4 @@ def test_phase1f_does_not_execute_untrusted_agent_code() -> None:
         "exec(",
     ]:
         assert prohibited not in source
-    assert '"execution_enabled": False' in source
+    assert 'claim_payload["execution_enabled"] = sandbox_policy is not None' in source

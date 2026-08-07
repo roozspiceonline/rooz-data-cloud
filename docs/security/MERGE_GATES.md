@@ -506,3 +506,8 @@ Before a release:
 - Worker download requires an active BUILD lease.
 - No extraction, BuildKit, Docker, Kubernetes, container, shell, subprocess, or Agent execution is introduced.
 - Alembic, Ruff, strict mypy, pytest, frontend checks, all phase verifiers, and Compose validation pass.
+
+## Phase 1H sandbox merge gate
+
+A Phase 1H merge is blocked unless: the global execution setting defaults to false; the API contains no subprocess/container-runtime primitive; the worker preflight rejects root, visible Docker sockets, and non-rootless runtime sockets; claim execution requires strict sandbox attestation; Phase 1H networking is deny-all; artifact uploads are recomputed with SHA-256 by the control plane; runtime argv contains non-root, read-only, all-capabilities-dropped, no-new-privileges, PID/CPU/memory/time limits; and all Phase 1A–1H CI checks pass.
+

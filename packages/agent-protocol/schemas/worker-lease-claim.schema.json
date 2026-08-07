@@ -73,7 +73,8 @@
       "required": [
         "schema_version",
         "work_kind",
-        "execution_enabled"
+        "execution_enabled",
+        "sandbox"
       ],
       "properties": {
         "schema_version": {
@@ -87,7 +88,7 @@
           ]
         },
         "execution_enabled": {
-          "const": false
+          "type": "boolean"
         },
         "source": {
           "type": "object",
@@ -130,8 +131,36 @@
               "const": true
             }
           }
+        },
+        "sandbox": {
+          "anyOf": [
+            {
+              "$ref": "sandbox-capabilities.schema.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "execution_enabled": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sandbox": {
+                "$ref": "sandbox-capabilities.schema.json"
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

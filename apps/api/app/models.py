@@ -3,6 +3,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -904,6 +905,14 @@ class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
     software_version: Mapped[str] = mapped_column(String(80), nullable=False)
     metadata_json: Mapped[dict[str, object]] = mapped_column(
         JSONB, nullable=False, default=dict
+    )
+    sandbox_profile: Mapped[str | None] = mapped_column(String(80))
+    sandbox_attestation_digest: Mapped[str | None] = mapped_column(String(64))
+    sandbox_execution_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    sandbox_attested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
     )
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

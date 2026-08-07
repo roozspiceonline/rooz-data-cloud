@@ -971,3 +971,8 @@ Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract d
 - `POST /api/v1/storage-objects/{storage_object_id}/download-grant` creates a short-lived tenant download capability.
 - `POST /internal/v1/leases/{lease_id}/source-download` is excluded from public OpenAPI and requires worker plus lease credentials.
 - Presigned URLs are returned once and never persisted by the control plane.
+
+## Phase 1H internal sandbox contracts
+
+Worker heartbeats may include a strict `rdc.sandbox/v1` attestation. The control plane sets `execution_enabled: true` only when the global sandbox gate is enabled and the claiming worker has a current compliant attestation. Claim payloads include a `sandbox` policy block with immutable limits. Internal lease endpoints add `artifact-upload` and `artifact-download` grants; they remain excluded from public OpenAPI. Uploaded execution artifacts are accepted only after object metadata, byte length, media type, lease binding, and server-streamed SHA-256 verification match.
+

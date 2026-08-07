@@ -48,14 +48,18 @@ def main() -> None:
     require(schema["properties"]["kind"]["const"] == "AGENT_SOURCE", "kind changed")
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
-    require('"phase": "1G"' in main_source, "foundation phase is not 1G")
+    require(
+        '"phase": "1G"' in main_source or '"phase": "1H"' in main_source,
+        "foundation phase is earlier than 1G",
+    )
     require(
         '"secure_source_ingestion_enabled": True' in main_source,
         "source ingestion is not enabled",
     )
+    config_source = (ROOT / "apps/api/app/core/config.py").read_text(encoding="utf-8")
     require(
-        '"sandbox_execution_enabled": False' in main_source,
-        "sandbox execution boundary changed",
+        "sandbox_execution_enabled: bool = False" in config_source,
+        "sandbox execution is not disabled by default",
     )
 
     archive_source = (

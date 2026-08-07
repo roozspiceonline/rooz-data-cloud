@@ -7,6 +7,7 @@ from ...core.database import get_db
 from ...core.errors import request_id, success_payload
 from ...execution_schemas import (
     AppendWorkerEventsRequest,
+    ArtifactUploadRequest,
     ClaimWorkRequest,
     CompleteLeaseRequest,
     LeaseStatusUpdateRequest,
@@ -20,6 +21,8 @@ from ...services.execution_plane import (
     claim_work,
     complete_lease,
     heartbeat_worker,
+    issue_artifact_upload_grant,
+    issue_run_artifact_download_grant,
     issue_secret_envelope,
     register_worker,
     renew_lease,
@@ -205,3 +208,35 @@ async def issue_source_download_route(
         request_id=request_id(request),
     )
     return success_payload(request, result.model_dump(mode="json"))
+
+@router.post("/leases/{lease_id}/artifact-upload")
+async def issue_artifact_upload_route(
+    payload: ArtifactUploadRequest,
+    request: Request,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await issue_artifact_upload_grant(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload,
+        request_id=request_id(request),
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
+
+@router.post("/leases/{lease_id}/artifact-download")
+async def issue_artifact_download_route(
+    request: Request,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await issue_run_artifact_download_grant(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        request_id=request_id(request),
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
