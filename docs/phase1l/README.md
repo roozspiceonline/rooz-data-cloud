@@ -1,113 +1,131 @@
 # Phase 1L — Controlled Browser Execution Foundation
 
-Phase 1L starts RDC's browser platform without weakening Phases 1I–1K.
+Phase 1L establishes RDC's controlled browser boundary without weakening the
+Agent sandbox.
 
 ```text
 Agent container
-  browser: unavailable
+  browser implementation: unavailable
   network: none
         |
         v
-future versioned browser request
+rdc.browser/v1 Run intent
         |
         v
-Dedicated RDC browser worker
+control-plane browser-policy receipt
         |
         v
-operator-allowlisted public HTTPS targets
+controlled-browser activation receipt
+        |
+        v
+sandbox worker independent verification
+        |
+        v
+dedicated browser runtime
+  about:blank self-test only
+  network: none
 ```
 
-This foundation does **not** install or execute Playwright/Chromium.
+## Delivered in Phase 1L
 
-## `rdc.browser/v1`
+Phase 1L provides:
 
-The initial contract permits:
+- a separate browser gate that defaults to `false`
+- strict `rdc.browser/v1` Run intent
+- `rdc.browser-policy/v1` operator-owned policy receipts
+- SHA-256 browser-policy binding
+- immutable AgentVersion capability checks
+- `controlled-browser` canary activation receipts
+- independent worker-side policy and plan validation
+- an isolated Playwright/Chromium runtime boundary
+- Playwright Python and image pinned to `1.61.0`
+- immutable local browser image references
+- a dedicated Chromium-compatible seccomp profile
+- an offline `about:blank` runtime self-test bridge
+- Phase 1L CI verification and operator documentation
 
-- one HTTPS start URL
+## Browser contract
+
+The Phase 1L contract permits:
+
+- one HTTPS start URL in the Run intent
 - `domcontentloaded` or `load`
 - snapshot actions only
-- optional rendered HTML capture
+- optional HTML inclusion
 
-It excludes clicks, typing, cookies, credentials, downloads, uploads,
-arbitrary JavaScript, arbitrary CDP, headers, proxies and persistence.
+The public `start_url` is validated and policy-bound, but Phase 1L does **not**
+send it to Chromium. Public navigation belongs to the next browser phase.
 
-## Safe default
+`browser` and `web_fetch` are intentionally mutually exclusive in one Phase 1L
+Run.
 
-`RDC_SANDBOX_CANARY_BROWSER_ENABLED=false`
+## Safe defaults
 
-Browser activation additionally depends on the existing sandbox canary and
-Phase 1J web-egress gate.
+```text
+RDC_SANDBOX_CANARY_BROWSER_ENABLED=false
+RDC_SANDBOX_BROWSER_RUNTIME_IMAGE_REF=
+RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS=20
+```
+
+Browser canary activation additionally requires:
+
+- sandbox execution enabled
+- canary activation mode
+- one exact immutable AgentVersion
+- one exact worker
+- Phase 1J web-egress enabled
+- an operator hostname allowlist
+- the separate browser gate
+- matching egress-policy and browser-policy digests
+- an immutable preloaded `rdc.local/browser-runtime@sha256:<64-hex>` image
+
+## Isolated runtime bridge
+
+The sandbox worker may invoke the dedicated browser runtime only after the
+complete `controlled-browser` activation receipt passes independent worker
+verification.
+
+The browser runtime launches with:
+
+- `--pull never`
+- non-root `pwuser`
+- read-only root filesystem
+- `no-new-privileges`
+- `cap-drop ALL`
+- bounded CPU, memory and PIDs
+- dedicated browser seccomp
+- `--network none`
+- `--self-test` only
+
+The self-test opens only `about:blank`. It accepts no public URL, no credentials,
+no project secrets, no cookies, no uploads/downloads, no remote CDP and no
+persistent profile.
+
+The worker force-cleans the named browser container on every runtime exit path.
+Browser stderr is discarded rather than mixed with the bounded JSON result
+channel.
+
+## Explicit exclusions
+
+Phase 1L does not implement:
+
+- public browser navigation
+- subresource networking
+- redirects in Chromium
+- clicks, typing or forms
+- cookies or authentication persistence
+- arbitrary headers
+- arbitrary JavaScript or CDP
+- uploads or downloads
+- proxies or anti-blocking
+- CAPTCHA solving
+- WebRTC
+- project secrets
+- persistent browser profiles
+- general untrusted browser execution
+
+The Agent container remains `--network none`.
 
 General untrusted browser execution remains release-blocked.
 
-## Browser runtime skeleton
-
-The first browser process boundary lives under `workers/browser-runtime/`.
-
-It pins Playwright Python `1.61.0` and the matching official Noble image,
-runs as the non-root `pwuser`, exposes no remote CDP port, and currently accepts
-only an explicit `about:blank` self-test.
-
-The runtime is deliberately not imported or launched by
-`workers/sandbox-runtime/worker.py`. Live navigation remains disabled until a
-later Phase 1L integration supplies browser-specific seccomp and egress
-enforcement.
-
-This separation proves the Chromium process boundary without changing the Agent
-container, which remains `--network none`.
-
-
-## Run browser intent and policy receipt
-
-Phase 1L now accepts a top-level `browser` envelope using `rdc.browser/v1`.
-The immutable AgentVersion must declare `browser=true` and `network=web-egress`.
-The control plane binds the Run to an operator-owned `rdc.browser-policy/v1`
-receipt and SHA-256 digest. Agent input cannot supply or modify that policy.
-
-The worker configuration now contains the values needed to independently
-reconstruct the same policy in the next integration increment.
-
-`browser` and `web_fetch` are mutually exclusive during Phase 1L. Chromium live
-navigation remains unwired.
-
-## Controlled-browser activation receipt
-
-Phase 1L adds a third canary activation profile:
-`controlled-browser`.
-
-This profile is valid only for an exact canary `RUN_START` carrying a browser
-Run intent, an immutable AgentVersion with `browser=true` and
-`network=web-egress`, the existing web-egress gate, and the separate browser
-gate.
-
-The activation receipt carries both:
-
-- `egress_policy_digest`
-- `browser_policy_digest`
-
-The worker independently reconstructs both policies, compares both digests,
-verifies the stored Run browser-policy receipt, and validates the browser plan
-again.
-
-Even after all receipt checks pass, Phase 1L deliberately returns
-`BROWSER_RUNTIME_NOT_WIRED`. Chromium is not launched by this increment.
-
-## Isolated browser-runtime bridge
-
-The sandbox worker can now bridge a fully verified `controlled-browser`
-activation into one isolated Chromium process self-test. The bridge does **not**
-consume the Run's `start_url`; it launches the dedicated browser runtime only
-with `--self-test`, which opens `about:blank`.
-
-The browser runtime image must already exist in the rootless containerd
-namespace and must be configured by immutable local digest:
-`rdc.local/browser-runtime@sha256:<64-hex>`.
-
-The bridge uses `--pull never`, non-root `pwuser`, read-only rootfs,
-`no-new-privileges`, `cap-drop ALL`, bounded memory/CPU/PIDs, a dedicated
-Chromium-compatible seccomp profile, and `--network none`.
-
-A successful bridge emits only a bounded self-test result proving that downloads,
-service workers, remote CDP and external navigation remain disabled. Public web
-navigation is still not implemented in Phase 1L.
-
+Phase 1M owns controlled public navigation and interaction semantics.
