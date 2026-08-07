@@ -52,6 +52,12 @@ class SandboxWorkerConfig:
     web_egress_max_redirects: int
     web_egress_connect_timeout_seconds: int
     web_egress_request_timeout_seconds: int
+    browser_enabled: bool
+    browser_max_pages: int
+    browser_max_actions: int
+    browser_navigation_timeout_seconds: int
+    browser_max_dom_bytes: int
+    browser_max_screenshot_bytes: int
 
     @classmethod
     def from_env(cls) -> "SandboxWorkerConfig":
@@ -145,5 +151,17 @@ class SandboxWorkerConfig:
                     "RDC_SANDBOX_CANARY_WEB_EGRESS_REQUEST_TIMEOUT_SECONDS",
                     "15",
                 )
+            ),
+            browser_enabled=_env_bool("RDC_SANDBOX_CANARY_BROWSER_ENABLED", False),
+            browser_max_pages=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_PAGES", "1")),
+            browser_max_actions=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_ACTIONS", "8")),
+            browser_navigation_timeout_seconds=int(
+                os.environ.get("RDC_SANDBOX_CANARY_BROWSER_NAVIGATION_TIMEOUT_SECONDS", "15")
+            ),
+            browser_max_dom_bytes=int(
+                os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_DOM_BYTES", "2097152")
+            ),
+            browser_max_screenshot_bytes=int(
+                os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_SCREENSHOT_BYTES", "2097152")
             ),
         )
