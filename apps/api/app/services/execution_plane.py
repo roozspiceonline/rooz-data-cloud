@@ -13,6 +13,7 @@ from ..core.config import get_settings
 from ..core.envelope_encryption import decrypt_project_secret
 from ..core.errors import ApiError
 from ..core.pagination import CursorPosition
+from ..core.s3_storage import StorageBackendError, object_storage
 from ..core.security import (
     canonical_fingerprint,
     issue_lease_token,
@@ -26,7 +27,10 @@ from ..core.worker_crypto import (
 )
 from ..execution_schemas import (
     AppendWorkerEventsRequest,
+    ArtifactDownloadGrant,
     ArtifactRegistration,
+    ArtifactUploadIntent,
+    ArtifactUploadRequest,
     ClaimWorkRequest,
     CompleteLeaseRequest,
     ExecutionArtifactSummary,
@@ -38,6 +42,7 @@ from ..execution_schemas import (
     RenewLeaseRequest,
     SecretEnvelopeRequest,
     SecretEnvelopeResponse,
+    SandboxAttestation,
     WorkerHeartbeatRequest,
     WorkerSummary,
 )
@@ -60,6 +65,127 @@ from .runs import append_run_event, sanitize_event_payload
 settings = get_settings()
 
 
+def _sandbox_digest(attestation: SandboxAttestation) -> str:
+    return canonical_fingerprint(attestation.model_dump(mode="json"))
+
+
+def _sandbox_attestation_allowed(attestation: SandboxAttestation) -> bool:
+    return (
+        attestation.schema_version == settings.sandbox_required_profile
+        and attestation.max_memory_mb <= settings.sandbox_max_memory_mb
+        and attestation.max_cpu_millis <= settings.sandbox_max_cpu_millis
+        and attestation.max_pids <= settings.sandbox_max_pids
+        and attestation.max_ephemeral_disk_mb
+        <= settings.sandbox_max_ephemeral_disk_mb
+        and attestation.max_build_seconds <= settings.sandbox_max_build_seconds
+        and attestation.max_run_seconds <= settings.sandbox_max_run_seconds
+    )
+
+
+def _apply_sandbox_attestation(
+    worker: WorkerIdentity,
+    attestation: SandboxAttestation | None,
+    *,
+    now: datetime,
+) -> None:
+    if attestation is None:
+        return
+    digest = _sandbox_digest(attestation)
+    worker.sandbox_profile = attestation.schema_version
+    worker.sandbox_attestation_digest = digest
+    worker.sandbox_attested_at = now
+    worker.sandbox_execution_enabled = (
+        settings.sandbox_execution_enabled
+        and _sandbox_attestation_allowed(attestation)
+    )
+    worker.metadata_json = {
+        **dict(worker.metadata_json),
+        "sandbox": attestation.model_dump(mode="json"),
+    }
+
+
+def _sandbox_claim_policy(
+    worker: WorkerIdentity,
+    payload: dict[str, object],
+) -> dict[str, object] | None:
+    if (
+        not settings.sandbox_execution_enabled
+        or not worker.sandbox_execution_enabled
+        or worker.sandbox_attestation_digest is None
+    ):
+        return None
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        return None
+    capabilities = manifest.get("capabilities")
+    resources = manifest.get("resources")
+    if not isinstance(capabilities, dict) or not isinstance(resources, dict):
+        return None
+    if capabilities.get("network") != "none" or capabilities.get("browser") is True:
+        return None
+    memory_mb = int(resources.get("memoryMb", settings.sandbox_max_memory_mb))
+    cpu_millis = int(resources.get("cpuUnits", settings.sandbox_max_cpu_millis))
+    pids = int(resources.get("maxProcesses", settings.sandbox_max_pids))
+    disk_mb = int(
+        resources.get("ephemeralDiskMb", settings.sandbox_max_ephemeral_disk_mb)
+    )
+    timeout = int(resources.get("timeoutSeconds", settings.sandbox_max_run_seconds))
+    if (
+        memory_mb > settings.sandbox_max_memory_mb
+        or cpu_millis > settings.sandbox_max_cpu_millis
+        or pids > settings.sandbox_max_pids
+        or disk_mb > settings.sandbox_max_ephemeral_disk_mb
+    ):
+        return None
+    work_kind = str(payload.get("work_kind", ""))
+    if work_kind == "RUN_START" and payload.get("artifact") is None:
+        return None
+    if work_kind == "BUILD":
+        timeout = min(timeout, settings.sandbox_max_build_seconds)
+    else:
+        timeout = min(timeout, settings.sandbox_max_run_seconds)
+    return {
+        "schema_version": settings.sandbox_required_profile,
+        "attestation_digest": worker.sandbox_attestation_digest,
+        "runtime": "containerd-rootless",
+        "builder": "buildkit-rootless",
+        "network_policy": "deny-all",
+        "rootless": True,
+        "no_host_docker_socket": True,
+        "no_new_privileges": True,
+        "read_only_rootfs": True,
+        "drop_all_capabilities": True,
+        "seccomp_profile": "rdc-default",
+        "memory_mb": memory_mb,
+        "cpu_millis": cpu_millis,
+        "pids": pids,
+        "ephemeral_disk_mb": disk_mb,
+        "timeout_seconds": timeout,
+        "max_output_bytes": settings.sandbox_max_output_bytes,
+    }
+
+
+def _artifact_object_key(
+    lease: ExecutionLease,
+    *,
+    kind: str,
+    digest: str,
+) -> str:
+    safe_kind = kind.casefold().replace("_", "-")
+    return (
+        "artifacts/"
+        + str(lease.organization_id)
+        + "/"
+        + str(lease.project_id)
+        + "/"
+        + str(lease.id)
+        + "/"
+        + safe_kind
+        + "/"
+        + digest
+    )
+
+
 def worker_summary(record: WorkerIdentity) -> WorkerSummary:
     return WorkerSummary(
         id=record.id,
@@ -72,6 +198,10 @@ def worker_summary(record: WorkerIdentity) -> WorkerSummary:
         protocol_version=record.protocol_version,
         software_version=record.software_version,
         metadata=dict(record.metadata_json),
+        sandbox_profile=record.sandbox_profile,
+        sandbox_attestation_digest=record.sandbox_attestation_digest,
+        sandbox_execution_enabled=record.sandbox_execution_enabled,
+        sandbox_attested_at=record.sandbox_attested_at,
         registered_at=record.registered_at,
         last_seen_at=record.last_seen_at,
         expires_at=record.expires_at,
@@ -149,9 +279,11 @@ async def register_worker(
         protocol_version=payload.protocol_version,
         software_version=payload.software_version,
         metadata_json=payload.metadata,
+        sandbox_execution_enabled=False,
         registered_at=now,
         last_seen_at=now,
     )
+    _apply_sandbox_attestation(record, payload.sandbox, now=now)
     session.add(record)
     await session.flush()
     await append_audit_event(
@@ -194,9 +326,13 @@ async def heartbeat_worker(
     worker.software_version = payload.software_version
     worker.last_seen_at = now
     worker.metadata_json = {
+        **dict(worker.metadata_json),
         **payload.metadata,
         "active_lease_count": payload.active_lease_count,
     }
+    _apply_sandbox_attestation(worker, payload.sandbox, now=now)
+    if not settings.sandbox_execution_enabled:
+        worker.sandbox_execution_enabled = False
     await reap_expired_leases(session, now=now, request_id=request_id)
     return worker_summary(worker)
 
@@ -444,6 +580,11 @@ async def _run_claim_payload(
                 "digest": f"{artifact.digest_algorithm}:{artifact.digest}",
                 "object_key": artifact.object_key,
                 "media_type": artifact.media_type,
+                "size_bytes": artifact.size_bytes,
+                "provenance": dict(artifact.provenance),
+                "download_grant_path": (
+                    "/internal/v1/leases/{lease_id}/artifact-download"
+                ),
             }
             if artifact is not None
             else None
@@ -629,6 +770,9 @@ async def claim_work(
                     message="The Run is no longer awaiting cancellation.",
                 )
 
+        sandbox_policy = _sandbox_claim_policy(worker, claim_payload)
+        claim_payload["execution_enabled"] = sandbox_policy is not None
+        claim_payload["sandbox"] = sandbox_policy
         lease.payload_digest = canonical_fingerprint(claim_payload)
         lease.payload_snapshot = claim_payload
         await append_audit_event(
@@ -645,6 +789,8 @@ async def claim_work(
                 "work_kind": kind,
                 "attempt": lease.attempt,
                 "source_topic": lease.source_topic,
+                "execution_enabled": sandbox_policy is not None,
+                "sandbox_attestation_digest": worker.sandbox_attestation_digest,
             },
         )
         return LeaseClaim(
@@ -833,6 +979,169 @@ async def append_worker_events(
     return len(payload.events)
 
 
+async def issue_artifact_upload_grant(
+    session: AsyncSession,
+    *,
+    lease: ExecutionLease,
+    worker: WorkerIdentity,
+    payload: ArtifactUploadRequest,
+    request_id: str,
+) -> ArtifactUploadIntent:
+    if not settings.sandbox_execution_enabled or not worker.sandbox_execution_enabled:
+        raise ApiError(
+            status_code=403,
+            code="SANDBOX_EXECUTION_DISABLED",
+            message="This worker is not eligible for sandbox execution.",
+        )
+    if payload.size_bytes > settings.sandbox_artifact_max_bytes:
+        raise ApiError(
+            status_code=413,
+            code="ARTIFACT_TOO_LARGE",
+            message="The artifact exceeds the configured sandbox limit.",
+        )
+    if lease.work_kind == "BUILD" and payload.kind not in {
+        "CONTAINER_IMAGE",
+        "SBOM",
+        "PROVENANCE",
+        "LOG_BUNDLE",
+    }:
+        raise ApiError(
+            status_code=422,
+            code="ARTIFACT_KIND_INVALID",
+            message="That artifact kind is not valid for a Build lease.",
+        )
+    if lease.work_kind != "BUILD" and payload.kind not in {
+        "RUN_OUTPUT",
+        "LOG_BUNDLE",
+    }:
+        raise ApiError(
+            status_code=422,
+            code="ARTIFACT_KIND_INVALID",
+            message="That artifact kind is not valid for a Run lease.",
+        )
+    object_key = _artifact_object_key(
+        lease,
+        kind=payload.kind,
+        digest=payload.digest,
+    )
+    try:
+        upload = await object_storage.create_presigned_artifact_upload(
+            object_key=object_key,
+            lease_id=str(lease.id),
+            artifact_kind=payload.kind,
+            content_type=payload.media_type,
+            sha256_digest=payload.digest,
+            expires_seconds=settings.storage_upload_grant_seconds,
+        )
+    except StorageBackendError as exc:
+        raise ApiError(
+            status_code=503,
+            code=exc.code,
+            message=exc.message,
+        ) from exc
+    expires_at = datetime.now(UTC) + timedelta(
+        seconds=settings.storage_upload_grant_seconds
+    )
+    await append_audit_event(
+        session,
+        organization_id=lease.organization_id,
+        project_id=lease.project_id,
+        actor_type="worker",
+        actor_id=str(worker.id),
+        action="execution.artifact_upload_granted",
+        resource_type="execution_lease",
+        resource_id=str(lease.id),
+        request_id=request_id,
+        details={
+            "kind": payload.kind,
+            "digest": payload.digest,
+            "size_bytes": payload.size_bytes,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+    upload_url = cast(str, upload["url"])
+    upload_headers = cast(dict[str, str], upload["headers"])
+    return ArtifactUploadIntent(
+        object_key=object_key,
+        url=upload_url,
+        headers=dict(upload_headers),
+        expires_at=expires_at,
+    )
+
+
+async def issue_run_artifact_download_grant(
+    session: AsyncSession,
+    *,
+    lease: ExecutionLease,
+    worker: WorkerIdentity,
+    request_id: str,
+) -> ArtifactDownloadGrant:
+    if lease.work_kind != "RUN_START" or lease.run_id is None:
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_STATE_CONFLICT",
+            message="Only Run-start leases can download container artifacts.",
+        )
+    run = await session.scalar(select(Run).where(Run.id == lease.run_id))
+    if run is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The Run was not found.",
+        )
+    artifact = await session.scalar(
+        select(ExecutionArtifact).where(
+            ExecutionArtifact.build_id == run.build_id,
+            ExecutionArtifact.kind == "CONTAINER_IMAGE",
+            ExecutionArtifact.status == "AVAILABLE",
+            ExecutionArtifact.scan_status == "PASSED",
+        )
+    )
+    if artifact is None:
+        raise ApiError(
+            status_code=409,
+            code="ARTIFACT_NOT_AVAILABLE",
+            message="The verified container artifact is unavailable.",
+        )
+    try:
+        url = await object_storage.create_presigned_download(
+            object_key=artifact.object_key,
+            file_name="rdc-agent-" + str(run.build_id) + ".oci.tar",
+            expires_seconds=settings.storage_download_grant_seconds,
+        )
+    except StorageBackendError as exc:
+        raise ApiError(
+            status_code=503,
+            code=exc.code,
+            message=exc.message,
+        ) from exc
+    expires_at = datetime.now(UTC) + timedelta(
+        seconds=settings.storage_download_grant_seconds
+    )
+    await append_audit_event(
+        session,
+        organization_id=lease.organization_id,
+        project_id=lease.project_id,
+        actor_type="worker",
+        actor_id=str(worker.id),
+        action="execution.artifact_download_granted",
+        resource_type="execution_artifact",
+        resource_id=str(artifact.id),
+        request_id=request_id,
+        details={"lease_id": str(lease.id), "expires_at": expires_at.isoformat()},
+    )
+    return ArtifactDownloadGrant(
+        artifact_id=artifact.id,
+        url=url,
+        expires_at=expires_at,
+        digest_algorithm=artifact.digest_algorithm,
+        digest=artifact.digest,
+        media_type=artifact.media_type,
+        size_bytes=artifact.size_bytes,
+        provenance=dict(artifact.provenance),
+    )
+
+
 async def _register_artifact(
     session: AsyncSession,
     *,
@@ -840,6 +1149,51 @@ async def _register_artifact(
     worker: WorkerIdentity,
     payload: ArtifactRegistration,
 ) -> ExecutionArtifact:
+    expected_key = _artifact_object_key(
+        lease,
+        kind=payload.kind,
+        digest=payload.digest,
+    )
+    if payload.object_key != expected_key:
+        raise ApiError(
+            status_code=422,
+            code="ARTIFACT_OBJECT_KEY_INVALID",
+            message="The artifact object key does not match the lease grant.",
+        )
+    if payload.size_bytes > settings.sandbox_artifact_max_bytes:
+        raise ApiError(
+            status_code=413,
+            code="ARTIFACT_TOO_LARGE",
+            message="The artifact exceeds the configured sandbox limit.",
+        )
+    try:
+        head = await object_storage.head_object(object_key=payload.object_key)
+        digest, verified_size = await object_storage.sha256_object(
+            object_key=payload.object_key,
+            max_bytes=settings.sandbox_artifact_max_bytes,
+        )
+    except StorageBackendError as exc:
+        raise ApiError(
+            status_code=409 if exc.code == "STORAGE_OBJECT_NOT_UPLOADED" else 503,
+            code=exc.code,
+            message=exc.message,
+        ) from exc
+    metadata = {key.casefold(): value for key, value in head.metadata.items()}
+    if (
+        verified_size != payload.size_bytes
+        or head.size_bytes != payload.size_bytes
+        or head.content_type != payload.media_type
+        or digest != payload.digest
+        or metadata.get("sha256") != payload.digest
+        or metadata.get("rdc-lease-id") != str(lease.id)
+        or metadata.get("rdc-artifact-kind") != payload.kind
+    ):
+        raise ApiError(
+            status_code=422,
+            code="ARTIFACT_VERIFICATION_FAILED",
+            message="The uploaded artifact did not match its signed metadata.",
+        )
+
     existing = await session.scalar(
         select(ExecutionArtifact).where(
             ExecutionArtifact.organization_id == lease.organization_id,
@@ -924,14 +1278,27 @@ async def complete_lease(
         and payload.outcome in {"FAILED", "TIMED_OUT"}
         and lease.attempt < settings.worker_max_attempts
     )
-    artifact: ExecutionArtifact | None = None
-    if payload.artifact is not None:
-        artifact = await _register_artifact(
-            session,
-            lease=lease,
-            worker=worker,
-            payload=payload.artifact,
+    registrations = (
+        [payload.artifact]
+        if payload.artifact is not None
+        else list(payload.artifacts)
+    )
+    registered: list[ExecutionArtifact] = []
+    for registration in registrations:
+        if registration is None:
+            continue
+        registered.append(
+            await _register_artifact(
+                session,
+                lease=lease,
+                worker=worker,
+                payload=registration,
+            )
         )
+    artifact = next(
+        (item for item in registered if item.kind == "CONTAINER_IMAGE"),
+        None,
+    )
 
     if retry:
         lease.status = "FAILED"
