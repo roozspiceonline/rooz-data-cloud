@@ -64,3 +64,27 @@ Do not interpret a successful activation receipt as permission to launch
 Chromium until the dedicated browser runtime/egress bridge increment is
 implemented and separately verified.
 
+## Isolated `about:blank` runtime bridge
+
+Phase 1L may launch the dedicated browser runtime only after the complete
+`controlled-browser` activation receipt and worker-side policy verification
+succeed.
+
+Additional operator requirements:
+
+1. preload the RDC browser-runtime image into the worker's rootless containerd
+   namespace
+2. configure `RDC_SANDBOX_BROWSER_RUNTIME_IMAGE_REF` as an immutable local
+   `rdc.local/browser-runtime@sha256:<digest>` reference
+3. keep `RDC_SANDBOX_CANARY_BROWSER_ENABLED=false` except for the exact approved
+   canary
+4. provide the dedicated browser seccomp profile
+
+The bridge runs `--self-test` only and uses `--network none`; the Run's public
+`start_url` is deliberately not sent to Chromium. A missing image, mutable image
+reference, missing seccomp profile, timeout, non-zero exit, malformed result, or
+isolation mismatch fails closed with `BROWSER_RUNTIME_SELF_TEST_FAILED`.
+
+This bridge does not authorize public browser navigation. That requires a later
+network-mediation phase with request/subresource interception and SSRF controls.
+
