@@ -118,4 +118,5 @@ jobs:
       - run: python3 scripts/verify-phase1h.py
       - run: python3 scripts/verify-phase1i.py
       - run: python3 scripts/verify-phase1j.py
+      - run: python3 scripts/verify-phase1k.py
       - run: docker compose config --quiet
