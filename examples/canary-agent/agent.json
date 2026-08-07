@@ -1,0 +1,35 @@
+{
+  "protocol": "rooz.agent/v1",
+  "name": "rdc-canary",
+  "version": "1.0.0",
+  "runtime": {
+    "kind": "container",
+    "entrypoint": [
+      "python",
+      "/app/main.py"
+    ]
+  },
+  "schemas": {
+    "input": "schemas/input.json",
+    "output": "schemas/output.json"
+  },
+  "capabilities": {
+    "network": "none",
+    "browser": false,
+    "dataset": false,
+    "keyValueStore": false,
+    "requestQueue": false
+  },
+  "resources": {
+    "memoryMb": 128,
+    "cpuUnits": 250,
+    "timeoutSeconds": 60,
+    "maxProcesses": 32,
+    "ephemeralDiskMb": 64
+  },
+  "secrets": [],
+  "extensions": {
+    "rdc.phase": "1I",
+    "rdc.purpose": "controlled-canary"
+  }
+}
