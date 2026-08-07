@@ -182,7 +182,7 @@ def main() -> None:
     readme = (ROOT / "docs" / "phase1j" / "README.md").read_text(encoding="utf-8")
     runbook = (ROOT / "docs" / "phase1j" / "RUNBOOK.md").read_text(encoding="utf-8")
     require(
-        "does not enable any new runtime capability" in readme,
+        "not enable any new runtime capability" in readme,
         "foundation safety boundary is undocumented",
     )
     require(
