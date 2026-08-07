@@ -171,6 +171,60 @@ def main() -> None:
         "sandbox worker unexpectedly wires the browser runtime",
     )
 
+    run_schemas = read("apps/api/app/run_schemas.py")
+    for marker in [
+        "class BrowserSnapshotActionInput",
+        "class BrowserSessionInput",
+        'browser: BrowserSessionInput | None = None',
+        "Phase 1L does not allow web_fetch and browser in one Run.",
+    ]:
+        require(marker in run_schemas, "Run browser contract missing: " + marker)
+
+    runs_service = read("apps/api/app/services/runs.py")
+    for marker in [
+        "def _manifest_browser",
+        "def _browser_policy_payload",
+        '"schema_version": "rdc.browser-policy/v1"',
+        '"BROWSER_NETWORK_CAPABILITY_REQUIRED"',
+        '"BROWSER_CAPABILITY_REQUIRED"',
+        'input_reference["browser"] = browser',
+        'input_reference["browser_policy"] = browser_policy',
+        'input_reference["browser_policy_digest"] = browser_policy_digest',
+    ]:
+        require(marker in runs_service, "Run browser receipt missing: " + marker)
+
+    worker_config = read("workers/sandbox-runtime/config.py")
+    for marker in [
+        "browser_enabled: bool",
+        "browser_max_pages: int",
+        "browser_max_actions: int",
+        "browser_navigation_timeout_seconds: int",
+        "browser_max_dom_bytes: int",
+        "browser_max_screenshot_bytes: int",
+        '"RDC_SANDBOX_CANARY_BROWSER_ENABLED"',
+    ]:
+        require(marker in worker_config, "worker browser config missing: " + marker)
+
+    browser_policy_source = read("workers/sandbox-runtime/browser_policy.py")
+    for marker in [
+        "def create(",
+        "normalized_hosts",
+        "Enabled browser policy requires an operator allowlist.",
+        '"agent_container_network": "none"',
+        '"project_secrets_available": False',
+        '"persistent_profile": False',
+        '"downloads_enabled": False',
+        '"uploads_enabled": False',
+        '"remote_cdp_enabled": False',
+    ]:
+        require(marker in browser_policy_source, "browser policy guard missing: " + marker)
+
+    run_contract_test = read("apps/api/tests/test_phase1l_run_contract.py")
+    require(
+        "test_phase1l_browser_and_web_fetch_are_mutually_exclusive" in run_contract_test,
+        "Phase 1L browser Run regression tests are missing",
+    )
+
     runbook = read("docs/phase1l/RUNBOOK.md")
     require(
         "Do not enable browser execution during the Phase 1L foundation." in runbook,
@@ -187,6 +241,8 @@ def main() -> None:
     print("  deterministic browser policy digest: PASS")
     print("  Agent container --network none: PASS")
     print("  isolated Playwright/Chromium skeleton: PASS")
+    print("  Run browser contract + immutable policy receipt: PASS")
+    print("  worker browser policy reconstruction config: PASS")
     print("  browser runtime live navigation wiring: NOT IMPLEMENTED")
     print("  general untrusted browser execution: BLOCKED")
 
