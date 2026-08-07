@@ -27,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.7.0-phase1g",
+    version="0.8.0-phase1h",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -130,9 +130,9 @@ v1_router.include_router(storage_router)
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1G",
+        "phase": "1H",
         "service": "rdc-api",
-        "status": "secure-source-artifact-delivery",
+        "status": "sandbox-runtime-foundation",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -143,18 +143,20 @@ async def foundation_status() -> dict[str, object]:
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,
-        "build_execution_enabled": False,
+        "build_execution_enabled": settings.sandbox_execution_enabled,
         "run_control_plane_enabled": True,
         "run_dispatch_outbox_enabled": True,
         "run_sse_monitoring_enabled": True,
-        "run_execution_enabled": False,
+        "run_execution_enabled": settings.sandbox_execution_enabled,
         "internal_execution_protocol_enabled": True,
         "worker_leasing_enabled": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
         "secure_source_ingestion_enabled": True,
         "artifact_object_delivery_enabled": True,
-        "sandbox_execution_enabled": False,
+        "sandbox_execution_enabled": settings.sandbox_execution_enabled,
+        "sandbox_attestation_required": True,
+        "sandbox_default_network_policy": "deny-all",
         "untrusted_agent_execution_enabled": False,
     }
 
