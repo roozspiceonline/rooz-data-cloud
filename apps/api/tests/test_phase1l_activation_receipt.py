@@ -2,7 +2,6 @@ from pydantic import ValidationError
 
 from app.execution_schemas import SandboxActivation
 
-
 BASE = {
     "agent_version_id": "11111111-1111-1111-1111-111111111111",
     "worker_name": "rdc-canary-worker",
