@@ -1,6 +1,8 @@
 import base64
+import re
 from functools import lru_cache
 from typing import Literal
+from uuid import UUID
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -72,6 +74,16 @@ class Settings(BaseSettings):
     sandbox_max_output_bytes: int = 16_777_216
     sandbox_artifact_max_bytes: int = 8_589_934_592
 
+    sandbox_activation_mode: Literal["disabled", "canary"] = "disabled"
+    sandbox_canary_agent_version_id: str = ""
+    sandbox_canary_worker_name: str = ""
+    sandbox_canary_max_memory_mb: int = 256
+    sandbox_canary_max_cpu_millis: int = 500
+    sandbox_canary_max_pids: int = 64
+    sandbox_canary_max_ephemeral_disk_mb: int = 256
+    sandbox_canary_max_build_seconds: int = 300
+    sandbox_canary_max_run_seconds: int = 120
+
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
 
@@ -141,6 +153,60 @@ class Settings(BaseSettings):
             raise ValueError("Sandbox output limit is outside the safe range.")
         if not 1_048_576 <= self.sandbox_artifact_max_bytes <= 68_719_476_736:
             raise ValueError("Sandbox artifact limit is outside the safe range.")
+        if self.sandbox_activation_mode == "canary":
+            if not self.sandbox_execution_enabled:
+                raise ValueError(
+                    "Canary activation requires the sandbox execution master gate."
+                )
+            if not self.sandbox_canary_agent_version_id.strip():
+                raise ValueError(
+                    "Canary activation requires one immutable Agent version ID."
+                )
+            try:
+                UUID(self.sandbox_canary_agent_version_id.strip())
+            except ValueError as exc:
+                raise ValueError(
+                    "Canary Agent version ID must be a UUID."
+                ) from exc
+            worker_name = self.sandbox_canary_worker_name.strip()
+            if (
+                len(worker_name) < 3
+                or len(worker_name) > 160
+                or re.fullmatch(r"[a-z0-9][a-z0-9._-]+", worker_name) is None
+            ):
+                raise ValueError(
+                    "Canary worker name must match the worker-name contract."
+                )
+        canary_limits = {
+            "memory": (
+                self.sandbox_canary_max_memory_mb,
+                self.sandbox_max_memory_mb,
+            ),
+            "cpu": (
+                self.sandbox_canary_max_cpu_millis,
+                self.sandbox_max_cpu_millis,
+            ),
+            "pids": (
+                self.sandbox_canary_max_pids,
+                self.sandbox_max_pids,
+            ),
+            "disk": (
+                self.sandbox_canary_max_ephemeral_disk_mb,
+                self.sandbox_max_ephemeral_disk_mb,
+            ),
+            "build_timeout": (
+                self.sandbox_canary_max_build_seconds,
+                self.sandbox_max_build_seconds,
+            ),
+            "run_timeout": (
+                self.sandbox_canary_max_run_seconds,
+                self.sandbox_max_run_seconds,
+            ),
+        }
+        if any(value <= 0 or value > ceiling for value, ceiling in canary_limits.values()):
+            raise ValueError(
+                "Canary limits must be positive and no broader than sandbox limits."
+            )
         if not 60 <= self.storage_upload_grant_seconds <= 3600:
             raise ValueError("Storage upload grants must expire between 60 and 3600 seconds.")
         if not 30 <= self.storage_download_grant_seconds <= 900:
