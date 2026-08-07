@@ -1,8 +1,34 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+
+def _json_string_list(name: str, default: str = "[]") -> tuple[str, ...]:
+    raw = os.environ.get(name, default)
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{name} must be a JSON string array.") from exc
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) for item in value
+    ):
+        raise RuntimeError(f"{name} must be a JSON string array.")
+    return tuple(item.strip() for item in value if item.strip())
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be a boolean value.")
 
 
 @dataclass(frozen=True)
@@ -18,6 +44,14 @@ class SandboxWorkerConfig:
     workspace_root: Path
     approved_base_images: tuple[str, ...]
     poll_seconds: float
+    web_egress_enabled: bool
+    web_egress_allowed_hosts: tuple[str, ...]
+    web_egress_max_requests: int
+    web_egress_max_response_bytes: int
+    web_egress_max_total_bytes: int
+    web_egress_max_redirects: int
+    web_egress_connect_timeout_seconds: int
+    web_egress_request_timeout_seconds: int
 
     @classmethod
     def from_env(cls) -> "SandboxWorkerConfig":
@@ -37,7 +71,9 @@ class SandboxWorkerConfig:
                 "RDC_INTERNAL_API_BASE_URL", "http://127.0.0.1:8000"
             ).rstrip("/"),
             worker_token=token,
-            software_version=os.environ.get("RDC_WORKER_SOFTWARE_VERSION", "phase1i-0.1"),
+            software_version=os.environ.get(
+                "RDC_WORKER_SOFTWARE_VERSION", "phase1j-0.1"
+            ),
             buildkit_address=os.environ.get(
                 "RDC_BUILDKIT_ADDRESS",
                 "unix:///run/user/1000/buildkit/buildkitd.sock",
@@ -46,8 +82,12 @@ class SandboxWorkerConfig:
                 "RDC_CONTAINERD_ADDRESS",
                 "/run/user/1000/containerd/containerd.sock",
             ),
-            namespace=os.environ.get("RDC_CONTAINERD_NAMESPACE", "rdc-sandbox"),
-            apparmor_profile=os.environ.get("RDC_APPARMOR_PROFILE", "rdc-agent-default"),
+            namespace=os.environ.get(
+                "RDC_CONTAINERD_NAMESPACE", "rdc-sandbox"
+            ),
+            apparmor_profile=os.environ.get(
+                "RDC_APPARMOR_PROFILE", "rdc-agent-default"
+            ),
             seccomp_profile=Path(
                 os.environ.get(
                     "RDC_SECCOMP_PROFILE",
@@ -55,8 +95,55 @@ class SandboxWorkerConfig:
                 )
             ).resolve(),
             workspace_root=Path(
-                os.environ.get("RDC_SANDBOX_WORKSPACE_ROOT", "/tmp/rdc-sandbox")
+                os.environ.get(
+                    "RDC_SANDBOX_WORKSPACE_ROOT", "/tmp/rdc-sandbox"
+                )
             ).resolve(),
             approved_base_images=bases,
-            poll_seconds=float(os.environ.get("RDC_WORKER_POLL_SECONDS", "2")),
+            poll_seconds=float(
+                os.environ.get("RDC_WORKER_POLL_SECONDS", "2")
+            ),
+            web_egress_enabled=_env_bool(
+                "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED",
+                False,
+            ),
+            web_egress_allowed_hosts=_json_string_list(
+                "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS"
+            ),
+            web_egress_max_requests=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_MAX_REQUESTS",
+                    "8",
+                )
+            ),
+            web_egress_max_response_bytes=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_MAX_RESPONSE_BYTES",
+                    "1048576",
+                )
+            ),
+            web_egress_max_total_bytes=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_MAX_TOTAL_BYTES",
+                    "4194304",
+                )
+            ),
+            web_egress_max_redirects=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_MAX_REDIRECTS",
+                    "3",
+                )
+            ),
+            web_egress_connect_timeout_seconds=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_CONNECT_TIMEOUT_SECONDS",
+                    "5",
+                )
+            ),
+            web_egress_request_timeout_seconds=int(
+                os.environ.get(
+                    "RDC_SANDBOX_CANARY_WEB_EGRESS_REQUEST_TIMEOUT_SECONDS",
+                    "15",
+                )
+            ),
         )
