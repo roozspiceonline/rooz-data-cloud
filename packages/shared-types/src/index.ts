@@ -443,6 +443,18 @@ export interface StorageDownloadGrant {
   headers: Record<string, string>;
 }
 
+export interface SandboxActivation {
+  mode: "canary";
+  agent_version_id: string;
+  worker_name: string;
+  attestation_digest: string;
+  sandbox_policy_digest: string;
+  constraints_digest: string;
+  no_secrets: true;
+  capability_profile: "offline-minimal";
+  max_concurrency: 1;
+}
+
 export interface SandboxClaimPolicy {
   schema_version: "rdc.sandbox/v1";
   attestation_digest: string;
