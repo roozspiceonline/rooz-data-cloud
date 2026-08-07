@@ -495,3 +495,10 @@ Alerts or investigations are triggered by:
 | Premature code execution | Claim payload fixed to `execution_enabled: false`; no Docker, Kubernetes, BuildKit, shell, subprocess, `eval`, or `exec` primitive |
 
 The reference worker client is protocol-only. Production sandboxing, image execution, object-store credentials, network policy, kernel isolation, and runtime attestation remain separate merge gates.
+
+## Phase 1H control mapping
+
+Phase 1H implements the first executable controls for T-11 and T-12: rootless BuildKit, no host Docker socket, no insecure entitlements, approved base images, digest-verified source and artifacts, non-root containerd runtime, all capabilities dropped, no-new-privileges, read-only root filesystem, seccomp/AppArmor, cgroup/time limits, disposable workspaces, and deny-all networking. The control plane itself still contains no container-runtime invocation primitive.
+
+The `RDC_SANDBOX_EXECUTION_ENABLED` switch defaults to false. A second gate requires a strict worker attestation before `execution_enabled` can become true. Phase 1H does not authorize web-egress or browser Agents; those remain blocked until a later egress-proxy/SSRF-control phase.
+
