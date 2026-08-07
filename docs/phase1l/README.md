@@ -69,3 +69,26 @@ reconstruct the same policy in the next integration increment.
 
 `browser` and `web_fetch` are mutually exclusive during Phase 1L. Chromium live
 navigation remains unwired.
+
+## Controlled-browser activation receipt
+
+Phase 1L adds a third canary activation profile:
+`controlled-browser`.
+
+This profile is valid only for an exact canary `RUN_START` carrying a browser
+Run intent, an immutable AgentVersion with `browser=true` and
+`network=web-egress`, the existing web-egress gate, and the separate browser
+gate.
+
+The activation receipt carries both:
+
+- `egress_policy_digest`
+- `browser_policy_digest`
+
+The worker independently reconstructs both policies, compares both digests,
+verifies the stored Run browser-policy receipt, and validates the browser plan
+again.
+
+Even after all receipt checks pass, Phase 1L deliberately returns
+`BROWSER_RUNTIME_NOT_WIRED`. Chromium is not launched by this increment.
+
