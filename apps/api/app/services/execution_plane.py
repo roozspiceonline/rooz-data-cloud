@@ -40,9 +40,9 @@ from ..execution_schemas import (
     RegisteredWorkerResponse,
     RegisterWorkerRequest,
     RenewLeaseRequest,
+    SandboxAttestation,
     SecretEnvelopeRequest,
     SecretEnvelopeResponse,
-    SandboxAttestation,
     WorkerHeartbeatRequest,
     WorkerSummary,
 )

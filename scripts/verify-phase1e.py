@@ -119,8 +119,15 @@ def main() -> None:
     require("run.completed" in event_types, "terminal event missing")
 
     require(
-        '"phase": "1E"' in main_api or '"phase": "1F"' in main_api
-        or '"phase": "1G"' in main_api,
+        any(
+            marker in main_api
+            for marker in [
+                '"phase": "1E"',
+                '"phase": "1F"',
+                '"phase": "1G"',
+                '"phase": "1H"',
+            ]
+        ),
         "foundation status is earlier than Phase 1E",
     )
     require(
