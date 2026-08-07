@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -297,8 +299,49 @@ def main() -> None:
     )
 
     browser_executor = read("workers/sandbox-runtime/browser_executor.py")
+    executor_tree = ast.parse(browser_executor)
+    image_ref_pattern: str | None = None
+    for node in executor_tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "_IMAGE_REF"
+            for target in node.targets
+        ):
+            continue
+        if (
+            isinstance(node.value, ast.Call)
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Constant)
+            and isinstance(node.value.args[0].value, str)
+        ):
+            image_ref_pattern = node.value.args[0].value
+            break
+
+    require(
+        image_ref_pattern is not None,
+        "browser executor immutable-image regex is missing",
+    )
+    valid_image_ref = "rdc.local/browser-runtime@sha256:" + ("a" * 64)
+    invalid_image_refs = [
+        "rdcXlocal/browser-runtime@sha256:" + ("a" * 64),
+        "rdc\\Xlocal/browser-runtime@sha256:" + ("a" * 64),
+        "rdc.local/browser-runtime:latest",
+        "docker.io/rdc/browser-runtime@sha256:" + ("a" * 64),
+        "rdc.local/browser-runtime@sha256:" + ("A" * 64),
+    ]
+    require(
+        re.fullmatch(image_ref_pattern, valid_image_ref) is not None,
+        "browser executor rejects the intended immutable local image reference",
+    )
+    for invalid_image_ref in invalid_image_refs:
+        require(
+            re.fullmatch(image_ref_pattern, invalid_image_ref) is None,
+            "browser executor accepts invalid image reference: "
+            + invalid_image_ref,
+        )
+
     for marker in [
-        'rdc\\.local/browser-runtime@sha256:[0-9a-f]{64}',
         '"--pull"',
         '"never"',
         '"--user"',
