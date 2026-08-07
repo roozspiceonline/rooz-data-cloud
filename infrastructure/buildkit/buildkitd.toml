@@ -1,0 +1,13 @@
+# Phase 1H rootless BuildKit policy.
+# Start buildkitd as a non-root user with this config and without insecure entitlements.
+debug = false
+
+[worker.oci]
+  enabled = true
+  rootless = true
+  networkMode = "none"
+  noProcessSandbox = false
+  gc = true
+
+[worker.containerd]
+  enabled = false
