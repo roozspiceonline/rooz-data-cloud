@@ -165,10 +165,21 @@ def main() -> None:
 
     sandbox_worker = read("workers/sandbox-runtime/worker.py")
     require(
-        "browser_runtime" not in sandbox_worker
-        and "playwright" not in sandbox_worker.casefold()
+        "run_browser_self_test" in sandbox_worker,
+        "sandbox worker does not bridge the isolated browser self-test",
+    )
+    require(
+        '"BROWSER_RUNTIME_SELF_TEST_FAILED"' in sandbox_worker,
+        "sandbox worker lacks bounded browser self-test failure code",
+    )
+    require(
+        '"BROWSER_RUNTIME_NOT_WIRED"' not in sandbox_worker,
+        "obsolete browser-runtime block is still present",
+    )
+    require(
+        "playwright" not in sandbox_worker.casefold()
         and "chromium" not in sandbox_worker.casefold(),
-        "sandbox worker unexpectedly wires the browser runtime",
+        "sandbox worker directly embeds browser implementation",
     )
 
     run_schemas = read("apps/api/app/run_schemas.py")
@@ -201,6 +212,9 @@ def main() -> None:
         "browser_navigation_timeout_seconds: int",
         "browser_max_dom_bytes: int",
         "browser_max_screenshot_bytes: int",
+        "browser_runtime_image_ref: str",
+        "browser_seccomp_profile: Path",
+        "browser_runtime_timeout_seconds: int",
         '"RDC_SANDBOX_CANARY_BROWSER_ENABLED"',
     ]:
         require(marker in worker_config, "worker browser config missing: " + marker)
@@ -256,7 +270,8 @@ def main() -> None:
         'profile == "controlled-browser"',
         "browser_digest != browser_policy.digest",
         "validate_browser_plan(browser_plan, policy=browser_policy)",
-        '"BROWSER_RUNTIME_NOT_WIRED"',
+        "run_browser_self_test",
+        '"BROWSER_RUNTIME_SELF_TEST_FAILED"',
     ]:
         require(
             marker in worker_source,
@@ -271,6 +286,56 @@ def main() -> None:
         in activation_tests,
         "controlled-browser activation schema tests are missing",
     )
+
+    browser_executor = read("workers/sandbox-runtime/browser_executor.py")
+    for marker in [
+        'rdc\\.local/browser-runtime@sha256:[0-9a-f]{64}',
+        '"--pull"',
+        '"never"',
+        '"--user"',
+        '"pwuser"',
+        '"--read-only"',
+        '"no-new-privileges"',
+        '"--cap-drop"',
+        '"ALL"',
+        '"--network"',
+        '"none"',
+        '"--self-test"',
+        '"about:blank"',
+        '"external_navigation": False',
+    ]:
+        require(marker in browser_executor, "browser executor guard missing: " + marker)
+    for forbidden in [
+        "--privileged",
+        '"host"',
+        "--no-sandbox",
+        "--remote-debugging-port",
+    ]:
+        require(
+            forbidden not in browser_executor,
+            "browser executor contains forbidden surface: " + forbidden,
+        )
+
+    browser_seccomp = json.loads(
+        read("infrastructure/sandbox/seccomp-rdc-browser.json")
+    )
+    denied = {
+        name
+        for rule in browser_seccomp.get("syscalls", [])
+        if rule.get("action") == "SCMP_ACT_ERRNO"
+        for name in rule.get("names", [])
+    }
+    for required_denial in ["bpf", "mount", "ptrace", "userfaultfd"]:
+        require(
+            required_denial in denied,
+            "browser seccomp lost denial: " + required_denial,
+        )
+    for browser_namespace_call in ["clone3", "setns", "unshare"]:
+        require(
+            browser_namespace_call not in denied,
+            "browser seccomp blocks Chromium namespace syscall: "
+            + browser_namespace_call,
+        )
 
     runbook = read("docs/phase1l/RUNBOOK.md")
     require(
@@ -292,7 +357,8 @@ def main() -> None:
     print("  worker browser policy reconstruction config: PASS")
     print("  controlled-browser activation receipt: PASS")
     print("  worker independent browser-policy verification: PASS")
-    print("  browser runtime live navigation wiring: NOT IMPLEMENTED")
+    print("  isolated about:blank browser-runtime bridge: PASS")
+    print("  browser runtime public navigation wiring: NOT IMPLEMENTED")
     print("  general untrusted browser execution: BLOCKED")
 
 
