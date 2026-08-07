@@ -56,3 +56,16 @@ enforcement.
 This separation proves the Chromium process boundary without changing the Agent
 container, which remains `--network none`.
 
+
+## Run browser intent and policy receipt
+
+Phase 1L now accepts a top-level `browser` envelope using `rdc.browser/v1`.
+The immutable AgentVersion must declare `browser=true` and `network=web-egress`.
+The control plane binds the Run to an operator-owned `rdc.browser-policy/v1`
+receipt and SHA-256 digest. Agent input cannot supply or modify that policy.
+
+The worker configuration now contains the values needed to independently
+reconstruct the same policy in the next integration increment.
+
+`browser` and `web_fetch` are mutually exclusive during Phase 1L. Chromium live
+navigation remains unwired.
