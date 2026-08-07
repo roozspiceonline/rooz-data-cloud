@@ -57,7 +57,11 @@ def main() -> None:
     execution_flag = claim_schema["properties"]["payload"]["properties"][
         "execution_enabled"
     ]
-    require(execution_flag == {"const": False}, "execution boundary changed")
+    require(execution_flag == {"type": "boolean"}, "execution flag schema changed")
+    require(
+        "sandbox" in claim_schema["properties"]["payload"]["required"],
+        "sandbox claim gate is absent",
+    )
     require(
         secret_schema["properties"]["algorithm"]["const"]
         == "X25519-HKDF-SHA256-AES-256-GCM",
@@ -66,7 +70,7 @@ def main() -> None:
 
     main_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
     require(
-        '"phase": "1F"' in main_source or '"phase": "1G"' in main_source,
+        any(marker in main_source for marker in ['"phase": "1F"', '"phase": "1G"', '"phase": "1H"']),
         "foundation phase is earlier than 1F",
     )
     require(
@@ -85,8 +89,8 @@ def main() -> None:
     for prohibited in ["subprocess", "docker run", "kubectl", "eval(", "exec("]:
         require(prohibited not in service_source, "prohibited primitive: " + prohibited)
     require(
-        '"execution_enabled": False' in service_source,
-        "claim payload execution guard is absent",
+        'claim_payload["execution_enabled"] = sandbox_policy is not None' in service_source,
+        "claim payload sandbox gate is absent",
     )
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
