@@ -154,7 +154,7 @@ def main() -> None:
         )
 
     for marker in [
-        "verified `controlled-browser` canary activation",
+        "`controlled-browser` canary activation",
         "opens only `about:blank`",
         "accepts no URL",
         "rdc.local/browser-runtime@sha256:<64-hex>",
