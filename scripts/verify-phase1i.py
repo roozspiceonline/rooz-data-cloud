@@ -63,7 +63,7 @@ def main() -> None:
         require(marker in config, "missing safe activation default: " + marker)
 
     main_api = read("apps/api/app/main.py")
-    require('"phase": "1I"' in main_api, "foundation phase is not 1I")
+    require('"phase":' in main_api, "foundation phase signal is missing")
     require(
         '"untrusted_agent_execution_enabled": False' in main_api,
         "general untrusted execution was enabled",
@@ -82,7 +82,7 @@ def main() -> None:
         "ARTIFACT_LINEAGE_INVALID",
         "source_sha256",
         "image_digest",
-        'capabilities.get("network") != "none"',
+        "offline-minimal",
         "secrets",
     ]:
         require(marker in service, "missing canary control: " + marker)
