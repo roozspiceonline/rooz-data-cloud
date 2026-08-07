@@ -34,6 +34,7 @@ def load_policy_module() -> ModuleType:
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    sys.modules["egress_policy"] = module
     spec.loader.exec_module(module)
     return module
 
