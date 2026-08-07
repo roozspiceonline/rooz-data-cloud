@@ -20,3 +20,7 @@ sandbox escape monitoring. Phase 1G adds verified source-object delivery while p
 
 Never print worker tokens, lease tokens, decrypted secrets, Run input, or
 secret-envelope ciphertext to logs.
+
+## Phase 1H
+
+The protocol now supports a separate `workers/sandbox-runtime` implementation. The reference client still does not execute code automatically. Controlled execution is gated by a strict `rdc.sandbox/v1` attestation and the default-off `RDC_SANDBOX_EXECUTION_ENABLED` setting. Artifact upload/download capabilities are lease-scoped and short-lived.
