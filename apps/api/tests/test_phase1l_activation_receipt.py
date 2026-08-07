@@ -1,4 +1,3 @@
-import pytest
 from pydantic import ValidationError
 
 from app.execution_schemas import SandboxActivation
@@ -15,6 +14,14 @@ BASE = {
 }
 
 
+def expect_validation_error(value: dict[str, object]) -> None:
+    try:
+        SandboxActivation.model_validate(value)
+    except ValidationError:
+        return
+    raise AssertionError("Expected SandboxActivation validation to fail.")
+
+
 def test_phase1l_controlled_browser_requires_both_policy_digests() -> None:
     activation = SandboxActivation.model_validate(
         {
@@ -27,42 +34,34 @@ def test_phase1l_controlled_browser_requires_both_policy_digests() -> None:
     assert activation.capability_profile == "controlled-browser"
 
 
-@pytest.mark.parametrize(
-    "missing",
-    ["egress_policy_digest", "browser_policy_digest"],
-)
-def test_phase1l_controlled_browser_rejects_missing_digest(
-    missing: str,
-) -> None:
-    value = {
-        **BASE,
-        "capability_profile": "controlled-browser",
-        "egress_policy_digest": "d" * 64,
-        "browser_policy_digest": "e" * 64,
-    }
-    value.pop(missing)
-    with pytest.raises(ValidationError):
-        SandboxActivation.model_validate(value)
+def test_phase1l_controlled_browser_rejects_missing_digest() -> None:
+    for missing in ["egress_policy_digest", "browser_policy_digest"]:
+        value = {
+            **BASE,
+            "capability_profile": "controlled-browser",
+            "egress_policy_digest": "d" * 64,
+            "browser_policy_digest": "e" * 64,
+        }
+        value.pop(missing)
+        expect_validation_error(value)
 
 
 def test_phase1l_brokered_web_egress_rejects_browser_digest() -> None:
-    with pytest.raises(ValidationError):
-        SandboxActivation.model_validate(
-            {
-                **BASE,
-                "capability_profile": "brokered-web-egress",
-                "egress_policy_digest": "d" * 64,
-                "browser_policy_digest": "e" * 64,
-            }
-        )
+    expect_validation_error(
+        {
+            **BASE,
+            "capability_profile": "brokered-web-egress",
+            "egress_policy_digest": "d" * 64,
+            "browser_policy_digest": "e" * 64,
+        }
+    )
 
 
 def test_phase1l_offline_rejects_browser_digest() -> None:
-    with pytest.raises(ValidationError):
-        SandboxActivation.model_validate(
-            {
-                **BASE,
-                "capability_profile": "offline-minimal",
-                "browser_policy_digest": "e" * 64,
-            }
-        )
+    expect_validation_error(
+        {
+            **BASE,
+            "capability_profile": "offline-minimal",
+            "browser_policy_digest": "e" * 64,
+        }
+    )
