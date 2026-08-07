@@ -8,7 +8,7 @@ from pathlib import Path
 from config import SandboxWorkerConfig
 from policy import SandboxPolicyError
 
-_IMAGE_REF = re.compile(r"^rdc\\.local/browser-runtime@sha256:[0-9a-f]{64}$")
+_IMAGE_REF = re.compile(r"^rdc\.local/browser-runtime@sha256:[0-9a-f]{64}$")
 _EXPECTED_KEYS = {
     "schema_version",
     "browser",
