@@ -40,6 +40,7 @@ def main() -> None:
     permissions = read("apps/api/app/core/permissions.py")
     frontend = read("apps/console/src/components/run-control-plane.tsx")
     main_api = read("apps/api/app/main.py")
+    config = read("apps/api/app/core/config.py")
 
     for model in ["class Run(", "class RunEvent(", "class RunCommandOutbox("]:
         require(model in models, "missing model " + model)
@@ -130,8 +131,17 @@ def main() -> None:
         ),
         "foundation status is earlier than Phase 1E",
     )
+    legacy_execution_disabled = (
+        '"run_execution_enabled": False' in main_api
+    )
+    sandbox_execution_default_off = (
+        '"run_execution_enabled": settings.sandbox_execution_enabled'
+        in main_api
+        and "sandbox_execution_enabled: bool = False" in config
+        and '"untrusted_agent_execution_enabled": False' in main_api
+    )
     require(
-        '"run_execution_enabled": False' in main_api,
+        legacy_execution_disabled or sandbox_execution_default_off,
         "public API execution boundary changed",
     )
 
