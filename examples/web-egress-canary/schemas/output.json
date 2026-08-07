@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "canary",
+    "brokered",
+    "resultCount",
+    "statuses",
+    "containerNetwork"
+  ],
+  "properties": {
+    "canary": {"const": "rdc-phase1j"},
+    "brokered": {"const": true},
+    "resultCount": {"type": "integer", "minimum": 0, "maximum": 8},
+    "statuses": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {"type": "integer", "minimum": 100, "maximum": 599}
+    },
+    "containerNetwork": {"const": "none"}
+  }
+}
