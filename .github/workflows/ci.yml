@@ -83,6 +83,8 @@ jobs:
       RDC_SANDBOX_ACTIVATION_MODE: disabled
       RDC_SANDBOX_CANARY_AGENT_VERSION_ID: ""
       RDC_SANDBOX_CANARY_WORKER_NAME: ""
+      RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED: "false"
+      RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS: "[]"
     defaults:
       run:
         working-directory: apps/api
