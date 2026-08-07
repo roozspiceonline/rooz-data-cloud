@@ -27,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.9.0-phase1i",
+    version="0.10.0-phase1j",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -130,9 +130,9 @@ v1_router.include_router(storage_router)
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1I",
+        "phase": "1J",
         "service": "rdc-api",
-        "status": "sandbox-runtime-foundation",
+        "status": "restricted-web-egress-canary",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -158,6 +158,18 @@ async def foundation_status() -> dict[str, object]:
         "sandbox_attestation_required": True,
         "sandbox_default_network_policy": "deny-all",
         "sandbox_activation_mode": settings.sandbox_activation_mode,
+        "sandbox_container_network_policy": "deny-all",
+        "sandbox_canary_web_egress_enabled": (
+            settings.sandbox_canary_web_egress_enabled
+        ),
+        "brokered_web_egress_enabled": (
+            settings.sandbox_execution_enabled
+            and settings.sandbox_activation_mode == "canary"
+            and settings.sandbox_canary_web_egress_enabled
+            and bool(settings.sandbox_canary_web_egress_allowed_hosts)
+            and bool(settings.sandbox_canary_agent_version_id.strip())
+            and bool(settings.sandbox_canary_worker_name.strip())
+        ),
         "controlled_canary_execution_enabled": (
             settings.sandbox_execution_enabled
             and settings.sandbox_activation_mode == "canary"
