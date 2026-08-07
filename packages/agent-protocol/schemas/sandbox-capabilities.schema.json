@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.roozdata.cloud/sandbox-capabilities.schema.json",
+  "title": "RDC Sandbox Capabilities v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attestation_digest",
+    "runtime",
+    "builder",
+    "network_policy",
+    "rootless",
+    "no_host_docker_socket",
+    "no_new_privileges",
+    "read_only_rootfs",
+    "drop_all_capabilities",
+    "seccomp_profile",
+    "memory_mb",
+    "cpu_millis",
+    "pids",
+    "ephemeral_disk_mb",
+    "timeout_seconds",
+    "max_output_bytes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "rdc.sandbox/v1"
+    },
+    "attestation_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "runtime": {
+      "const": "containerd-rootless"
+    },
+    "builder": {
+      "const": "buildkit-rootless"
+    },
+    "network_policy": {
+      "const": "deny-all"
+    },
+    "rootless": {
+      "const": true
+    },
+    "no_host_docker_socket": {
+      "const": true
+    },
+    "no_new_privileges": {
+      "const": true
+    },
+    "read_only_rootfs": {
+      "const": true
+    },
+    "drop_all_capabilities": {
+      "const": true
+    },
+    "seccomp_profile": {
+      "const": "rdc-default"
+    },
+    "memory_mb": {
+      "type": "integer",
+      "minimum": 128,
+      "maximum": 32768
+    },
+    "cpu_millis": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 16000
+    },
+    "pids": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 4096
+    },
+    "ephemeral_disk_mb": {
+      "type": "integer",
+      "minimum": 64,
+      "maximum": 102400
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 86400
+    },
+    "max_output_bytes": {
+      "type": "integer",
+      "minimum": 1048576,
+      "maximum": 268435456
+    }
+  }
+}
