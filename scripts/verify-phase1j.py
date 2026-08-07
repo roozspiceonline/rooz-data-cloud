@@ -84,6 +84,209 @@ def expect_policy_error(module: ModuleType, call, message: str) -> None:
     raise SystemExit("Phase 1J verification failed: " + message)
 
 
+
+class _FakeResponse:
+    def __init__(
+        self,
+        status: int,
+        *,
+        body: bytes = b"",
+        headers: dict[str, str] | None = None,
+    ) -> None:
+        self.status = status
+        self._body = body
+        self._headers = dict(headers or {})
+
+    def getheaders(self) -> list[tuple[str, str]]:
+        return list(self._headers.items())
+
+    def getheader(self, name: str) -> str | None:
+        for key, value in self._headers.items():
+            if key.casefold() == name.casefold():
+                return value
+        return None
+
+    def read(self, amount: int | None = None) -> bytes:
+        return self._body if amount is None else self._body[:amount]
+
+
+class _FakeConnection:
+    def __init__(self, response: _FakeResponse) -> None:
+        self.response = response
+        self.request_call = None
+
+    def request(self, method: str, path: str, *, headers: dict[str, str]) -> None:
+        self.request_call = (method, path, headers)
+
+    def getresponse(self) -> _FakeResponse:
+        return self.response
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeFactory:
+    def __init__(self, responses: list[_FakeResponse]) -> None:
+        self.responses = list(responses)
+        self.connections: list[_FakeConnection] = []
+
+    def __call__(self, target, policy):
+        del target, policy
+        if not self.responses:
+            raise AssertionError("No fake response remains.")
+        connection = _FakeConnection(self.responses.pop(0))
+        self.connections.append(connection)
+        return connection
+
+
+def verify_broker_behavior(module: ModuleType) -> None:
+    import importlib
+
+    broker = importlib.import_module("egress_broker")
+    policy = module.EgressPolicy.create(
+        ["example.com", "redirect.example.com"]
+    )
+
+    success_factory = _FakeFactory(
+        [
+            _FakeResponse(
+                200,
+                body=b'{"ok":true}',
+                headers={"Content-Type": "application/json"},
+            )
+        ]
+    )
+    result = broker.broker_web_requests(
+        {
+            "_rdc_web_requests": [
+                {
+                    "id": "homepage",
+                    "method": "GET",
+                    "url": "https://example.com/data",
+                }
+            ]
+        },
+        policy=policy,
+        resolver=public_resolver,
+        connection_factory=success_factory,
+    )
+    responses = result["_rdc_web_results"]
+    require(len(responses) == 1, "broker result count changed")
+    require(responses[0]["status"] == 200, "broker GET status changed")
+    require(
+        responses[0]["body_text"] == '{"ok":true}',
+        "broker body decoding changed",
+    )
+    require(
+        "_rdc_web_requests" not in result,
+        "raw request contract leaked into Agent input",
+    )
+
+    redirect_factory = _FakeFactory(
+        [
+            _FakeResponse(
+                302,
+                headers={"Location": "https://redirect.example.com/final"},
+            ),
+            _FakeResponse(
+                204,
+                headers={"Content-Type": "text/plain"},
+            ),
+        ]
+    )
+    redirected = broker.broker_web_requests(
+        {
+            "_rdc_web_requests": [
+                {
+                    "id": "redirect",
+                    "method": "HEAD",
+                    "url": "https://example.com/start",
+                }
+            ]
+        },
+        policy=policy,
+        resolver=public_resolver,
+        connection_factory=redirect_factory,
+    )
+    require(
+        redirected["_rdc_web_results"][0]["url"]
+        == "https://redirect.example.com/final",
+        "redirect target was not revalidated",
+    )
+    require(
+        redirected["_rdc_web_budget"]["requests_used"] == 2,
+        "redirect did not consume request budget",
+    )
+
+    expect_policy_error(
+        module,
+        lambda: broker.broker_web_requests(
+            {
+                "_rdc_web_requests": [
+                    {
+                        "id": "write",
+                        "method": "POST",
+                        "url": "https://example.com/",
+                    }
+                ]
+            },
+            policy=policy,
+            resolver=public_resolver,
+            connection_factory=_FakeFactory([]),
+        ),
+        "broker accepted POST",
+    )
+
+
+def verify_phase1j_fixture() -> None:
+    fixture = ROOT / "examples" / "web-egress-canary"
+    for relative in [
+        "Dockerfile",
+        "agent.json",
+        "main.py",
+        "schemas/input.json",
+        "schemas/output.json",
+    ]:
+        require(
+            (fixture / relative).is_file(),
+            "web-egress canary fixture missing: " + relative,
+        )
+
+    manifest = json.loads(
+        (fixture / "agent.json").read_text(encoding="utf-8")
+    )
+    caps = manifest["capabilities"]
+    require(caps["network"] == "web-egress", "canary network capability changed")
+    for name in ["browser", "dataset", "keyValueStore", "requestQueue"]:
+        require(caps[name] is False, "forbidden canary capability: " + name)
+    require(manifest.get("secrets") == [], "web-egress canary declares secrets")
+
+    resources = manifest["resources"]
+    require(resources["memoryMb"] <= 256, "canary memory too broad")
+    require(resources["cpuUnits"] <= 500, "canary CPU too broad")
+    require(resources["maxProcesses"] <= 64, "canary PID limit too broad")
+    require(resources["ephemeralDiskMb"] <= 256, "canary disk too broad")
+    require(resources["timeoutSeconds"] <= 120, "canary timeout too broad")
+
+    source = (fixture / "main.py").read_text(encoding="utf-8")
+    compile(source, "web-egress-canary/main.py", "exec")
+    for prohibited in [
+        "socket",
+        "urllib",
+        "requests",
+        "http.client",
+        "subprocess",
+    ]:
+        require(
+            prohibited not in source,
+            "canary contains direct network/runtime primitive: " + prohibited,
+        )
+    require(
+        "_rdc_web_results" in source,
+        "canary does not consume brokered results",
+    )
+
+
 def main() -> None:
     module = load_policy_module()
     policy = module.EgressPolicy.create(["Example.COM."])
@@ -135,6 +338,9 @@ def main() -> None:
         ),
         "private DNS answer was accepted",
     )
+
+    verify_broker_behavior(module)
+    verify_phase1j_fixture()
 
     activation_schema = json.loads(
         read("packages/agent-protocol/schemas/sandbox-activation.schema.json")
@@ -227,6 +433,20 @@ def main() -> None:
         "general untrusted execution was enabled",
     )
 
+    console = read(
+        "apps/console/src/components/execution-plane-overview.tsx"
+    )
+    for marker in [
+        "Phase 1J",
+        "Brokered HTTPS canary",
+        "Agent container stays --network none",
+        "operator allowlist",
+        "GET/HEAD",
+        "defaults off",
+        "General untrusted execution remains release-blocked",
+    ]:
+        require(marker in console, "console evidence missing: " + marker)
+
     readme = read("docs/phase1j/README.md")
     runbook = read("docs/phase1j/RUNBOOK.md")
     require(
@@ -238,7 +458,10 @@ def main() -> None:
         "runbook release boundary is missing",
     )
 
-    print("Phase 1J broker integration verification: PASS")
+    print("Phase 1J final verification: PASS")
+    print("  broker behavioral tests: PASS")
+    print("  web-egress canary fixture: PASS")
+    print("  console/operator evidence: PASS")
     print("  exact-host HTTPS allowlisting: PASS")
     print("  private-network rejection: PASS")
     print("  DNS address pinning: PASS")
