@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "sandbox-activation.schema.json",
-  "title": "RDC Phase 1I Sandbox Activation",
+  "title": "RDC Phase 1J Sandbox Activation",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -13,6 +13,7 @@
     "constraints_digest",
     "no_secrets",
     "capability_profile",
+    "egress_policy_digest",
     "max_concurrency"
   ],
   "properties": {
@@ -45,10 +46,55 @@
       "const": true
     },
     "capability_profile": {
-      "const": "offline-minimal"
+      "enum": [
+        "offline-minimal",
+        "brokered-web-egress"
+      ]
+    },
+    "egress_policy_digest": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
     },
     "max_concurrency": {
       "const": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "capability_profile": {
+            "const": "brokered-web-egress"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "egress_policy_digest": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "capability_profile": {
+            "const": "offline-minimal"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "egress_policy_digest": {
+            "const": null
+          }
+        }
+      }
+    }
+  ]
 }
