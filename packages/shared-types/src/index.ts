@@ -442,3 +442,23 @@ export interface StorageDownloadGrant {
   expires_at: string;
   headers: Record<string, string>;
 }
+
+export interface SandboxClaimPolicy {
+  schema_version: "rdc.sandbox/v1";
+  attestation_digest: string;
+  runtime: "containerd-rootless";
+  builder: "buildkit-rootless";
+  network_policy: "deny-all";
+  rootless: true;
+  no_host_docker_socket: true;
+  no_new_privileges: true;
+  read_only_rootfs: true;
+  drop_all_capabilities: true;
+  seccomp_profile: "rdc-default";
+  memory_mb: number;
+  cpu_millis: number;
+  pids: number;
+  ephemeral_disk_mb: number;
+  timeout_seconds: number;
+  max_output_bytes: number;
+}
