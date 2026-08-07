@@ -1,5 +1,18 @@
 # Changelog
 
+## Phase 1I — Controlled Sandbox Activation & End-to-End Execution
+
+- Added a second activation gate that defaults to `disabled`.
+- Bound canary execution to one immutable AgentVersion and one exact
+  single-concurrency worker.
+- Rejected secrets, network/browser/storage capabilities, and broader resource
+  requests from the canary path.
+- Added digest-bound activation receipts to lease snapshots and artifacts.
+- Added server-side source/image lineage verification for Build and Run
+  artifacts.
+- Added a deterministic offline canary Agent, source-ZIP builder, runbook,
+  tests, protocol schema, console messaging, and CI verifier.
+
 ## Phase 1H — Sandboxed Build & Runtime Foundation
 
 - Added strict sandbox worker attestation and an opt-in execution gate.
