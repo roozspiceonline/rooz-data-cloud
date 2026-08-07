@@ -1,44 +1,40 @@
-# RDC Phase 1L Browser Runtime Skeleton
+# RDC Phase 1L Browser Runtime
 
-This directory contains the first isolated Playwright/Chromium runtime boundary.
+This directory contains RDC's isolated Playwright/Chromium runtime boundary.
 
 ## Current state
 
-The runtime is intentionally **not connected** to the sandbox worker or Run API.
-
-Its only accepted operation is an explicit local/container self-test:
+The sandbox worker may invoke this runtime only after a verified
+`controlled-browser` canary activation. The only accepted runtime operation is:
 
 ```bash
 python browser_runtime.py --self-test
 ```
 
-The self-test opens only `about:blank`. It does not accept a URL and does not
-perform network navigation.
+The self-test opens only `about:blank`. It accepts no URL and performs no
+external navigation.
 
 ## Image
 
-The Dockerfile pins the official Playwright Python image and package to
-`1.61.0` and switches to the image's non-root `pwuser`.
+The Dockerfile pins the Playwright Python image and package to `1.61.0`, and the
+container runs as the non-root `pwuser`. RDC does not add `--no-sandbox`.
 
-The browser is launched with Playwright defaults. RDC does not add
-`--no-sandbox`.
+The worker requires an immutable preloaded local image reference of the form:
 
-## Isolation requirements before live deployment
+```text
+rdc.local/browser-runtime@sha256:<64-hex>
+```
 
-A later Phase 1L increment must add all of the following before this runtime can
-navigate the public web:
+The worker uses `--pull never`, `--network none`, a read-only root filesystem,
+`no-new-privileges`, `cap-drop ALL`, bounded CPU/memory/PIDs and the dedicated
+RDC browser seccomp profile.
 
-- dedicated browser worker/container lifecycle
-- browser-specific seccomp profile compatible with Chromium sandboxing
-- non-root execution
-- no host Docker socket
-- no externally reachable CDP/WebSocket port
-- no project secrets
-- ephemeral browser context/profile per Run
-- exact-host public-HTTPS egress enforcement for document and subresources
-- redirect/subresource DNS and IP revalidation
-- bounded pages/actions/time/DOM/screenshot resources
-- immutable browser policy digest verification
+## Still blocked
+
+Phase 1L does not implement public URL navigation, subresource networking,
+redirect handling, cookies, headers, credentials, downloads, uploads, arbitrary
+JavaScript, remote CDP, persistent profiles, proxies, CAPTCHA handling, or
+project secrets.
 
 The Agent container remains `--network none`.
 
