@@ -29,3 +29,45 @@ weakens budgets, broadens activation beyond the approved canary, or enables
 browser/secrets.
 
 General untrusted Agent execution remains release-blocked.
+
+## Phase 1K Run request
+
+The control-plane Run API may carry:
+
+```json
+{
+  "input": {"query": "example"},
+  "web_fetch": {
+    "schema_version": "rdc.web-fetch/v1",
+    "requests": [
+      {
+        "id": "homepage",
+        "method": "GET",
+        "url": "https://example.com/"
+      }
+    ]
+  }
+}
+```
+
+`web_fetch` is accepted only for an immutable Agent version declaring
+`network=web-egress`. Actual execution still requires all existing Phase 1J
+activation and operator-policy gates.
+
+The Agent does not receive the raw broker transport. It receives the bounded
+versioned `_rdc_web_fetch_result` envelope.
+
+## Bounded failure codes
+
+Before Agent execution, Phase 1K can fail with:
+
+- `WEB_FETCH_CONTRACT_INVALID` — versioned request/result contract validation
+  failed.
+- `WEB_FETCH_POLICY_DENIED` — the broker denied or failed the fetch within the
+  operator-owned egress policy.
+
+These summaries intentionally avoid DNS, socket, credential, or internal policy
+details.
+
+General untrusted Agent execution remains release-blocked.
+
