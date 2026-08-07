@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "sandbox-activation.schema.json",
+  "title": "RDC Phase 1I Sandbox Activation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "mode",
+    "agent_version_id",
+    "worker_name",
+    "attestation_digest",
+    "sandbox_policy_digest",
+    "constraints_digest",
+    "no_secrets",
+    "capability_profile",
+    "max_concurrency"
+  ],
+  "properties": {
+    "mode": {
+      "const": "canary"
+    },
+    "agent_version_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "worker_name": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 160,
+      "pattern": "^[a-z0-9][a-z0-9._-]+$"
+    },
+    "attestation_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sandbox_policy_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "constraints_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "no_secrets": {
+      "const": true
+    },
+    "capability_profile": {
+      "const": "offline-minimal"
+    },
+    "max_concurrency": {
+      "const": 1
+    }
+  }
+}
