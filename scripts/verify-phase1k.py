@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import sys
@@ -25,7 +26,10 @@ def load_contract() -> ModuleType:
         "rdc_phase1k_web_fetch_contract",
         path,
     )
-    require(spec is not None and spec.loader is not None, "cannot load contract")
+    require(
+        spec is not None and spec.loader is not None,
+        "cannot load web-fetch contract",
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -42,24 +46,90 @@ def expect_error(module: ModuleType, call, message: str) -> None:
 
 def main() -> None:
     module = load_contract()
-    raw = {
+
+    request = {
         "schema_version": "rdc.web-fetch/v1",
         "requests": [
-            {"id": "homepage", "method": "get", "url": "https://example.com/"},
-            {"id": "head", "method": "HEAD", "url": "https://example.com/robots.txt"},
+            {
+                "id": "homepage",
+                "method": "get",
+                "url": "https://example.com/",
+            },
+            {
+                "id": "head",
+                "method": "HEAD",
+                "url": "https://example.com/robots.txt",
+            },
         ],
     }
-    envelope = module.parse_web_fetch_envelope(raw)
+    envelope = module.parse_web_fetch_envelope(request)
     require(envelope.requests[0].method == "GET", "method normalization changed")
-    require(len(envelope.digest) == 64, "digest is not sha256-sized")
+    require(len(envelope.digest) == 64, "request digest is not sha256-sized")
     require(
-        envelope.digest == module.canonical_web_fetch_digest(raw),
-        "canonical digest is not deterministic",
+        envelope.digest == module.canonical_web_fetch_digest(request),
+        "canonical request digest is not deterministic",
     )
-    broker_input = module.phase1j_broker_adapter(raw)
+
+    broker_input = module.phase1j_broker_adapter(request)
     require(
         set(broker_input) == {"_rdc_web_requests"},
-        "adapter exposes unexpected transport fields",
+        "adapter exposes unexpected Phase 1J fields",
+    )
+
+    empty_digest = hashlib.sha256(b"").hexdigest()
+    broker_output = {
+        "_rdc_web_results": [
+            {
+                "id": "homepage",
+                "method": "GET",
+                "url": "https://example.com/",
+                "status": 200,
+                "headers": {"content-type": "text/plain"},
+                "body_text": "hello",
+                "body_base64": None,
+                "size_bytes": 5,
+                "body_sha256": hashlib.sha256(b"hello").hexdigest(),
+            },
+            {
+                "id": "head",
+                "method": "HEAD",
+                "url": "https://example.com/robots.txt",
+                "status": 204,
+                "headers": {},
+                "body_text": None,
+                "body_base64": None,
+                "size_bytes": 0,
+                "body_sha256": empty_digest,
+            },
+        ],
+        "_rdc_web_budget": {
+            "requests_used": 2,
+            "bytes_received": 5,
+            "max_requests": 8,
+            "max_total_bytes": 4194304,
+        },
+    }
+    result = module.phase1j_broker_result_adapter(request, broker_output)
+    require(
+        result["schema_version"] == "rdc.web-fetch-result/v1",
+        "result schema version changed",
+    )
+    require(
+        result["request_digest"] == envelope.digest,
+        "result does not bind request digest",
+    )
+    results = result["results"]
+    require(isinstance(results, list), "result list is missing")
+    first = results[0]
+    second = results[1]
+    require(
+        first["body"]["sha256"]
+        == hashlib.sha256(b"hello").hexdigest(),
+        "response body lineage digest changed",
+    )
+    require(
+        second["body"]["encoding"] == "none",
+        "HEAD result body representation changed",
     )
 
     expect_error(
@@ -68,7 +138,11 @@ def main() -> None:
             {
                 "schema_version": "rdc.web-fetch/v1",
                 "requests": [
-                    {"id": "write", "method": "POST", "url": "https://example.com/"}
+                    {
+                        "id": "write",
+                        "method": "POST",
+                        "url": "https://example.com/",
+                    }
                 ],
             }
         ),
@@ -80,28 +154,80 @@ def main() -> None:
             {
                 "schema_version": "rdc.web-fetch/v1",
                 "requests": [
-                    {"id": "plain", "method": "GET", "url": "http://example.com/"}
+                    {
+                        "id": "plain",
+                        "method": "GET",
+                        "url": "http://example.com/",
+                    }
                 ],
             }
         ),
         "HTTP URL was accepted",
     )
 
-    schema = json.loads(
-        read("packages/agent-protocol/schemas/web-fetch-envelope.schema.json")
+    request_schema = json.loads(
+        read(
+            "packages/agent-protocol/schemas/"
+            "web-fetch-envelope.schema.json"
+        )
     )
-    require(schema.get("additionalProperties") is False, "schema is not strict")
+    result_schema = json.loads(
+        read(
+            "packages/agent-protocol/schemas/"
+            "web-fetch-result.schema.json"
+        )
+    )
     require(
-        schema["properties"]["schema_version"].get("const") == "rdc.web-fetch/v1",
-        "schema version changed",
+        request_schema.get("additionalProperties") is False,
+        "request schema is not strict",
+    )
+    require(
+        result_schema.get("additionalProperties") is False,
+        "result schema is not strict",
+    )
+    require(
+        result_schema["properties"]["schema_version"]["const"]
+        == "rdc.web-fetch-result/v1",
+        "result protocol version changed",
     )
 
-    broker = read("workers/sandbox-runtime/egress_broker.py")
-    require("_rdc_web_requests" in broker, "Phase 1J broker transport is missing")
-    require(
-        'method not in {"GET", "HEAD"}' in broker,
-        "Phase 1J method boundary changed",
-    )
+    run_schemas = read("apps/api/app/run_schemas.py")
+    for marker in [
+        "class WebFetchRequestInput",
+        "class WebFetchEnvelopeInput",
+        "web_fetch: WebFetchEnvelopeInput | None = None",
+        "Web-fetch envelope cannot exceed 64 KiB.",
+    ]:
+        require(marker in run_schemas, "Run contract missing: " + marker)
+
+    runs_service = read("apps/api/app/services/runs.py")
+    for marker in [
+        '"WEB_FETCH_CAPABILITY_REQUIRED"',
+        '"web_fetch": web_fetch',
+        'input_reference["web_fetch"] = web_fetch',
+    ]:
+        require(marker in runs_service, "Run integration missing: " + marker)
+
+    egress_broker = read("workers/sandbox-runtime/egress_broker.py")
+    for marker in [
+        "body_sha256",
+        "hashlib.sha256(body).hexdigest()",
+        'method not in {"GET", "HEAD"}',
+        '"Accept-Encoding": "identity"',
+    ]:
+        require(marker in egress_broker, "broker lineage guard missing: " + marker)
+
+    worker = read("workers/sandbox-runtime/worker.py")
+    for marker in [
+        'web_fetch = input_ref.get("web_fetch")',
+        "phase1j_broker_adapter",
+        "phase1j_broker_result_adapter",
+        '"_rdc_web_fetch_result"',
+        '"WEB_FETCH_CONTRACT_INVALID"',
+        '"WEB_FETCH_POLICY_DENIED"',
+        '"_rdc_web_requests" in input_value',
+    ]:
+        require(marker in worker, "worker integration missing: " + marker)
 
     run_executor = read("workers/sandbox-runtime/run_executor.py")
     require(
@@ -112,24 +238,32 @@ def main() -> None:
     readme = read("docs/phase1k/README.md")
     runbook = read("docs/phase1k/RUNBOOK.md")
     for marker in [
-        "rdc.web-fetch/v1",
-        "does **not** activate or broaden runtime web access",
+        "top-level `web_fetch`",
+        "`_rdc_web_fetch_result`",
+        "Phase 1J legacy compatibility",
         "--network none",
-        "operator-owned policy",
     ]:
-        require(marker in readme, "README missing: " + marker)
+        require(marker in readme, "README integration missing: " + marker)
     require(
-        "General untrusted Agent execution remains release-blocked." in runbook,
+        "WEB_FETCH_CONTRACT_INVALID" in runbook
+        and "WEB_FETCH_POLICY_DENIED" in runbook,
+        "runbook failure codes are missing",
+    )
+    require(
+        "General untrusted Agent execution remains release-blocked."
+        in runbook,
         "release boundary is missing",
     )
 
-    print("Phase 1K foundation verification: PASS")
-    print("  rdc.web-fetch/v1 strict contract: PASS")
-    print("  GET/HEAD + HTTPS boundary: PASS")
-    print("  canonical request digest: PASS")
-    print("  Phase 1J broker adapter: PASS")
+    print("Phase 1K integration verification: PASS")
+    print("  versioned Run web_fetch contract: PASS")
+    print("  API + worker independent validation: PASS")
+    print("  Phase 1J broker compatibility: PASS")
+    print("  versioned Agent result injection: PASS")
+    print("  response SHA-256 lineage: PASS")
+    print("  bounded failure codes: PASS")
     print("  Agent container --network none: PASS")
-    print("  runtime activation broadening: NOT ENABLED")
+    print("  activation broadening: NOT ENABLED")
     print("  general untrusted execution: BLOCKED")
 
 
