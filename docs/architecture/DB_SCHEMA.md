@@ -1056,3 +1056,8 @@ All Phase 1F tenant-owned tables use RLS and tenancy triggers. Worker access is 
 - `control.builds.source_object_id`: source snapshot for new Builds.
 
 The migration initially permits null source references for pre-1G rows; all Phase 1G creation paths require them.
+
+## Phase 1H worker attestation columns
+
+`security.worker_identities` adds nullable `sandbox_profile`, nullable SHA-256 `sandbox_attestation_digest`, non-null `sandbox_execution_enabled` default false, and nullable `sandbox_attested_at`. A database check prevents an enabled worker without the required Phase 1H profile, digest, and attestation timestamp.
+
