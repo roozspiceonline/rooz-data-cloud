@@ -502,3 +502,35 @@ Phase 1H implements the first executable controls for T-11 and T-12: rootless Bu
 
 The `RDC_SANDBOX_EXECUTION_ENABLED` switch defaults to false. A second gate requires a strict worker attestation before `execution_enabled` can become true. Phase 1H does not authorize web-egress or browser Agents; those remain blocked until a later egress-proxy/SSRF-control phase.
 
+
+
+### T-17 Sandbox activation bypass
+
+- **Scenario:** an operator or compromised configuration enables sandbox
+  execution and unintentionally authorizes arbitrary Agents or workers.
+- **Components:** API settings, execution claim policy, sandbox worker.
+- **Likelihood:** Medium
+- **Impact:** Critical
+- **Controls:** independent master switch and activation mode, exact immutable
+  AgentVersion pin, exact worker-name pin, single concurrency, strict
+  attestation, offline-minimal capability profile, no secrets, narrower
+  resource ceilings.
+- **Tests:** master-switch-only denial, wrong-version denial, wrong-worker
+  denial, concurrency denial, capability denial, secret denial, resource
+  denial.
+- **Residual risk:** Low to Medium.
+
+### T-18 Execution artifact lineage spoofing
+
+- **Scenario:** a compromised or faulty worker uploads an artifact whose digest
+  is valid but whose provenance is unrelated to the approved canary source or
+  image.
+- **Components:** sandbox worker, object storage, execution artifact registry.
+- **Likelihood:** Medium
+- **Impact:** High
+- **Controls:** lease-bound object keys and metadata, server-side SHA-256
+  recomputation, immutable activation receipt in lease snapshot, Build
+  source-digest binding, Run image-digest binding.
+- **Tests:** altered activation, source digest, AgentVersion, Run ID, and image
+  digest are rejected.
+- **Residual risk:** Low to Medium.
