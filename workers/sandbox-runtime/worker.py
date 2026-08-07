@@ -9,6 +9,8 @@ from typing import Any
 
 from build_executor import LocalArtifact, build_agent
 from config import SandboxWorkerConfig
+from egress_broker import broker_web_requests
+from egress_policy import EgressPolicy
 from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
 from policy import SandboxPolicyError, verify_host
 from rdc_worker_client import RdcWorkerClient, decrypt_secret_envelope, generate_worker_key_pair
@@ -41,10 +43,27 @@ def _canonical_digest(value: dict[str, object]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _worker_egress_policy(
+    config: SandboxWorkerConfig,
+) -> EgressPolicy | None:
+    if not config.web_egress_enabled:
+        return None
+    return EgressPolicy.create(
+        config.web_egress_allowed_hosts,
+        max_requests=config.web_egress_max_requests,
+        max_response_bytes=config.web_egress_max_response_bytes,
+        max_total_bytes=config.web_egress_max_total_bytes,
+        max_redirects=config.web_egress_max_redirects,
+        connect_timeout_seconds=config.web_egress_connect_timeout_seconds,
+        request_timeout_seconds=config.web_egress_request_timeout_seconds,
+    )
+
+
 def _require_canary_activation(
     payload: dict[str, Any],
     *,
     worker_name: str,
+    egress_policy: EgressPolicy | None,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -53,7 +72,7 @@ def _require_canary_activation(
             "The control plane did not provide a canary activation receipt."
         )
     if activation.get("mode") != "canary":
-        raise SandboxPolicyError("Only Phase 1I canary activation is accepted.")
+        raise SandboxPolicyError("Only canary activation is accepted.")
     if activation.get("worker_name") != worker_name:
         raise SandboxPolicyError(
             "Canary activation is bound to a different worker identity."
@@ -67,10 +86,8 @@ def _require_canary_activation(
             "Canary activation requires single-concurrency execution."
         )
     if activation.get("no_secrets") is not True:
-        raise SandboxPolicyError("Canary execution cannot inject project secrets.")
-    if activation.get("capability_profile") != "offline-minimal":
         raise SandboxPolicyError(
-            "Canary activation capability profile is not offline-minimal."
+            "Canary execution cannot inject project secrets."
         )
     if activation.get("attestation_digest") != sandbox.get(
         "attestation_digest"
@@ -82,24 +99,60 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary activation does not match the sandbox policy digest."
         )
+
     manifest = payload.get("manifest")
     if not isinstance(manifest, dict):
         raise SandboxPolicyError("Canary claim is missing the Agent manifest.")
     if manifest.get("secrets"):
-        raise SandboxPolicyError("Canary Agent manifests cannot declare secrets.")
+        raise SandboxPolicyError(
+            "Canary Agent manifests cannot declare secrets."
+        )
+
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         raise SandboxPolicyError("Canary Agent capabilities are missing.")
     if (
-        capabilities.get("network") != "none"
-        or capabilities.get("browser") is not False
+        capabilities.get("browser") is not False
         or capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
     ):
         raise SandboxPolicyError(
-            "Canary Agent requested a capability outside offline-minimal."
+            "Canary Agent requested an unsupported Phase 1J capability."
         )
+
+    profile = activation.get("capability_profile")
+    network = capabilities.get("network")
+    egress_digest = activation.get("egress_policy_digest")
+
+    if profile == "offline-minimal":
+        if network != "none":
+            raise SandboxPolicyError(
+                "Offline-minimal activation requires network=none."
+            )
+        if egress_digest is not None:
+            raise SandboxPolicyError(
+                "Offline-minimal activation cannot carry an egress digest."
+            )
+    elif profile == "brokered-web-egress":
+        if network != "web-egress":
+            raise SandboxPolicyError(
+                "Brokered web-egress activation requires network=web-egress."
+            )
+        if egress_policy is None:
+            raise SandboxPolicyError(
+                "Worker web-egress policy is disabled or unavailable."
+            )
+        if egress_digest != egress_policy.digest:
+            raise SandboxPolicyError(
+                "Canary activation egress-policy digest does not match "
+                "the worker policy."
+            )
+    else:
+        raise SandboxPolicyError(
+            "Canary activation capability profile is unsupported."
+        )
+
     return {str(key): value for key, value in activation.items()}
 
 
@@ -170,9 +223,11 @@ def _build(
         return
     workspace = private_temp_dir(config.workspace_root, "build-")
     try:
+        egress_policy = _worker_egress_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
+            egress_policy=egress_policy,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -255,9 +310,11 @@ def _run(
         return
     workspace = private_temp_dir(config.workspace_root, "run-")
     try:
+        egress_policy = _worker_egress_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
+            egress_policy=egress_policy,
         )
         artifact_grant = _data(client.artifact_download(lease_id, token))
         image_path = workspace / "image.oci.tar"
@@ -279,6 +336,15 @@ def _run(
         entrypoint = [str(value) for value in runtime["entrypoint"]]
         input_ref = dict(payload["input_reference"])
         input_value = dict(input_ref.get("value") or {})
+        if activation.get("capability_profile") == "brokered-web-egress":
+            if egress_policy is None:
+                raise SandboxPolicyError(
+                    "Brokered web-egress activation lacks worker policy."
+                )
+            input_value = broker_web_requests(
+                input_value,
+                policy=egress_policy,
+            )
         secrets: dict[str, object] = {}
         names = [str(value) for value in manifest.get("secrets", [])]
         if names:
@@ -394,7 +460,7 @@ def main() -> None:
     worker_name = str(worker["name"])
     if int(worker["max_concurrency"]) != 1:
         raise SandboxPolicyError(
-            "Phase 1I canary worker must have max_concurrency=1."
+            "Phase 1J canary worker must have max_concurrency=1."
         )
     while True:
         claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
