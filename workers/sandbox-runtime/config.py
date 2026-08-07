@@ -75,6 +75,13 @@ class SandboxWorkerConfig:
             ).split(",")
             if value.strip()
         )
+        browser_runtime_timeout_seconds = int(
+            os.environ.get("RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS", "20")
+        )
+        if not 1 <= browser_runtime_timeout_seconds <= 30:
+            raise RuntimeError(
+                "RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS must be between 1 and 30."
+            )
         return cls(
             api_base_url=os.environ.get(
                 "RDC_INTERNAL_API_BASE_URL", "http://127.0.0.1:8000"
@@ -177,7 +184,5 @@ class SandboxWorkerConfig:
                     "infrastructure/sandbox/seccomp-rdc-browser.json",
                 )
             ).resolve(),
-            browser_runtime_timeout_seconds=int(
-                os.environ.get("RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS", "20")
-            ),
+            browser_runtime_timeout_seconds=browser_runtime_timeout_seconds,
         )
