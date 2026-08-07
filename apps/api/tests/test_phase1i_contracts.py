@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-from app.agent_schemas import AgentManifest
 from app.execution_schemas import SandboxActivation
 
 
@@ -23,6 +22,8 @@ def test_phase1i_activation_contract_is_strict() -> None:
 
 
 def test_phase1i_canary_manifest_is_offline_and_secretless() -> None:
+    from app.agent_schemas import AgentManifest
+
     raw = json.loads(
         (ROOT / "examples/canary-agent/agent.json").read_text(encoding="utf-8")
     )
