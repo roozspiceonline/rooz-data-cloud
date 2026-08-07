@@ -1,0 +1,248 @@
+from __future__ import annotations
+
+import json
+import time
+import zipfile
+from pathlib import Path
+from typing import Any
+
+from build_executor import LocalArtifact, build_agent
+from config import SandboxWorkerConfig
+from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
+from policy import SandboxPolicyError, verify_host
+from rdc_worker_client import RdcWorkerClient, decrypt_secret_envelope, generate_worker_key_pair
+from run_executor import cancel_run, load_image, run_agent
+
+
+def _data(response: dict[str, Any]) -> dict[str, Any]:
+    value = response.get("data")
+    if not isinstance(value, dict):
+        raise SandboxPolicyError("Worker protocol response is missing data.")
+    return value
+
+
+def _extract_zip(archive: Path, destination: Path) -> None:
+    with zipfile.ZipFile(archive) as package:
+        for info in package.infolist():
+            name = info.filename.replace("\\", "/")
+            parts = [part for part in name.split("/") if part not in {"", "."}]
+            if name.startswith("/") or ".." in parts:
+                raise SandboxPolicyError("Source archive contains an unsafe path.")
+        package.extractall(destination)
+
+
+def _upload_artifacts(
+    client: RdcWorkerClient,
+    *,
+    lease_id: str,
+    lease_token: str,
+    artifacts: list[LocalArtifact],
+) -> list[dict[str, object]]:
+    result: list[dict[str, object]] = []
+    for artifact in artifacts:
+        grant = _data(
+            client.artifact_upload(
+                lease_id,
+                lease_token,
+                {
+                    "kind": artifact.kind,
+                    "digest_algorithm": "sha256",
+                    "digest": artifact.digest,
+                    "media_type": artifact.media_type,
+                    "size_bytes": artifact.size_bytes,
+                },
+            )
+        )
+        upload_file(str(grant["url"]), dict(grant["headers"]), artifact.path)
+        result.append(
+            {
+                "kind": artifact.kind,
+                "digest_algorithm": "sha256",
+                "digest": artifact.digest,
+                "object_key": grant["object_key"],
+                "media_type": artifact.media_type,
+                "size_bytes": artifact.size_bytes,
+                "status": "AVAILABLE",
+                "scan_status": artifact.scan_status,
+                "provenance": artifact.provenance,
+            }
+        )
+    return result
+
+
+def _build(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, Any]) -> None:
+    lease = _data(claim)
+    payload = dict(lease["payload"])
+    lease_id = str(lease["id"])
+    token = str(lease["lease_token"])
+    if payload.get("execution_enabled") is not True or not isinstance(payload.get("sandbox"), dict):
+        client.complete(
+            lease_id,
+            token,
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_POLICY_DENIED",
+                "error_summary": "The control plane did not authorize sandbox execution.",
+            },
+        )
+        return
+    workspace = private_temp_dir(config.workspace_root, "build-")
+    try:
+        source_zip = workspace / "source.zip"
+        source_dir = workspace / "source"
+        source_dir.mkdir(mode=0o700)
+        grant = _data(client.source_download(lease_id, token))
+        source_meta = dict(payload["source"])
+        download_file(str(grant["url"]), source_zip, max_bytes=int(source_meta["size_bytes"]))
+        digest, size = sha256_file(source_zip)
+        if digest != source_meta["sha256_digest"] or size != int(source_meta["size_bytes"]):
+            raise SandboxPolicyError("Downloaded source digest or size does not match the claim.")
+        _extract_zip(source_zip, source_dir)
+        client.status(lease_id, token, status="RUNNING")
+        artifacts = build_agent(
+            config=config,
+            source_dir=source_dir,
+            workspace=workspace,
+            build_id=str(payload["build_id"]),
+            timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
+        )
+        registrations = _upload_artifacts(
+            client,
+            lease_id=lease_id,
+            lease_token=token,
+            artifacts=artifacts,
+        )
+        client.complete(
+            lease_id,
+            token,
+            {"outcome": "SUCCEEDED", "retryable": False, "artifacts": registrations},
+        )
+    except Exception as exc:
+        client.complete(
+            lease_id,
+            token,
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_BUILD_FAILED",
+                "error_summary": str(exc)[:2000],
+            },
+        )
+    finally:
+        cleanup_tree(workspace)
+
+
+def _run(client: RdcWorkerClient, config: SandboxWorkerConfig, claim: dict[str, Any]) -> None:
+    lease = _data(claim)
+    payload = dict(lease["payload"])
+    lease_id = str(lease["id"])
+    token = str(lease["lease_token"])
+    if payload.get("work_kind") == "RUN_CANCEL":
+        cancel_run(config=config, run_id=str(payload["run_id"]))
+        client.complete(lease_id, token, {"outcome": "ABORTED", "retryable": False})
+        return
+    if payload.get("execution_enabled") is not True or not isinstance(payload.get("sandbox"), dict):
+        client.complete(
+            lease_id,
+            token,
+            {"outcome": "FAILED", "retryable": False, "error_code": "SANDBOX_POLICY_DENIED", "error_summary": "The control plane did not authorize sandbox execution."},
+        )
+        return
+    workspace = private_temp_dir(config.workspace_root, "run-")
+    try:
+        artifact_grant = _data(client.artifact_download(lease_id, token))
+        image_path = workspace / "image.oci.tar"
+        download_file(str(artifact_grant["url"]), image_path, max_bytes=int(artifact_grant["size_bytes"]))
+        digest, size = sha256_file(image_path)
+        if digest != artifact_grant["digest"] or size != int(artifact_grant["size_bytes"]):
+            raise SandboxPolicyError("Downloaded image artifact failed digest verification.")
+        load_image(config, image_path)
+        provenance = dict(artifact_grant.get("provenance") or {})
+        image_ref = str(provenance.get("image_ref", ""))
+        if not image_ref.startswith("rdc.local/agent:"):
+            raise SandboxPolicyError("Container artifact provenance lacks a safe image reference.")
+        manifest = dict(payload["manifest"])
+        runtime = dict(manifest["runtime"])
+        entrypoint = [str(value) for value in runtime["entrypoint"]]
+        input_ref = dict(payload["input_reference"])
+        input_value = dict(input_ref.get("value") or {})
+        secrets: dict[str, object] = {}
+        names = [str(value) for value in manifest.get("secrets", [])]
+        if names:
+            key_pair = generate_worker_key_pair()
+            envelope = client.request_secret_envelope(
+                lease_id,
+                token,
+                names=names,
+                environment="production",
+                key_pair=key_pair,
+            )
+            worker = _data(client.worker())
+            secrets = decrypt_secret_envelope(
+                envelope,
+                key_pair=key_pair,
+                lease_id=lease_id,
+                worker_id=str(worker["id"]),
+                run_id=str(payload["run_id"]),
+            )
+        client.status(lease_id, token, status="RUNNING")
+        code, output_path, log_path = run_agent(
+            config=config,
+            run_id=str(payload["run_id"]),
+            image_ref=image_ref,
+            entrypoint=entrypoint,
+            input_value=input_value,
+            secrets=secrets,
+            workspace=workspace,
+            policy=dict(payload["sandbox"]),
+        )
+        artifacts: list[LocalArtifact] = []
+        if output_path.is_file():
+            digest, size = sha256_file(output_path)
+            artifacts.append(LocalArtifact("RUN_OUTPUT", output_path, "application/json", digest, size, "NOT_REQUIRED", {}))
+        if log_path.is_file():
+            digest, size = sha256_file(log_path)
+            artifacts.append(LocalArtifact("LOG_BUNDLE", log_path, "text/plain", digest, size, "NOT_REQUIRED", {}))
+        registrations = _upload_artifacts(client, lease_id=lease_id, lease_token=token, artifacts=artifacts)
+        client.complete(
+            lease_id,
+            token,
+            {
+                "outcome": "SUCCEEDED" if code == 0 else "FAILED",
+                "retryable": False,
+                "error_code": None if code == 0 else "AGENT_EXIT_NONZERO",
+                "error_summary": None if code == 0 else f"Agent exited with status {code}.",
+                "artifacts": registrations,
+            },
+        )
+    except Exception as exc:
+        client.complete(
+            lease_id,
+            token,
+            {"outcome": "FAILED", "retryable": False, "error_code": "SANDBOX_RUN_FAILED", "error_summary": str(exc)[:2000]},
+        )
+    finally:
+        cleanup_tree(workspace)
+
+
+def main() -> None:
+    config = SandboxWorkerConfig.from_env()
+    probe = verify_host(config)
+    client = RdcWorkerClient(base_url=config.api_base_url, worker_token=config.worker_token)
+    client.heartbeat(software_version=config.software_version, active_lease_count=0, sandbox=probe.attestation)
+    while True:
+        claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
+        if claim is None:
+            time.sleep(config.poll_seconds)
+            client.heartbeat(software_version=config.software_version, active_lease_count=0, sandbox=probe.attestation)
+            continue
+        data = _data(claim)
+        if data["work_kind"] == "BUILD":
+            _build(client, config, claim)
+        else:
+            _run(client, config, claim)
+
+
+if __name__ == "__main__":
+    main()
