@@ -115,9 +115,9 @@ export function ExecutionPlaneOverview({ projectId }: { projectId: string }) {
         </p>
         <h1 id="execution-plane-heading">Isolated execution plane</h1>
         <p style={{ maxWidth: "72ch" }}>
-          Phase 1J extends the Phase 1I safety model. It permits only one
-          configured immutable AgentVersion on one exact single-concurrency
-          worker after both the master gate and canary mode are enabled.
+          Phase 1J extends the Phase 1I safety model.
+          It permits one configured immutable AgentVersion on one exact single-concurrency worker
+          after both the master gate and canary mode are enabled.
           General untrusted execution remains release-blocked.
         </p>
       </header>
