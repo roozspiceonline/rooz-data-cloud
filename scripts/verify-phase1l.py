@@ -77,6 +77,22 @@ def main() -> None:
         "browser gate does not default false",
     )
 
+    main_source = read("apps/api/app/main.py")
+    for marker in [
+        'version="0.12.0-phase1l"',
+        '"phase": "1L"',
+        '"status": "controlled-browser-offline-canary-foundation"',
+        '"browser_request_contract": "rdc.browser/v1"',
+        '"browser_policy_contract": "rdc.browser-policy/v1"',
+        '"browser_runtime_self_test_available": True',
+        '"browser_public_navigation_enabled": False',
+        '"browser_canary_activation_enabled"',
+    ]:
+        require(
+            marker in main_source,
+            "Phase 1L API status missing: " + marker,
+        )
+
     config = read("apps/api/app/core/config.py")
     for marker in [
         "sandbox_canary_browser_enabled: bool = False",
@@ -227,8 +243,12 @@ def main() -> None:
         "browser_seccomp_profile: Path",
         "browser_runtime_timeout_seconds: int",
         '"RDC_SANDBOX_CANARY_BROWSER_ENABLED"',
+        "RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS must be between 1 and 30.",
     ]:
-        require(marker in worker_config, "worker browser config missing: " + marker)
+        require(
+            marker in worker_config,
+            "worker browser config missing: " + marker,
+        )
 
     browser_policy_source = read("workers/sandbox-runtime/browser_policy.py")
     for marker in [
@@ -357,6 +377,25 @@ def main() -> None:
         '"external_navigation": False',
     ]:
         require(marker in browser_executor, "browser executor guard missing: " + marker)
+    for hardening_marker in [
+        "def _cleanup_browser_container(",
+        '"rm"',
+        '"-f"',
+        "finally:",
+        "_cleanup_browser_container(config, name)",
+        "stdout=subprocess.PIPE",
+        "stderr=subprocess.DEVNULL",
+        "Browser runtime timeout is outside the safe range.",
+    ]:
+        require(
+            hardening_marker in browser_executor,
+            "browser runtime hardening missing: " + hardening_marker,
+        )
+    require(
+        "stderr=subprocess.STDOUT" not in browser_executor,
+        "browser stderr is still merged into the JSON result channel",
+    )
+
     for forbidden in [
         "--privileged",
         '"host"',
@@ -389,17 +428,39 @@ def main() -> None:
             + browser_namespace_call,
         )
 
+    phase1l_readme = read("docs/phase1l/README.md")
     runbook = read("docs/phase1l/RUNBOOK.md")
+    changelog = read("CHANGELOG.md")
+
+    for stale in [
+        "BROWSER_RUNTIME_NOT_WIRED",
+        "does **not** install or execute Playwright/Chromium",
+        "not imported or launched by",
+    ]:
+        require(
+            stale not in phase1l_readme,
+            "Phase 1L README contains stale pre-bridge state: " + stale,
+        )
     require(
-        "Do not enable browser execution during the Phase 1L foundation." in runbook,
-        "runbook no longer preserves disabled browser foundation",
+        "BROWSER_RUNTIME_NOT_WIRED" not in runbook,
+        "Phase 1L runbook contains stale pre-bridge state",
     )
+    for marker in [
+        "force-cleaned after every launch attempt",
+        "Browser stderr is not merged",
+        "Phase 1M owns controlled navigation",
+        "General untrusted browser execution remains release-blocked.",
+    ]:
+        require(
+            marker in runbook,
+            "Phase 1L final runbook guard missing: " + marker,
+        )
     require(
-        "General untrusted browser execution remains release-blocked." in runbook,
-        "browser release boundary is missing",
+        "## 0.12.0-phase1l — 2026-08-08" in changelog,
+        "Phase 1L changelog entry is missing",
     )
 
-    print("Phase 1L foundation verification: PASS")
+    print("Phase 1L final verification: PASS")
     print("  browser gate default FALSE: PASS")
     print("  rdc.browser/v1 snapshot contract: PASS")
     print("  deterministic browser policy digest: PASS")
@@ -410,6 +471,9 @@ def main() -> None:
     print("  controlled-browser activation receipt: PASS")
     print("  worker independent browser-policy verification: PASS")
     print("  isolated about:blank browser-runtime bridge: PASS")
+    print("  runtime timeout + forced container cleanup: PASS")
+    print("  browser stdout/stderr isolation: PASS")
+    print("  API foundation status Phase 1L: PASS")
     print("  browser runtime public navigation wiring: NOT IMPLEMENTED")
     print("  general untrusted browser execution: BLOCKED")
 
