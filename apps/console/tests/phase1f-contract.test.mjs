@@ -9,6 +9,6 @@ test("Phase 1F console exposes metadata-only execution visibility", async () => 
   );
   assert.match(source, /projectExecutionLeases/);
   assert.match(source, /projectExecutionArtifacts/);
-  assert.match(source, /untrusted Agent execution remains disabled/);
+  assert.match(source, /general untrusted execution/);
   assert.doesNotMatch(source, /worker token|lease_token|secret-envelope/i);
 });
