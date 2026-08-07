@@ -16,6 +16,13 @@ class EgressPolicyError(RuntimeError):
 Resolver = Callable[..., list[tuple[object, ...]]]
 
 
+@dataclass(frozen=True)
+class ValidatedTarget:
+    url: str
+    hostname: str
+    addresses: tuple[str, ...]
+
+
 def normalize_hostname(value: str) -> str:
     candidate = value.strip().rstrip(".").casefold()
     if not candidate:
@@ -43,9 +50,13 @@ def normalize_hostname(value: str) -> str:
         if not label or len(label) > 63:
             raise EgressPolicyError("Egress hostname contains an invalid label.")
         if label[0] == "-" or label[-1] == "-":
-            raise EgressPolicyError("Egress hostname label cannot start or end with '-'.")
+            raise EgressPolicyError(
+                "Egress hostname label cannot start or end with '-'."
+            )
         if not all(character.isalnum() or character == "-" for character in label):
-            raise EgressPolicyError("Egress hostname contains unsupported characters.")
+            raise EgressPolicyError(
+                "Egress hostname contains unsupported characters."
+            )
     return normalized
 
 
@@ -53,7 +64,9 @@ def _require_global_address(value: str) -> None:
     try:
         address = ipaddress.ip_address(value)
     except ValueError as exc:
-        raise EgressPolicyError("DNS resolver returned an invalid IP address.") from exc
+        raise EgressPolicyError(
+            "DNS resolver returned an invalid IP address."
+        ) from exc
     if not address.is_global:
         raise EgressPolicyError(
             "Egress destination resolved to a non-global network address."
@@ -74,6 +87,7 @@ def resolve_public_addresses(
         )
     except OSError as exc:
         raise EgressPolicyError("Egress hostname DNS resolution failed.") from exc
+
     addresses: list[str] = []
     for record in records:
         if len(record) < 5:
@@ -84,8 +98,11 @@ def resolve_public_addresses(
         address = str(sockaddr[0])
         _require_global_address(address)
         addresses.append(address)
+
     if not addresses:
-        raise EgressPolicyError("Egress hostname resolved to no usable addresses.")
+        raise EgressPolicyError(
+            "Egress hostname resolved to no usable addresses."
+        )
     return tuple(sorted(set(addresses)))
 
 
@@ -119,7 +136,9 @@ class EgressPolicy:
         if len(normalized) > 32:
             raise EgressPolicyError("Egress allowlist cannot exceed 32 hosts.")
         if not 1 <= max_requests <= 32:
-            raise EgressPolicyError("Egress request budget is outside the safe range.")
+            raise EgressPolicyError(
+                "Egress request budget is outside the safe range."
+            )
         if not 1_024 <= max_response_bytes <= 8_388_608:
             raise EgressPolicyError(
                 "Per-response egress byte limit is outside the safe range."
@@ -167,10 +186,63 @@ class EgressPolicy:
     def digest(self) -> str:
         encoded = json.dumps(
             self.as_dict(),
+            ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+    def validate_target(
+        self,
+        url: str,
+        *,
+        resolver: Resolver = socket.getaddrinfo,
+    ) -> ValidatedTarget:
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            raise EgressPolicyError("Egress URL is invalid.") from exc
+
+        if parsed.scheme.casefold() != "https":
+            raise EgressPolicyError("Phase 1J permits HTTPS URLs only.")
+        if parsed.username is not None or parsed.password is not None:
+            raise EgressPolicyError(
+                "Credentials in egress URLs are not allowed."
+            )
+        if not parsed.hostname:
+            raise EgressPolicyError("Egress URL is missing a hostname.")
+
+        host = normalize_hostname(parsed.hostname)
+        if host not in self.allowed_hosts:
+            raise EgressPolicyError(
+                "Egress hostname is not operator-allowlisted."
+            )
+
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise EgressPolicyError(
+                "Egress URL contains an invalid port."
+            ) from exc
+        if port not in (None, 443):
+            raise EgressPolicyError("Phase 1J permits HTTPS port 443 only.")
+
+        addresses = resolve_public_addresses(host, resolver=resolver)
+        netloc = host if port is None else f"{host}:{port}"
+        normalized = urlunsplit(
+            SplitResult(
+                scheme="https",
+                netloc=netloc,
+                path=parsed.path or "/",
+                query=parsed.query,
+                fragment="",
+            )
+        )
+        return ValidatedTarget(
+            url=normalized,
+            hostname=host,
+            addresses=addresses,
+        )
 
     def validate_url(
         self,
@@ -178,37 +250,7 @@ class EgressPolicy:
         *,
         resolver: Resolver = socket.getaddrinfo,
     ) -> str:
-        try:
-            parsed = urlsplit(url)
-        except ValueError as exc:
-            raise EgressPolicyError("Egress URL is invalid.") from exc
-        if parsed.scheme.casefold() != "https":
-            raise EgressPolicyError("Phase 1J permits HTTPS URLs only.")
-        if parsed.username is not None or parsed.password is not None:
-            raise EgressPolicyError("Credentials in egress URLs are not allowed.")
-        if not parsed.hostname:
-            raise EgressPolicyError("Egress URL is missing a hostname.")
-        host = normalize_hostname(parsed.hostname)
-        if host not in self.allowed_hosts:
-            raise EgressPolicyError("Egress hostname is not operator-allowlisted.")
-        try:
-            port = parsed.port
-        except ValueError as exc:
-            raise EgressPolicyError("Egress URL contains an invalid port.") from exc
-        if port not in (None, 443):
-            raise EgressPolicyError("Phase 1J permits HTTPS port 443 only.")
-        resolve_public_addresses(host, resolver=resolver)
-
-        netloc = host if port is None else f"{host}:{port}"
-        path = parsed.path or "/"
-        normalized = SplitResult(
-            scheme="https",
-            netloc=netloc,
-            path=path,
-            query=parsed.query,
-            fragment="",
-        )
-        return urlunsplit(normalized)
+        return self.validate_target(url, resolver=resolver).url
 
     def validate_redirect(
         self,
@@ -216,4 +258,4 @@ class EgressPolicy:
         *,
         resolver: Resolver = socket.getaddrinfo,
     ) -> str:
-        return self.validate_url(url, resolver=resolver)
+        return self.validate_target(url, resolver=resolver).url
