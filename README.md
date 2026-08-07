@@ -1,20 +1,32 @@
-# Rooz Data Cloud — Phase 1H
+# Rooz Data Cloud — Phase 1I
 
-Phase 1H adds a separately isolated, attested sandbox worker for controlled Build and Run execution. The API remains a control plane and never receives BuildKit/containerd sockets.
+Phase 1I adds controlled sandbox activation for exactly one configured
+immutable AgentVersion and one exact single-concurrency sandbox worker.
 
 ## Included
 
-- Strict `rdc.sandbox/v1` worker attestation and execution gating
-- Rootless BuildKit and rootless containerd/nerdctl worker implementation
-- No host Docker socket, no privileged containers, no control-plane credentials
-- Non-root runtime, dropped capabilities, no-new-privileges, read-only root filesystem
-- Seccomp/AppArmor policy, cgroup/time/output limits, disposable workspaces
-- Phase 1H `deny-all` networking; web egress and browser Agents remain blocked
-- Short-lived worker artifact upload/download grants with server-side SHA-256 verification
-- OCI image scanning, SBOM and provenance generation
-- Build/Run cancellation and cleanup paths
-- Migration, protocol schemas, tests, documentation, and CI verification
+- Global sandbox execution master switch remains disabled by default
+- Separate activation mode defaults to `disabled`
+- `canary` mode requires one exact AgentVersion UUID and one exact worker name
+- Canary worker must use `max_concurrency=1`
+- Canary Agent must have no secrets, network, browser, dataset, key-value
+  store, or request-queue capability
+- Canary-specific resource ceilings are narrower than the Phase 1H sandbox
+- Claim payloads include a digest-bound activation receipt
+- Sandbox worker independently validates the activation receipt
+- Build artifact provenance binds activation, AgentVersion, and source SHA-256
+- Run artifact provenance binds activation, Run ID, and image digest
+- API rejects provenance that does not match the immutable lease snapshot
+- Deterministic offline `examples/canary-agent` fixture and runbook
+- General untrusted Agent execution remains release-blocked
 
 ## Safe default
 
-`RDC_SANDBOX_EXECUTION_ENABLED=false` remains the default. Only explicitly attested workers can receive `execution_enabled: true` after an operator enables the Phase 1H gate. General untrusted Agent execution remains disabled.
+```text
+RDC_SANDBOX_EXECUTION_ENABLED=false
+RDC_SANDBOX_ACTIVATION_MODE=disabled
+```
+
+Turning on the master switch alone is insufficient. Phase 1I requires the
+exact canary version and exact worker configuration before any execution claim
+can become enabled.
