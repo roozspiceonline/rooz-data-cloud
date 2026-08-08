@@ -1,3 +1,4 @@
+from contextlib import suppress
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -506,10 +507,8 @@ async def mutate_key_value_record(
         return KeyValueMutationOutcome(receipt=receipt, replayed=False)
     except Exception:
         if uploaded_key is not None:
-            try:
+            with suppress(StorageBackendError):
                 await object_storage.delete_object(object_key=uploaded_key)
-            except StorageBackendError:
-                pass
         raise
 
 
