@@ -204,6 +204,76 @@ def main() -> None:
         "browser gateway schema version changed",
     )
 
+    gateway_transport_module = load_module(
+        "workers/sandbox-runtime/browser_gateway_transport.py",
+        "rdc_phase1m_browser_gateway_transport",
+    )
+    transport_digest = "a" * 64
+    valid_ping = {
+        "schema_version": "rdc.browser-gateway-ping/v1",
+        "nonce": "b" * 32,
+        "gateway_policy_digest": transport_digest,
+    }
+    pong = gateway_transport_module.validate_gateway_ping(
+        valid_ping,
+        gateway_policy_digest=transport_digest,
+    )
+    require(
+        pong["transport"] == "unix"
+        and pong["external_request"] is False
+        and pong["live_forwarding"] is False,
+        "browser gateway Unix handshake contract changed",
+    )
+    for invalid_ping in [
+        {**valid_ping, "gateway_policy_digest": "c" * 64},
+        {**valid_ping, "nonce": "not-a-safe-nonce"},
+        {**valid_ping, "unknown": True},
+    ]:
+        try:
+            gateway_transport_module.validate_gateway_ping(
+                invalid_ping,
+                gateway_policy_digest=transport_digest,
+            )
+        except gateway_transport_module.BrowserGatewayTransportError:
+            pass
+        else:
+            raise SystemExit(
+                "Phase 1M verification failed: "
+                "unsafe gateway Unix handshake was accepted"
+            )
+
+    transport_schema = json.loads(
+        read(
+            "packages/agent-protocol/schemas/"
+            "browser-gateway-transport-self-test.schema.json"
+        )
+    )
+    require(
+        transport_schema.get("additionalProperties") is False,
+        "browser gateway transport schema is not strict",
+    )
+    require(
+        transport_schema["properties"]["schema_version"]["const"]
+        == "rdc.browser-gateway-transport-self-test/v1",
+        "browser gateway transport schema version changed",
+    )
+
+    gateway_transport_source = read(
+        "workers/sandbox-runtime/browser_gateway_transport.py"
+    )
+    for forbidden in [
+        "AF_INET",
+        "getaddrinfo",
+        "http.client",
+        "urllib.request",
+        "ssl.",
+    ]:
+        require(
+            forbidden not in gateway_transport_source,
+            "gateway transport self-test gained live network surface: "
+            + forbidden,
+        )
+
     policy = policy_module.BrowserPolicy.create(
         enabled=True,
         allowed_hosts=("example.com", "www.example.com"),
@@ -413,6 +483,56 @@ def main() -> None:
         "browser executor no longer self-test only",
     )
 
+    for marker in [
+        "socket.AF_UNIX",
+        '"/rdc-ipc/gateway.sock"',
+        '"rdc.browser-gateway-ping/v1"',
+        '"rdc.browser-gateway-transport-self-test/v1"',
+        '"browser_network": "none"',
+    ]:
+        require(
+            marker in runtime,
+            "browser runtime Unix transport guard missing: " + marker,
+        )
+    require(
+        "--url" not in runtime,
+        "browser runtime gained a direct public URL argument",
+    )
+
+    for marker in [
+        "run_browser_transport_self_test",
+        '"--transport-self-test"',
+        '":/rdc-ipc:ro"',
+        '"/rdc-ipc/gateway.sock"',
+        '"--gateway-policy-digest"',
+    ]:
+        require(
+            marker in executor,
+            "browser executor Unix transport guard missing: " + marker,
+        )
+    for forbidden in [
+        '"--network",\n        "host"',
+        '"--publish"',
+        "containerd.sock:/",
+        "docker.sock:/",
+    ]:
+        require(
+            forbidden not in executor,
+            "browser executor gained forbidden network/socket surface: "
+            + forbidden,
+        )
+
+    for marker in [
+        '"rdc.browser-gateway-transport-self-test/v1"',
+        '"browser_gateway_transport_mode": "unix-domain-socket"',
+        '"browser_gateway_transport_self_test_available": True',
+        '"browser_gateway_live_forwarding_enabled": False',
+    ]:
+        require(
+            marker in main_source,
+            "API Unix gateway transport guard missing: " + marker,
+        )
+
     run_schemas = read("apps/api/app/run_schemas.py")
     require(
         'Literal["rdc.browser/v1"]' in run_schemas,
@@ -501,6 +621,10 @@ def main() -> None:
     ]:
         require(marker in docs, "Phase 1M docs missing: " + marker)
 
+    print("  Unix browser->gateway transport self-test: PASS")
+    print("  Chromium network: NONE")
+    print("  gateway external request: FALSE")
+    print("  gateway live forwarding: FALSE")
     print("Phase 1M receipt-only Run intent verification: PASS")
     print("  rdc.browser/v1 compatibility: PASS")
     print("  rdc.browser/v2 strict protocol: PASS")
