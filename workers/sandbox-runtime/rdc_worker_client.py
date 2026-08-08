@@ -232,6 +232,38 @@ class RdcWorkerClient:
             raise WorkerProtocolError("Dataset-append response was empty.")
         return response
 
+    def kv_read(
+        self,
+        lease_id: str,
+        lease_token: str,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/kv-read",
+            payload,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("KV-read response was empty.")
+        return response
+
+    def kv_mutate(
+        self,
+        lease_id: str,
+        lease_token: str,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/kv-mutate",
+            payload,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("KV-mutate response was empty.")
+        return response
+
     def complete(
         self,
         lease_id: str,

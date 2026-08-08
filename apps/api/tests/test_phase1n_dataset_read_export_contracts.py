@@ -85,12 +85,9 @@ def test_phase1n_dataset_service_enforces_export_bounds_and_audit() -> None:
         assert marker in source
 
 
-def test_phase1n_final_foundation_status_is_explicit_and_fail_closed() -> None:
+def test_phase1n_dataset_status_remains_explicit_and_fail_closed() -> None:
     source = __import__("pathlib").Path("app/main.py").read_text(encoding="utf-8")
     for marker in [
-        'version="0.14.0-phase1n"',
-        '"phase": "1N"',
-        '"status": "tenant-dataset-durable-results"',
         '"dataset_item_read_enabled": True',
         '"dataset_bounded_export_enabled": True',
         '"dataset_public_export_enabled": False',

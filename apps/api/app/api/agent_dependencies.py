@@ -15,6 +15,7 @@ from ..models import (
     AgentVersion,
     Build,
     Dataset,
+    KeyValueStore,
     OrganizationMembership,
     Project,
     ProjectSecret,
@@ -67,6 +68,12 @@ class DatasetAccess:
 
 
 @dataclass(frozen=True)
+class KeyValueStoreAccess:
+    context: AuthContext
+    store: KeyValueStore
+
+
+@dataclass(frozen=True)
 class StorageObjectAccess:
     context: AuthContext
     storage_object: StorageObject
@@ -86,6 +93,7 @@ async def _resolved_organization_id(
         "rdc_build_org",
         "rdc_run_org",
         "rdc_dataset_org",
+        "rdc_key_value_store_org",
         "rdc_storage_object_org",
     }
     if function_name not in allowed:
@@ -408,6 +416,42 @@ def require_dataset_permission(
                 message="The requested resource was not found.",
             )
         return DatasetAccess(context=context, dataset=record)
+
+    return dependency
+
+
+def require_key_value_store_permission(
+    permission: str,
+) -> Callable[..., Awaitable[KeyValueStoreAccess]]:
+    async def dependency(
+        store_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> KeyValueStoreAccess:
+        organization_id = await _resolved_organization_id(
+            db,
+            function_name="rdc_key_value_store_org",
+            resource_id=store_id,
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(KeyValueStore).where(
+                KeyValueStore.id == store_id,
+                KeyValueStore.organization_id == organization_id,
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return KeyValueStoreAccess(context=context, store=record)
 
     return dependency
 

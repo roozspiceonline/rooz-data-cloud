@@ -27,6 +27,12 @@ from config import SandboxWorkerConfig
 from egress_broker import broker_web_requests
 from dataset_protocol import DatasetProtocolError, validate_dataset_append
 from egress_policy import EgressPolicy, EgressPolicyError
+from kv_worker_protocol import (
+    KVWorkerBoundaryError,
+    validate_kv_read_request,
+    validate_kv_read_result,
+    validate_kv_worker_output,
+)
 from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
 from policy import SandboxPolicyError, verify_host
 from rdc_worker_client import (
@@ -188,6 +194,7 @@ def _require_canary_activation(
     browser_policy: BrowserPolicy | None,
     browser_live_navigation_enabled: bool,
     dataset_writes_enabled: bool,
+    key_value_store_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -245,12 +252,25 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Agent Dataset capability is invalid."
         )
-    if (
-        capabilities.get("keyValueStore") is not False
-        or capabilities.get("requestQueue") is not False
-    ):
+    key_value_store = capabilities.get("keyValueStore")
+    if not isinstance(key_value_store, bool):
         raise SandboxPolicyError(
-            "Canary Agent requested an unsupported storage capability."
+            "Canary Agent Key-Value Store capability is invalid."
+        )
+    if capabilities.get("requestQueue") is not False:
+        raise SandboxPolicyError(
+            "Canary Agent requested an unsupported Request Queue capability."
+        )
+    kv_runtime_enabled = (
+        key_value_store and payload.get("work_kind") == "RUN_START"
+    )
+    if dataset and kv_runtime_enabled:
+        raise SandboxPolicyError(
+            "Canary Dataset and Key-Value Store cannot be combined."
+        )
+    if browser and kv_runtime_enabled:
+        raise SandboxPolicyError(
+            "Canary browser and Key-Value Store cannot be combined."
         )
     if activation.get("dataset_write_enabled") is not dataset:
         raise SandboxPolicyError(
@@ -288,6 +308,59 @@ def _require_canary_activation(
     elif payload.get("dataset_append_capability") is not None:
         raise SandboxPolicyError(
             "Dataset-disabled Run cannot carry a Dataset capability."
+        )
+
+    if activation.get("key_value_store_enabled") is not kv_runtime_enabled:
+        raise SandboxPolicyError(
+            "Canary Key-Value Store activation does not match manifest."
+        )
+    if kv_runtime_enabled:
+        if not key_value_store_enabled:
+            raise SandboxPolicyError(
+                "Worker Key-Value Store gate is disabled."
+            )
+        input_reference = payload.get("input_reference")
+        if not isinstance(input_reference, dict):
+            raise SandboxPolicyError("KV Run lacks input reference.")
+        input_value = input_reference.get("value")
+        if not isinstance(input_value, dict) or "_rdc_kv" in input_value:
+            raise SandboxPolicyError("KV Run input is invalid.")
+        read_request = input_value.get("_rdc_kv_read")
+        read_digest = None
+        if read_request is not None:
+            try:
+                read_value = validate_kv_read_request(read_request)
+                read_digest = str(read_value["request_digest"])
+            except KVWorkerBoundaryError as exc:
+                raise SandboxPolicyError(
+                    "KV read request is invalid."
+                ) from exc
+        expected_kv_capability = {
+            "schema_version": "rdc.kv-worker-capability/v1",
+            "write_schema_version": "rdc.kv-write/v1",
+            "read_schema_version": "rdc.kv-worker-read/v1",
+            "output_schema_version": "rdc.kv-worker-output/v1",
+            "run_id": str(payload.get("run_id", "")),
+            "agent_version_id": str(payload.get("agent_version_id", "")),
+            "worker_name": worker_name,
+            "store_name": "default",
+            "read_request_digest": read_digest,
+            "max_read_keys": 16,
+            "max_read_total_bytes": 262_144,
+            "max_mutations": 4,
+            "max_value_bytes": 1_048_576,
+            "post_run_mutations_only": True,
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+            "enabled": True,
+        }
+        if payload.get("key_value_store_capability") != expected_kv_capability:
+            raise SandboxPolicyError(
+                "Canary Key-Value Store capability receipt is invalid."
+            )
+    elif payload.get("key_value_store_capability") is not None:
+        raise SandboxPolicyError(
+            "KV-disabled work cannot carry a Key-Value Store capability."
         )
 
     profile = activation.get("capability_profile")
@@ -468,6 +541,7 @@ def _build(
                 config.browser_live_navigation_enabled
             ),
             dataset_writes_enabled=config.dataset_writes_enabled,
+            key_value_store_enabled=config.key_value_store_enabled,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -561,6 +635,7 @@ def _run(
                 config.browser_live_navigation_enabled
             ),
             dataset_writes_enabled=config.dataset_writes_enabled,
+            key_value_store_enabled=config.key_value_store_enabled,
         )
         if activation.get("capability_profile") == "controlled-browser":
             input_reference = payload.get("input_reference")
@@ -692,6 +767,44 @@ def _run(
         input_value = dict(input_ref.get("value") or {})
         web_fetch = input_ref.get("web_fetch")
         profile = activation.get("capability_profile")
+        kv_enabled = activation.get("key_value_store_enabled") is True
+
+        if kv_enabled:
+            try:
+                if "_rdc_kv" in input_value:
+                    raise KVWorkerBoundaryError(
+                        "Run input cannot populate reserved _rdc_kv."
+                    )
+                read_request = input_value.pop("_rdc_kv_read", None)
+                if read_request is not None:
+                    validated_read = validate_kv_read_request(read_request)
+                    request_value = validated_read["request"]
+                    expected_keys = validated_read["keys"]
+                    if not isinstance(request_value, dict):
+                        raise KVWorkerBoundaryError("KV read request is invalid.")
+                    if not isinstance(expected_keys, tuple):
+                        raise KVWorkerBoundaryError("KV read keys are invalid.")
+                    read_response = _data(
+                        client.kv_read(lease_id, token, request_value)
+                    )
+                    input_value["_rdc_kv"] = validate_kv_read_result(
+                        read_response,
+                        expected_keys=expected_keys,
+                    )
+            except (KVWorkerBoundaryError, WorkerProtocolError):
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "KV_READ_FAILED",
+                        "error_summary": (
+                            "Controlled Key-Value Store read failed closed."
+                        ),
+                    },
+                )
+                return
 
         if web_fetch is not None and profile != "brokered-web-egress":
             raise SandboxPolicyError(
@@ -784,6 +897,57 @@ def _run(
             workspace=workspace,
             policy=dict(payload["sandbox"]),
         )
+
+        if kv_enabled and code == 0:
+            try:
+                if not output_path.is_file():
+                    raise KVWorkerBoundaryError(
+                        "KV-enabled Run did not produce output."
+                    )
+                if output_path.stat().st_size > 1_572_864:
+                    raise KVWorkerBoundaryError(
+                        "KV worker output exceeds the read limit."
+                    )
+                decoded_kv = json.loads(
+                    output_path.read_text(encoding="utf-8")
+                )
+                normalized_kv = validate_kv_worker_output(decoded_kv)
+                mutations = normalized_kv["mutations"]
+                if not isinstance(mutations, list):
+                    raise KVWorkerBoundaryError("KV mutations are invalid.")
+                for mutation in mutations:
+                    if not isinstance(mutation, dict):
+                        raise KVWorkerBoundaryError("KV mutation is invalid.")
+                    client.kv_mutate(lease_id, token, mutation)
+                result_bytes = json.dumps(
+                    normalized_kv["result"],
+                    ensure_ascii=False,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                output_path.write_bytes(result_bytes)
+            except (
+                KVWorkerBoundaryError,
+                WorkerProtocolError,
+                json.JSONDecodeError,
+                OSError,
+                UnicodeError,
+                TypeError,
+                ValueError,
+            ):
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "KV_MUTATION_FAILED",
+                        "error_summary": (
+                            "Controlled Key-Value Store mutation failed closed."
+                        ),
+                    },
+                )
+                return
 
         dataset_enabled = (
             isinstance(manifest.get("capabilities"), dict)

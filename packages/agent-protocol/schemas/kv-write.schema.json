@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kv-write.schema.json",
+  "title": "RDC Key-Value Write v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "idempotency_key", "operation", "key", "expected_version", "content_type", "encoding", "value"],
+      "properties": {
+        "schema_version": {"const": "rdc.kv-write/v1"},
+        "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "operation": {"const": "set"},
+        "key": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "expected_version": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 9223372036854775807}, {"type": "null"}]},
+        "content_type": {"enum": ["application/json", "text/plain; charset=utf-8", "application/octet-stream"]},
+        "encoding": {"enum": ["json", "utf8", "base64"]},
+        "value": {}
+      },
+      "allOf": [
+        {"if": {"properties": {"content_type": {"const": "application/json"}}}, "then": {"properties": {"encoding": {"const": "json"}}}},
+        {"if": {"properties": {"content_type": {"const": "text/plain; charset=utf-8"}}}, "then": {"properties": {"encoding": {"const": "utf8"}, "value": {"type": "string"}}}},
+        {"if": {"properties": {"content_type": {"const": "application/octet-stream"}}}, "then": {"properties": {"encoding": {"const": "base64"}, "value": {"type": "string"}}}}
+      ]
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "idempotency_key", "operation", "key", "expected_version"],
+      "properties": {
+        "schema_version": {"const": "rdc.kv-write/v1"},
+        "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
+        "operation": {"const": "delete"},
+        "key": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"},
+        "expected_version": {"anyOf": [{"type": "integer", "minimum": 0, "maximum": 9223372036854775807}, {"type": "null"}]}
+      }
+    }
+  ]
+}

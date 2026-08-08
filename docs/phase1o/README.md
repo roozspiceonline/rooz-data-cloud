@@ -1,0 +1,168 @@
+# Phase 1O — Tenant-scoped Key-Value Store
+
+Phase 1O adds bounded, versioned mutable state after the Phase 1N Dataset primitive.
+
+## Increment 1 — protocol foundation
+
+Contract: `rdc.kv-write/v1`
+
+Allowed operations: `set`, `delete`.
+
+Allowed set encodings:
+
+```text
+application/json              + json
+text/plain; charset=utf-8     + utf8
+application/octet-stream      + base64
+```
+
+Limits:
+
+```text
+logical key        1..256 safe ASCII characters
+idempotency key    1..128 safe characters
+decoded value      <= 1,048,576 bytes
+encoded envelope   <= 1,572,864 bytes
+JSON depth         <= 32
+expected_version   null or 0..9223372036854775807
+```
+
+Logical keys are identifiers only and are never trusted as filesystem paths or object-storage keys. The validator computes canonical mutation and decoded-value SHA-256 lineage.
+
+## Increment 1 capability boundary
+
+```text
+KV protocol available                 yes
+KV persistence                        disabled
+KV public API                         disabled
+KV worker writes                      disabled
+KV object-storage writes              disabled
+Agent direct PostgreSQL               prohibited
+Agent direct object-storage creds     prohibited
+Chromium direct PostgreSQL            prohibited
+Request Queue                         out of scope / Phase 1P
+```
+
+The API continues to advertise Phase 1N until durable KV persistence and the rest of Phase 1O are complete.
+
+## Increment 2 — metadata persistence + RLS
+
+Increment 2 enables KeyValueStore **metadata only**.
+
+Two store scopes are supported:
+
+```text
+PROJECT  reusable across Runs inside one Project
+RUN      bound to one exact Run/Agent/AgentVersion lineage
+```
+
+Ownership IDs are never accepted in the request body.
+
+Database controls include `control.key_value_stores`, PostgreSQL RLS,
+`security.rdc_key_value_store_org(uuid)`, project/run lineage checks, immutable
+store identity fields, scope-specific unique names and `kv_store.created` audit
+events.
+
+Record mutation remains disabled:
+
+```text
+KV record persistence                 disabled
+KV object-storage writes              disabled
+KV worker writes                      disabled
+KV set/delete API                     absent
+```
+
+## Increment 3 — versioned records + object-backed values
+
+Increment 3 enables authenticated control-plane record mutation after RLS and
+store metadata are already present.
+
+Current capability boundary:
+
+```text
+KV metadata persistence               enabled
+KV record persistence                 enabled
+Control-plane SET                     enabled / kv.write
+Control-plane DELETE                  enabled / kv.delete
+Optimistic expected_version           enabled
+Idempotent mutation receipts          enabled
+Immutable version history             enabled
+DELETE tombstone versions             enabled
+Server-generated object keys          enabled
+Object-backed JSON/text/binary        enabled
+Live record quota                     10,000 per store
+Live byte quota                       268,435,456 per store
+Worker KV mutation                    disabled
+Worker KV RLS                         disabled
+Agent direct PostgreSQL               prohibited
+Agent direct object-storage creds     prohibited
+Chromium direct PostgreSQL            prohibited
+General untrusted Agent execution     release-blocked
+```
+
+`expected_version=0` is create-if-absent. Positive expected versions must match
+the exact current record version. A stale conditional writer fails closed.
+
+Each successful mutation creates an immutable record-version row and an
+idempotency receipt. Reusing the same idempotency key with the same canonical
+request digest replays the original receipt; reusing it with a different digest
+is a conflict.
+
+SET values are written by the trusted control plane to server-generated S3
+object keys derived only from server-owned UUID lineage. The logical KV key is
+never used as an object path. DELETE appends a tombstone version and preserves
+historical object-backed versions.
+
+Increment 4 remains responsible for the controlled worker KV path.
+## Increment 4 — controlled worker KV path
+
+Increment 4 enables a lease-scoped trusted-worker mediation path behind
+the independent `RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED=false` gate.
+
+```text
+Worker KV canary gate                 false by default
+Worker capability                     KV_ACCESS required
+Lease                                 ACTIVE + unexpired + RUN_START
+Store                                 RUN-scoped "default" only
+Pre-run reads                         <= 16 keys / <= 256 KiB total
+Post-run mutations                    <= 4 / rdc.kv-write/v1
+Dataset + KV in one canary Run        prohibited
+Controlled browser + KV               prohibited
+Agent direct PostgreSQL               prohibited
+Agent direct object-storage creds     prohibited
+Worker/lease token in Agent           prohibited
+Public KV reads/listing               deferred to Increment 5
+General untrusted Agent execution     release-blocked
+```
+
+A Run may reserve `_rdc_kv_read` in its immutable inline input. The
+trusted worker validates that intent, removes it before Agent execution,
+and injects only bounded `_rdc_kv` values. PostgreSQL credentials, S3
+credentials, object keys, worker tokens and lease tokens are never
+injected into the Agent.
+
+A KV-enabled Agent returns `rdc.kv-worker-output/v1`. After a successful
+Agent exit, the worker validates the envelope and forwards at most four
+canonical mutations through the hidden lease-scoped control-plane API.
+Each mutation reuses Increment 3 optimistic concurrency, idempotency,
+quota, immutable-history and server-generated object-key controls.
+Multi-mutation output is sequential and intentionally not exposed as a
+multi-record transaction.
+
+## Increment 5 — authenticated reads, listing and phase integration
+
+Current values can be read only through authenticated `kv.read` store routes.
+`GET /key-value-stores/{store_id}/records/{key}` returns the current live value
+and its version, digest, content type and decoded size. Deleted records are not
+readable through this surface and object-storage keys are never returned.
+
+`GET /key-value-stores/{store_id}/records` lists live records in bounded,
+lexicographic key order. It accepts a restricted-safe `prefix`, a limit of at
+most 200, and a signed cursor bound to that exact store. A cursor from another
+store, tampered cursor, or malformed prefix is rejected. Reads verify persisted
+object size and SHA-256 before decoding JSON, UTF-8 text, or canonical base64.
+
+The foundation status now advertises Phase 1O, versioned KV state, signed KV
+record cursors, RLS, and the false-by-default controlled worker gate. There is
+no anonymous/public KV access and general untrusted Agent execution remains
+release-blocked.

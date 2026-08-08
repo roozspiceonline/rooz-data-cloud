@@ -74,6 +74,7 @@ from .runs import (
     append_run_event,
     sanitize_event_payload,
 )
+from .worker_key_value_store import key_value_store_capability
 
 settings = get_settings()
 
@@ -173,6 +174,7 @@ def _canary_constraints(
     network: str,
     browser: bool = False,
     dataset: bool = False,
+    key_value_store: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -188,7 +190,7 @@ def _canary_constraints(
         ),
         "browser": browser,
         "dataset": dataset,
-        "key_value_store": False,
+        "key_value_store": key_value_store,
         "request_queue": False,
         "secrets": False,
         "max_concurrency": 1,
@@ -249,17 +251,29 @@ def _canary_activation(
     dataset = capabilities.get("dataset")
     if not isinstance(dataset, bool):
         return None
-    if (
-        capabilities.get("keyValueStore") is not False
-        or capabilities.get("requestQueue") is not False
-    ):
+    key_value_store = capabilities.get("keyValueStore")
+    if not isinstance(key_value_store, bool):
+        return None
+    if capabilities.get("requestQueue") is not False:
+        return None
+    work_kind = str(payload.get("work_kind", ""))
+    kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
+    if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
+        return None
+    if work_kind == "RUN_START" and browser and kv_runtime_enabled:
         return None
     if dataset and (
-        str(payload.get("work_kind", "")) != "RUN_START"
+        work_kind != "RUN_START"
         or browser
         or not settings.sandbox_canary_dataset_writes_enabled
         or "DATASET_APPEND" not in worker.capabilities
     ):
+        return None
+    if kv_runtime_enabled and key_value_store_capability(
+        worker,
+        payload,
+        key_value_store_enabled=True,
+    ) is None:
         return None
 
     browser_policy_digest: str | None = None
@@ -324,6 +338,7 @@ def _canary_activation(
         network=network,
         browser=browser,
         dataset=dataset,
+        key_value_store=kv_runtime_enabled,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -349,6 +364,7 @@ def _canary_activation(
         egress_policy_digest=egress_policy_digest,
         browser_policy_digest=browser_policy_digest,
         dataset_write_enabled=dataset,
+        key_value_store_enabled=kv_runtime_enabled,
     )
 
 
@@ -470,17 +486,29 @@ def _sandbox_claim_policy(
     dataset = capabilities.get("dataset")
     if not isinstance(dataset, bool):
         return None
-    if (
-        capabilities.get("keyValueStore") is not False
-        or capabilities.get("requestQueue") is not False
-    ):
+    key_value_store = capabilities.get("keyValueStore")
+    if not isinstance(key_value_store, bool):
+        return None
+    if capabilities.get("requestQueue") is not False:
+        return None
+    work_kind = str(payload.get("work_kind", ""))
+    kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
+    if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
+        return None
+    if work_kind == "RUN_START" and browser and kv_runtime_enabled:
         return None
     if dataset and (
-        str(payload.get("work_kind", "")) != "RUN_START"
+        work_kind != "RUN_START"
         or browser
         or not settings.sandbox_canary_dataset_writes_enabled
         or "DATASET_APPEND" not in worker.capabilities
     ):
+        return None
+    if kv_runtime_enabled and key_value_store_capability(
+        worker,
+        payload,
+        key_value_store_enabled=True,
+    ) is None:
         return None
     if browser:
         if (
@@ -1181,6 +1209,16 @@ async def claim_work(
                 dataset_write_enabled=(
                     activation is not None
                     and activation.dataset_write_enabled
+                ),
+            )
+        )
+        claim_payload["key_value_store_capability"] = (
+            key_value_store_capability(
+                worker,
+                claim_payload,
+                key_value_store_enabled=(
+                    activation is not None
+                    and activation.key_value_store_enabled
                 ),
             )
         )

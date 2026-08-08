@@ -108,6 +108,11 @@ def main() -> None:
             '"phase": "1N"',
             '"status": "tenant-dataset-durable-results"',
         ),
+        (
+            'version="0.15.0-phase1o"',
+            '"phase": "1O"',
+            '"status": "tenant-key-value-store-versioned-state"',
+        ),
     ]
     require(
         any(
