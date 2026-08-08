@@ -2,96 +2,68 @@
 
 Phase 1M builds on the merged Phase 1L controlled-browser foundation.
 
-Phase 1L remains authoritative for `rdc.browser/v1`, controlled-browser
-activation receipts, the immutable browser image boundary and the isolated
+Phase 1L remains authoritative for `rdc.browser/v1` and the isolated
 `about:blank` Chromium self-test.
 
 ## Increment 1 — v2 protocol foundation
 
-`rdc.browser/v2` defines only:
-
-- `goto`
-- `wait_for_selector`
-- `extract_text`
-- `extract_html`
-- viewport-only `screenshot`
+`rdc.browser/v2` permits only bounded `goto`, `wait_for_selector`,
+`extract_text`, `extract_html`, and viewport-only `screenshot`.
 
 ## Increment 2 — receipt-only Run intent
 
-The API accepts `browser_navigation` but stores it as a receipt-only `DRAFT`
-Run. No START outbox is created and control-plane activation remains denied.
-
-The immutable `rdc.browser-navigation-receipt/v1` binds:
-
-- request digest
-- `rdc.browser-policy/v1` digest
-- `rdc.browser-egress-policy/v1` digest
-- `execution_enabled=false`
-- `dispatch_enabled=false`
-- `browser_network=none`
+Browser-navigation Runs remain `DRAFT`, create no START outbox command, and
+cannot receive control-plane v2 activation.
 
 ## Increment 3 — browser-egress gateway policy
 
-`rdc.browser-egress-policy/v1` now defines the security contract that a future
-gateway transport must obey.
+`rdc.browser-egress-policy/v1` defines exact HTTPS allowlists, global DNS,
+validated-address pinning, redirect/subresource revalidation, budgets and
+browser-specific denial surfaces. Its digest is bound into the immutable Run
+receipt.
 
-It reuses the Phase 1J egress limits and allowlist, and requires:
+## Increment 4 — isolated Unix gateway transport
 
-- HTTPS only
-- GET/HEAD only
-- exact operator allowlist
-- IP literals denied
-- global DNS only
-- validated address pinning
-- redirect revalidation
-- subresource revalidation
-- bounded request/resource/total-byte budgets
-- bounded connect/request timeouts
-- authorization/cookie/proxy-authorization request headers stripped
-- Set-Cookie response headers stripped
-- service workers disabled
-- WebSockets disabled
-- WebRTC disabled
-- arbitrary proxy override disabled
-- persistent cookies disabled
+The browser→gateway transport self-test uses a per-Run Unix-domain socket:
 
-Allowed network resource classes are intentionally narrow:
+`/rdc-ipc/gateway.sock`
 
-- document
-- stylesheet
-- script
-- image
-- font
-- xhr
-- fetch
+The browser container still runs with:
 
-Unknown resource classes fail closed.
+`--network none`
 
-## Execution boundary
+Only the private per-Run IPC directory is bind-mounted read-only into the
+browser runtime. No CNI bridge, host network, published port, Docker socket or
+containerd socket is exposed.
 
-Chromium remains offline.
+The runtime sends `rdc.browser-gateway-ping/v1` carrying the exact
+browser-egress policy digest. The worker-side self-test server returns
+`rdc.browser-gateway-pong/v1` only when the digest and bounded nonce are valid.
 
-```text
-Agent container                 browser runtime
---network none                  --network none
-      |                               |
-      +---------- no live URL --------+
-```
+`rdc.browser-gateway-transport-self-test/v1` proves that Chromium remains on
+`about:blank`, browser networking is `none`, the gateway makes no external
+request, and live forwarding is false.
 
-The gateway **transport is not wired**. The policy contract can validate a
-resource or redirect and returns the already-validated global IP addresses that
-a later TLS transport must pin. No Phase 1M code sends browser traffic to those
-addresses yet.
+The self-test transport contains no DNS, HTTP or TLS forwarding code.
+
+## Next boundary
+
+Live navigation will later use Playwright request interception: Chromium's
+network requests will be intercepted and sent over the Unix socket to the
+worker-side RDC gateway. Only that gateway may perform policy-validated,
+address-pinned HTTPS requests.
+
+Chromium itself must remain network-none.
 
 ## Still blocked
 
-- direct Chromium Internet access
-- arbitrary JavaScript / evaluate
-- clicks, typing and forms
+- live gateway forwarding
+- public Chromium navigation
+- arbitrary JavaScript/evaluate
+- clicks/forms/type
 - project secrets
 - uploads/downloads
-- persistent profiles
-- raw CDP / browser server
+- persistent profiles/cookies
+- CDP/browser server
 - arbitrary proxies
-- WebSockets / service workers / WebRTC
-- general untrusted browser execution
+- WebSockets/service workers/WebRTC
