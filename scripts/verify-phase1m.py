@@ -620,30 +620,37 @@ def main() -> None:
     )
 
     root_readme = read("README.md")
-    require(
-        "Phase 1M in progress" in root_readme,
-        "root README does not reflect current program state",
-    )
+    for marker in [
+        "Phase 1M merge candidate",
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false",
+        "Agent containers and Chromium remain `--network none`",
+        "General untrusted browser execution remains release-blocked.",
+    ]:
+        require(
+            marker in root_readme,
+            "root README final-state marker missing: " + marker,
+        )
 
     docs = read("docs/phase1m/README.md")
     for marker in [
         "rdc.browser/v2",
-        "Chromium itself must remain network-none.",
-        "browser-egress gateway",
-        "Phase 1L remains authoritative",
+        "Chromium remains `--network none`",
+        "worker-side RDC gateway",
+        "independent false-by-default gate",
+        "General untrusted browser execution remains release-blocked.",
     ]:
         require(marker in docs, "Phase 1M docs missing: " + marker)
 
 
-    # Increment 5: bounded live forwarding exists, but normal v2 worker wiring
-    # must remain absent until final hardening/activation.
+    # Final Phase 1M: bounded live forwarding is wired only through the
+    # independent exact-canary activation path; Chromium remains network-none.
     gateway_transport_source = read(
         "workers/sandbox-runtime/browser_gateway_transport.py"
     )
     for marker in [
         "BrowserGatewayBroker",
         "BrowserGatewayLiveServer",
-        "_request_once",
+        "broker_validated_resource_once",
         "live_forwarding_enabled",
         "socket.AF_UNIX",
         '"rdc.browser-gateway-request/v1"',
@@ -947,7 +954,7 @@ def main() -> None:
     ]:
         require(
             marker in main_source,
-            "API increment-5 status guard missing: " + marker,
+            "final Phase 1M API status guard missing: " + marker,
         )
 
 
@@ -1006,8 +1013,8 @@ def main() -> None:
     print("  normal v2 live worker wiring: CONTROLLED CANARY ONLY")
     print("  Unix browser->gateway transport self-test: PASS")
     print("  Chromium network: NONE")
-    print("  gateway external request: FALSE")
-    print("  gateway live forwarding: FALSE")
+    print("  gateway external request: EXACT CANARY WORKER ONLY")
+    print("  gateway live forwarding: EXACT LIVE CANARY ONLY")
     print("Phase 1M controlled navigation verification: PASS")
     print("  rdc.browser/v1 compatibility: PASS")
     print("  rdc.browser/v2 strict protocol: PASS")
