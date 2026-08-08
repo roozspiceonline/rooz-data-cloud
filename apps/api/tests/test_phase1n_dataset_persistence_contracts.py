@@ -88,14 +88,16 @@ def test_phase1n_dataset_service_has_no_execution_or_direct_db_surface() -> None
         assert prohibited not in lowered
 
 
-def test_phase1n_increment2_worker_dataset_write_remains_disabled() -> None:
+def test_phase1n_worker_has_no_direct_database_surface() -> None:
     worker = Path(
         "../../workers/sandbox-runtime/worker.py"
-    ).read_text(encoding="utf-8")
+    ).read_text(encoding="utf-8").casefold()
 
     for forbidden in [
-        "append_dataset_items",
-        "create_dataset_item",
-        "dataset_write_enabled",
+        "postgresql://",
+        "postgresql+asyncpg://",
+        "psycopg",
+        "asyncpg.connect",
+        "rdc_database_url",
     ]:
         assert forbidden not in worker

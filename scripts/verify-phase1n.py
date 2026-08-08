@@ -51,21 +51,18 @@ def main() -> None:
         "apps/api/app/dataset_append_protocol.py",
         "rdc_phase1n_api_dataset_protocol",
     )
-
     canonical_request = {
         "schema_version": "rdc.dataset-append/v1",
         "idempotency_key": "run-123:batch-1",
-        "items": [
-            {
-                "url": "https://example.com/",
-                "nested": {"b": 2, "a": 1},
-            }
-        ],
+        "items": [{"nested": {"b": 2, "a": 1}}],
     }
-    worker_result = worker_protocol.validate_dataset_append(canonical_request)
-    api_result = api_protocol.validate_dataset_append(canonical_request)
     require(
-        worker_result.request_digest == api_result.request_digest,
+        worker_protocol.validate_dataset_append(
+            canonical_request
+        ).request_digest
+        == api_protocol.validate_dataset_append(
+            canonical_request
+        ).request_digest,
         "API and worker Dataset protocol digests diverged",
     )
 
@@ -104,152 +101,182 @@ def main() -> None:
             api_failed = True
         require(worker_failed and api_failed, "protocol accepted invalid data")
 
-    migration9 = read(
-        "apps/api/migrations/versions/20260808_0009_datasets.py"
-    )
-    require(
-        'revision: str = "20260808_0009"' in migration9,
-        "Increment 2 migration disappeared",
-    )
+    for path, revision, down in [
+        (
+            "apps/api/migrations/versions/20260808_0009_datasets.py",
+            "20260808_0009",
+            "20260807_0008",
+        ),
+        (
+            "apps/api/migrations/versions/"
+            "20260808_0010_dataset_append_receipts.py",
+            "20260808_0010",
+            "20260808_0009",
+        ),
+        (
+            "apps/api/migrations/versions/"
+            "20260808_0011_dataset_worker_rls.py",
+            "20260808_0011",
+            "20260808_0010",
+        ),
+    ]:
+        migration = read(path)
+        require(
+            f'revision: str = "{revision}"' in migration,
+            path + " revision missing",
+        )
+        require(
+            f'down_revision: str | None = "{down}"' in migration,
+            path + " down revision missing",
+        )
 
     migration10 = read(
         "apps/api/migrations/versions/"
         "20260808_0010_dataset_append_receipts.py"
     )
     for marker in [
-        'revision: str = "20260808_0010"',
-        'down_revision: str | None = "20260808_0009"',
-        "dataset_append_receipts",
         "uq_dataset_append_receipts_dataset_key",
-        "append_receipt_id",
         "ck_datasets_item_quota",
         "ck_datasets_byte_quota",
-        "ck_datasets_sequence_counter",
-        "dataset_append_receipts_tenant",
         "dataset_items_immutable_guard",
         "dataset_append_receipts_immutable_guard",
-        "Dataset item receipt or tenancy mismatch",
     ]:
-        require(marker in migration10, "Increment 3 migration missing: " + marker)
-    for forbidden in [
-        "dataset_append_receipts_worker",
-        "dataset_items_worker",
-    ]:
-        require(
-            forbidden not in migration10,
-            "worker Dataset RLS enabled too early: " + forbidden,
-        )
+        require(marker in migration10, "Increment 3 guard missing: " + marker)
 
-    models = read("apps/api/app/models.py")
+    migration11 = read(
+        "apps/api/migrations/versions/"
+        "20260808_0011_dataset_worker_rls.py"
+    )
     for marker in [
-        "class DatasetAppendReceipt(UUIDPrimaryKeyMixin, Base):",
-        '"uq_dataset_append_receipts_dataset_key"',
-        "append_receipt_id: Mapped[UUID]",
-        '"control.dataset_append_receipts.id"',
+        "datasets_execution_worker_select",
+        "datasets_execution_worker_insert",
+        "datasets_execution_worker_update",
+        "dataset_items_execution_worker_insert",
+        "dataset_append_receipts_execution_worker_select",
+        "dataset_append_receipts_execution_worker_insert",
+        "security.rdc_current_worker_id()",
+        "security.rdc_worker_is_active()",
+        "lease.status = 'ACTIVE'",
+        "lease.expires_at > now()",
+        "lease.work_kind = 'RUN_START'",
     ]:
-        require(marker in models, "Increment 3 model missing: " + marker)
+        require(marker in migration11, "worker RLS guard missing: " + marker)
+    require("FOR DELETE" not in migration11, "worker Dataset DELETE policy added")
 
-    schemas = read("apps/api/app/dataset_schemas.py")
+    config = read("apps/api/app/core/config.py")
+    require(
+        "sandbox_canary_dataset_writes_enabled: bool = False" in config,
+        "API Dataset worker gate does not default false",
+    )
+    env = read(".env.example")
+    require(
+        "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false" in env,
+        "Dataset worker gate missing from env example",
+    )
+    compose = read("docker-compose.yml")
+    require(
+        "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED:"
+        in compose
+        and ":-false}" in compose,
+        "Compose does not preserve Dataset worker gate default false",
+    )
+
+    schemas = read("apps/api/app/execution_schemas.py")
+    require('"DATASET_APPEND"' in schemas, "worker Dataset capability missing")
+    require(
+        "dataset_write_enabled: bool = False" in schemas,
+        "activation Dataset receipt field missing",
+    )
+
+    execution = read("apps/api/app/services/execution_plane.py")
     for marker in [
-        "class DatasetAppendRequest(StrictModel):",
-        'Literal["rdc.dataset-append/v1"]',
-        "class DatasetAppendReceiptSummary(ORMModel):",
-        "class DatasetAppendResult(StrictModel):",
+        "rdc.dataset-worker-capability/v1",
+        "async def append_worker_dataset_items(",
+        '"DATASET_APPEND" not in worker.capabilities',
+        "lease.payload_snapshot",
+        'Dataset.name == "default"',
+        "create_dataset(",
+        "append_dataset_items(",
+        "run.requested_by_user_id",
     ]:
-        require(marker in schemas, "Append API schema missing: " + marker)
-    request_block = schemas.split(
-        "class DatasetAppendRequest", 1
-    )[1].split("class DatasetSummary", 1)[0]
-    for forbidden in [
-        "organization_id",
-        "project_id",
-        "run_id",
-        "agent_id",
-        "agent_version_id",
-    ]:
-        require(
-            forbidden not in request_block,
-            "Append request accepts ownership field: " + forbidden,
-        )
+        require(marker in execution, "worker append control missing: " + marker)
 
-    permissions = read("apps/api/app/core/permissions.py")
-    require('"dataset.write"' in permissions, "dataset.write scope missing")
-
-    routes = read("apps/api/app/api/routes/datasets.py")
+    internal_routes = read("apps/api/app/api/routes/internal_execution.py")
     for marker in [
-        '"/datasets/{dataset_id}/items"',
-        'require_dataset_permission("dataset.write")',
-        'payload.model_dump(mode="python")',
-        "status.HTTP_200_OK",
-        "status.HTTP_201_CREATED",
+        '"/leases/{lease_id}/dataset-append"',
+        "Depends(require_lease_access)",
+        "append_worker_dataset_items",
     ]:
-        require(marker in routes, "Append route missing: " + marker)
+        require(marker in internal_routes, "internal append route missing: " + marker)
 
-    service = read("apps/api/app/services/datasets.py")
-    for marker in [
-        "MAX_DATASET_ITEMS = 100_000",
-        "MAX_DATASET_BYTES = 268_435_456",
-        ".with_for_update()",
-        "DatasetAppendReceipt.idempotency_key",
-        "DATASET_IDEMPOTENCY_CONFLICT",
-        "replayed=True",
-        "append_receipt_id=receipt.id",
-        "locked.item_count += validation.item_count",
-        "locked.total_bytes += item_bytes",
-        "locked.next_sequence += validation.item_count",
-        'action="dataset.items_appended"',
-    ]:
-        require(marker in service, "Append transaction guard missing: " + marker)
-    lowered = service.casefold()
-    for forbidden in [
-        "subprocess",
-        "os.system",
-        "docker.sock",
-        "psycopg",
-        "asyncpg",
-        "socket.",
-    ]:
-        require(
-            forbidden not in lowered,
-            "Dataset service gained forbidden execution/network surface: "
-            + forbidden,
-        )
+    client = read("workers/sandbox-runtime/rdc_worker_client.py")
+    require(
+        'f"/internal/v1/leases/{lease_id}/dataset-append"' in client,
+        "worker client Dataset append method missing",
+    )
+
+    worker_config = read("workers/sandbox-runtime/config.py")
+    require(
+        "dataset_writes_enabled: bool" in worker_config
+        and "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED"
+        in worker_config,
+        "worker Dataset gate missing",
+    )
 
     worker = read("workers/sandbox-runtime/worker.py")
+    for marker in [
+        "config.dataset_writes_enabled",
+        "dataset_append_capability",
+        "validate_dataset_append(dataset_payload)",
+        "client.dataset_append(",
+        "DATASET_APPEND_FAILED",
+    ]:
+        require(marker in worker, "worker Dataset path missing: " + marker)
+    lowered_worker = worker.casefold()
     for forbidden in [
-        "append_dataset_items",
-        "dataset_write_enabled",
-        "dataset_append_receipt",
+        "postgresql://",
+        "postgresql+asyncpg://",
+        "psycopg",
+        "asyncpg.connect",
+        "rdc_database_url",
     ]:
         require(
-            forbidden not in worker,
-            "worker Dataset write activated too early: " + forbidden,
+            forbidden not in lowered_worker,
+            "worker gained direct database path: " + forbidden,
         )
 
-    tests = read(
-        "apps/api/tests/test_phase1n_dataset_append_contracts.py"
+    historical = read(
+        "apps/api/tests/test_phase1n_dataset_persistence_contracts.py"
     )
     require(
-        "test_phase1n_increment3_api_and_worker_protocol_digests_match"
+        "test_phase1n_worker_has_no_direct_database_surface" in historical,
+        "historical worker safety test not evolved",
+    )
+
+    tests = read(
+        "apps/api/tests/test_phase1n_worker_dataset_append_contracts.py"
+    )
+    require(
+        "test_phase1n_increment4_worker_rls_is_active_lease_scoped"
         in tests,
-        "Increment 3 API/worker digest parity test missing",
+        "Increment 4 RLS contract test missing",
     )
 
     for path, markers in {
         "docs/phase1n/README.md": [
-            "Increment 3 — idempotent append + quotas",
-            "Dataset append idempotency        enforced",
-            "worker Dataset writes             disabled",
+            "Increment 4 — controlled worker append path",
+            "worker Dataset append default           disabled",
+            "Agent direct PostgreSQL                 prohibited",
         ],
         "docs/phase1n/RUNBOOK.md": [
-            "control.dataset_append_receipts   present + RLS",
-            "same key + same request digest",
-            "worker Dataset append             absent",
+            "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false",
+            "ACTIVE, unexpired `RUN_START` lease",
+            "There is no worker DELETE policy.",
         ],
         "docs/phase1n/THREAT_MODEL.md": [
-            "Dataset-scoped immutable append receipts",
-            "mismatched replay fails closed",
-            "worker Dataset writes remain disabled",
+            "Increment 4 worker-path threats",
+            "worker tokens, lease tokens or database credentials",
+            "Any mismatch fails closed.",
         ],
     }.items():
         source = read(path)
@@ -262,18 +289,17 @@ def main() -> None:
         "general execution release block changed",
     )
 
-    print("Phase 1N Increment 3 Dataset append verification: PASS")
-    print("  API/worker protocol digest parity: PASS")
-    print("  Dataset append receipts: PRESENT + RLS")
-    print("  Dataset row-lock sequencing: REQUIRED")
-    print("  exact replay: REPLAY-SAFE")
-    print("  mismatched replay: FAIL-CLOSED")
-    print("  Dataset item quota: 100000")
-    print("  Dataset byte quota: 268435456")
-    print("  DatasetItem mutation: DATABASE-BLOCKED")
-    print("  worker Dataset writes: DISABLED")
-    print("  worker Dataset RLS policy: ABSENT")
+    print("Phase 1N Increment 4 worker Dataset append verification: PASS")
+    print("  protocol digest parity: PASS")
+    print("  Dataset append idempotency: PRESERVED")
+    print("  Dataset quotas: PRESERVED")
+    print("  worker Dataset gate default: FALSE")
+    print("  worker capability: DATASET_APPEND")
+    print("  internal route: LEASE-SCOPED + HIDDEN")
+    print("  worker RLS: ACTIVE RUN_START LEASE ONLY")
+    print("  worker Dataset DELETE policy: ABSENT")
     print("  Agent direct Postgres access: PROHIBITED")
+    print("  Chromium direct Postgres access: PROHIBITED")
 
 
 if __name__ == "__main__":

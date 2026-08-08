@@ -1,92 +1,89 @@
 # Phase 1N Operator Runbook
 
-## Increment 3 state
+## Increment 4 state
 
-Authenticated control-plane Dataset item append is now available. Worker
-Dataset writes remain disabled.
-
-Expected state:
+Worker Dataset append is wired but remains disabled by default.
 
 ```text
-rdc.dataset-append/v1             available
-control.datasets                  present + RLS
-control.dataset_items             present + RLS
-control.dataset_append_receipts   present + RLS
-Dataset metadata routes           available
-Dataset item append route         authenticated control-plane only
-worker Dataset append             absent
-worker Dataset RLS policy         absent
-Agent database credentials        absent
-direct Agent Postgres access      absent
+RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false
 ```
 
-## Append route
+Do not enable this gate unless the sandbox master gate is enabled, activation
+mode is `canary`, and one immutable AgentVersion plus one worker name are
+configured.
 
-`POST /api/v1/datasets/{dataset_id}/items`
+The worker must be registered with `DATASET_APPEND`.
 
-Requires `dataset.write` plus the normal authentication/CSRF controls.
+## Worker append protocol
 
-Each request must contain:
+A Dataset-enabled Agent emits its normal Run output as:
 
-- `schema_version = rdc.dataset-append/v1`
-- idempotency key
-- 1–100 JSON-object items
+```json
+{
+  "schema_version": "rdc.dataset-append/v1",
+  "idempotency_key": "run-123:batch-1",
+  "items": [{"example": "value"}]
+}
+```
 
-The service revalidates the protocol after Pydantic parsing.
+The worker:
 
-## Idempotency
+1. keeps the Agent container network-isolated under the existing sandbox model;
+2. reads the bounded output file after Agent execution;
+3. validates `rdc.dataset-append/v1` locally;
+4. calls the private lease-scoped endpoint using its worker token and lease
+   token;
+5. never passes those credentials into the Agent container.
 
-The Dataset row is locked before replay, quota and sequence decisions.
+Internal endpoint:
 
-`(dataset_id, idempotency_key)` is unique.
+`POST /internal/v1/leases/{lease_id}/dataset-append`
 
-- same key + same request digest => return original receipt, no new items
-- same key + different request digest => fail closed
-- first request => create receipt and items in the same transaction
+The endpoint is excluded from public OpenAPI.
 
-## Quotas
+## Capability receipt
 
-Protocol:
+The claim must contain exact
+`rdc.dataset-worker-capability/v1` data bound to:
 
-- items per append <= 100
-- encoded item <= 65,536 bytes
-- append envelope <= 262,144 bytes
-- JSON nesting depth <= 32
+- Run ID
+- AgentVersion ID
+- worker name
+- default Dataset name
+- append schema and size limits
+- Dataset total item/byte limits
 
-Dataset:
+The control plane recomputes this receipt at append time. Gate disablement,
+lease expiry, worker change, AgentVersion change or receipt mismatch fails
+closed.
 
-- item count <= 100,000
-- encoded item bytes <= 268,435,456
+## RLS
 
-Database checks mirror the Dataset-level quotas and enforce
-`next_sequence = item_count + 1`.
+Increment 4 adds only the worker policies needed by the API transaction:
 
-## Append-only guarantees
+- Dataset SELECT
+- Dataset INSERT
+- Dataset UPDATE for counters/sequence
+- DatasetItem INSERT
+- DatasetAppendReceipt SELECT
+- DatasetAppendReceipt INSERT
 
-`DatasetItem` rows bind to `append_receipt_id`.
+Every policy requires an ACTIVE, unexpired `RUN_START` lease for the exact
+current worker and matching organization/project/Run.
 
-Database triggers reject UPDATE or DELETE of:
-
-- Dataset items
-- Dataset append receipts
-
-No item content is emitted into the append audit event.
+There is no worker DELETE policy.
 
 ## Stop conditions
 
-Stop Phase 1N work if an implementation:
+Stop if any implementation:
 
-- bypasses `rdc.dataset-append/v1` server validation
-- allocates sequences outside the Dataset row-lock transaction
-- changes item counters before quota checks
-- accepts idempotency replay with a different request digest
-- adds arbitrary DatasetItem update/delete APIs
-- adds worker Dataset RLS before Increment 4 capability design
-- gives Agent or browser containers database credentials
-- weakens Phase 1M network isolation
-
-## Next increment
-
-Add a controlled worker-to-control-plane Dataset append capability. The worker
-must authenticate through the existing private execution-plane identity and
-must never give the Agent or Chromium direct Postgres access.
+- sends worker or lease tokens into Agent input/environment;
+- sends database credentials into Agent or Chromium;
+- accepts a Dataset ID from the worker;
+- permits a non-default cross-Run Dataset target;
+- skips worker-side protocol validation;
+- skips control-plane receipt recomputation;
+- permits an expired/non-`RUN_START` lease;
+- adds Dataset worker DELETE access;
+- bypasses Increment 3 idempotency/quota/sequence logic;
+- weakens Phase 1M network isolation.

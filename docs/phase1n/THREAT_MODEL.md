@@ -1,62 +1,68 @@
 # Phase 1N Threat Model
 
-Phase 1N treats scraped content and Agent-provided Dataset records as hostile
-application data.
+Phase 1N assumes Agent output and scraped Dataset content are hostile.
 
-## Primary threats
+## Existing controls
 
-1. Cross-tenant Dataset access.
-2. Caller-supplied ownership overriding authenticated lineage.
-3. Duplicate records caused by retries.
-4. Idempotency-key reuse with a different payload.
-5. Concurrent append sequence collisions.
-6. Dataset resource exhaustion.
-7. Mutable item history destroying provenance.
-8. Agent containers receiving database credentials.
-9. Dataset content being mistaken for authorization metadata.
-10. Unbounded reads or exports.
+- strict bounded `rdc.dataset-append/v1`
+- tenant-scoped Dataset/DatasetItem RLS
+- server-derived ownership
+- immutable append receipts
+- replay-safe idempotency
+- transactional sequence allocation
+- item and byte quotas
+- immutable DatasetItems and append receipts
 
-## Increment 1 mitigations
+## Increment 4 worker-path threats
 
-- strict `rdc.dataset-append/v1`
-- bounded JSON objects
-- canonical digest
-- required idempotency key
+### Credential exfiltration
 
-## Increment 2 mitigations
+The Agent must never receive worker tokens, lease tokens or database
+credentials. The worker reads Agent output only after sandbox execution and
+forwards it itself.
 
-- server-derived Run/Agent/AgentVersion lineage
-- Dataset/DatasetItem RLS
-- tenant triggers
-- hidden-resource Dataset resolver
-- authenticated metadata routes
-- no worker write policy
+### Stolen or stale worker request
 
-## Increment 3 mitigations
+Internal append requires both worker authentication and an ACTIVE,
+unexpired lease token. RLS independently requires an ACTIVE matching
+`RUN_START` lease for the current worker.
 
-- Dataset-scoped immutable append receipts
-- unique `(dataset_id, idempotency_key)`
-- canonical request digest stored on every receipt
-- Dataset row locked before replay/quota/sequence decisions
-- exact replay returns the existing receipt
-- mismatched replay fails closed
-- transactional monotonic sequence allocation
-- Dataset item count quota: 100,000
-- Dataset encoded item-byte quota: 268,435,456
-- per-append protocol limits revalidated server-side
-- DatasetItem rows bind to the exact append receipt
-- database triggers block item/receipt UPDATE and DELETE
-- append audit event excludes hostile item content
-- worker Dataset writes remain disabled
-- no worker Dataset RLS policy
-- Agent/Chromium receive no Postgres credentials
+### Cross-Run Dataset targeting
 
-## Mandatory before worker append activation
+The worker does not submit a Dataset ID. The control plane resolves or creates
+only the `default` Dataset belonging to the lease's exact Run.
 
-- worker identity authenticated through the private execution plane
-- exact active Run/lease lineage
-- exact Dataset/Run/AgentVersion match
-- worker capability receipt limiting Dataset append
-- no direct Agent or browser database/network path
-- the worker must submit through a bounded control-plane protocol
-- control plane must reuse the same idempotency/quota/sequence transaction
+### Capability escalation
+
+`dataset=true` requires:
+
+- sandbox master execution gate
+- canary activation mode
+- independent Dataset-write gate
+- exact configured AgentVersion
+- exact configured worker
+- worker `DATASET_APPEND` capability
+- non-browser `RUN_START`
+- immutable claim capability receipt
+
+Any mismatch fails closed.
+
+### Replay and retry
+
+The internal path reuses Increment 3's Dataset-scoped idempotency receipt,
+request digest, Dataset row lock, sequence allocation and quotas. A worker
+retry cannot duplicate an already accepted batch with the same key/digest.
+
+### RLS overreach
+
+Worker Dataset policies are operation-specific. Dataset DELETE, DatasetItem
+UPDATE/DELETE and append-receipt UPDATE/DELETE are not granted by Increment 4.
+Existing database immutability triggers remain mandatory.
+
+## Mandatory before Phase 1N completion
+
+- paginated item reads with bounded page sizes
+- bounded export/download
+- audit verification of worker append lineage
+- final status/documentation update
+- exact-head authoritative CI green
