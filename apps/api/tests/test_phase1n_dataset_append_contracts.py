@@ -145,13 +145,22 @@ def test_phase1n_increment3_service_is_transactional_and_replay_safe() -> None:
         assert forbidden not in lowered
 
 
-def test_phase1n_increment3_worker_write_path_remains_disabled() -> None:
+def test_phase1n_worker_dataset_write_path_remains_control_plane_mediated() -> None:
     worker = (
         ROOT / "workers/sandbox-runtime/worker.py"
     ).read_text(encoding="utf-8")
+    lowered = worker.casefold()
+
     for forbidden in [
-        "append_dataset_items",
-        "dataset_write_enabled",
-        "dataset_append_receipt",
+        "append_dataset_items(",
+        "postgresql://",
+        "postgresql+asyncpg://",
+        "psycopg",
+        "asyncpg.connect",
+        "rdc_database_url",
     ]:
-        assert forbidden not in worker
+        assert forbidden not in lowered
+
+    assert "dataset_writes_enabled=config.dataset_writes_enabled" in worker
+    assert "validate_dataset_append(dataset_payload)" in worker
+    assert "client.dataset_append(" in worker
