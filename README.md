@@ -1,30 +1,16 @@
-# Rooz Data Cloud — Phase 1N merge candidate
+# Rooz Data Cloud
 
-Rooz Data Cloud Phase 1N adds the first durable structured-result primitive:
-tenant-scoped, append-only Datasets bound to immutable Run and AgentVersion
-lineage.
+Rooz Data Cloud is a tenant-isolated scraping and automation control plane.
+The merged baseline includes identity and authorization, Projects, immutable
+Agent versions, source/build and Run lifecycle, isolated worker execution,
+controlled web and browser canaries, durable Dataset results, and versioned
+Key-Value Store state under PostgreSQL RLS.
 
-The phase now includes strict `rdc.dataset-append/v1`, PostgreSQL RLS,
-idempotent append receipts, monotonic sequence allocation, Dataset quotas,
-lease-scoped worker append, signed DatasetItem pagination and bounded canonical
-JSONL export.
+All untrusted Agent and browser execution remains release-blocked. PostgreSQL,
+object-storage, worker and lease credentials never enter Agent or Chromium
+containers; worker capabilities are false-by-default and lease-scoped.
 
-Worker Dataset writes remain behind the independent false-by-default gate:
-`RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false`. The worker path requires an
-ACTIVE unexpired `RUN_START` lease, exact configured AgentVersion and worker,
-and explicit `DATASET_APPEND` capability. Agent and Chromium containers never
-receive worker, lease or PostgreSQL credentials.
-
-Dataset item pages are signed and Dataset-bound, with a maximum page size of
-200. Whole-Dataset JSONL export is authenticated, separately scoped by
-`dataset.export`, audited, limited to 10,000 items and 16 MiB, and never
-public. Larger Datasets must be consumed through cursor pagination.
-
-The previous Phase 1M merge candidate established the controlled browser
-navigation boundary. `RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false`
-remains false by default. Agent containers and Chromium remain `--network none`.
-General untrusted browser execution remains release-blocked.
-
-PR #52 remains DRAFT and unmerged until the full Phase 1N exact-head
-authoritative CI is green and the Product Owner explicitly says
-`approve Phase 1N merge`. The feature branch must be preserved.
+Phase 1P, tenant-scoped Request Queues, is active. It will add bounded,
+idempotent queue lifecycle controls without weakening existing tenancy, egress,
+Dataset or KV protections. See [the RDC v1 roadmap](docs/roadmap/RDC_V1_ROADMAP.md)
+for implemented capabilities, remaining work, and release gates.
