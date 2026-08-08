@@ -173,6 +173,10 @@ async def foundation_status() -> dict[str, object]:
         ),
         "browser_navigation_intent_contract_available": True,
         "browser_navigation_dispatch_enabled": False,
+        "browser_egress_policy_contract": "rdc.browser-egress-policy/v1",
+        "browser_egress_policy_available": True,
+        "browser_egress_transport_wired": False,
+        "browser_egress_subresource_revalidation": True,
         "browser_policy_contract": "rdc.browser-policy/v1",
         "browser_runtime_self_test_contract": (
             "rdc.browser-runtime-self-test/v1"
