@@ -20,9 +20,8 @@ sandbox execution and forwards it through:
 
 `POST /internal/v1/leases/{lease_id}/dataset-append`
 
-The private endpoint requires worker authentication and an ACTIVE, unexpired
-`RUN_START` lease. The Agent never receives worker tokens, lease tokens or
-database credentials.
+The private endpoint requires worker authentication and an ACTIVE, unexpired `RUN_START` lease.
+The Agent never receives worker tokens, lease tokens or database credentials.
 
 The worker does not supply a Dataset ID. The control plane resolves only the
 Run-scoped `default` Dataset and reuses the Increment 3 idempotency, quota and
