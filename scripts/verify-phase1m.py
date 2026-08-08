@@ -619,7 +619,7 @@ def main() -> None:
         "Phase 1M API contract tests are missing",
     )
 
-    root_readme = read("README.md")
+    root_readme = " ".join(read("README.md").split())
     for marker in [
         "Phase 1M merge candidate",
         "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false",
@@ -631,7 +631,7 @@ def main() -> None:
             "root README final-state marker missing: " + marker,
         )
 
-    docs = read("docs/phase1m/README.md")
+    docs = " ".join(read("docs/phase1m/README.md").split())
     for marker in [
         "rdc.browser/v2",
         "Chromium remains `--network none`",
