@@ -11,11 +11,17 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.core.database import engine, session_factory
 from app.core.errors import ApiError
+from app.core.pagination import (
+    QueueTransitionCursorPosition,
+    RequestQueueListCursorPosition,
+)
 from app.models import RequestQueue
 from app.request_queue_protocol import validate_queue_enqueue
 from app.services.request_queues import (
     claim_next_request,
     enqueue_request,
+    list_queue_transitions,
+    list_request_queues,
     reclaim_expired_requests,
 )
 from app.services.worker_request_queue import complete_worker_queue_request
@@ -403,6 +409,161 @@ async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
             )
             is None
         )
+
+
+async def test_postgres_queue_pagination_is_stable_at_equal_timestamps() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_id, org_id, project_id, first_queue_id, request_id = await _seed()
+    second_queue_id = uuid4()
+    transition_ids = [uuid4(), uuid4()]
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id) VALUES (:q,:o,:p,'second',:u)"
+            ),
+            {
+                "q": second_queue_id,
+                "o": org_id,
+                "p": project_id,
+                "u": user_id,
+            },
+        )
+        await connection.execute(
+            text(
+                "UPDATE control.request_queues SET created_at='2026-08-09T06:00:00+00:00' WHERE id IN (:a,:b)"
+            ),
+            {"a": first_queue_id, "b": second_queue_id},
+        )
+        for transition_id, to_status, reason in (
+            (transition_ids[0], "PENDING", "ENQUEUED"),
+            (transition_ids[1], "CLAIMED", "CLAIMED"),
+        ):
+            await connection.execute(
+                text(
+                    "INSERT INTO control.request_queue_transitions (id,organization_id,project_id,queue_id,request_id,from_status,to_status,reason,attempt_count,details,created_at) VALUES (:id,:o,:p,:q,:r,NULL,:status,:reason,0,'{}','2026-08-09T06:00:00+00:00')"
+                ),
+                {
+                    "id": transition_id,
+                    "o": org_id,
+                    "p": project_id,
+                    "q": first_queue_id,
+                    "r": request_id,
+                    "status": to_status,
+                    "reason": reason,
+                },
+            )
+    async with session_factory() as session:
+        queue_page_one, queue_has_more = await list_request_queues(
+            session,
+            project_id=project_id,
+            cursor=None,
+            limit=1,
+        )
+        assert queue_has_more is True
+        queue_page_two, queue_has_more_two = await list_request_queues(
+            session,
+            project_id=project_id,
+            cursor=RequestQueueListCursorPosition(
+                created_at=queue_page_one[-1].created_at,
+                resource_id=queue_page_one[-1].id,
+            ),
+            limit=1,
+        )
+        assert queue_has_more_two is False
+        assert {queue_page_one[0].id, queue_page_two[0].id} == {
+            first_queue_id,
+            second_queue_id,
+        }
+
+        transition_page_one, transition_has_more = await list_queue_transitions(
+            session,
+            queue_id=first_queue_id,
+            request_id=request_id,
+            cursor=None,
+            limit=1,
+        )
+        assert transition_has_more is True
+        transition_page_two, transition_has_more_two = await list_queue_transitions(
+            session,
+            queue_id=first_queue_id,
+            request_id=request_id,
+            cursor=QueueTransitionCursorPosition(
+                created_at=transition_page_one[-1].created_at,
+                resource_id=transition_page_one[-1].id,
+            ),
+            limit=1,
+        )
+        assert transition_has_more_two is False
+        assert {transition_page_one[0].id, transition_page_two[0].id} == set(
+            transition_ids
+        )
+
+
+async def test_postgres_queue_and_transition_rls_hide_other_tenant() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_a, org_a, project_a, queue_a, request_a = await _seed()
+    _, org_b, project_b, queue_b, request_b = await _seed()
+    async with engine.begin() as connection:
+        for org_id, project_id, queue_id, request_id in (
+            (org_a, project_a, queue_a, request_a),
+            (org_b, project_b, queue_b, request_b),
+        ):
+            await connection.execute(
+                text(
+                    "INSERT INTO control.request_queue_transitions (organization_id,project_id,queue_id,request_id,from_status,to_status,reason,attempt_count,details) VALUES (:o,:p,:q,:r,NULL,'PENDING','ENQUEUED',0,'{}')"
+                ),
+                {"o": org_id, "p": project_id, "q": queue_id, "r": request_id},
+            )
+        await connection.execute(
+            text(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='rdc_phase1p_queue_rls_test') THEN CREATE ROLE rdc_phase1p_queue_rls_test NOLOGIN; END IF; END $$"
+            )
+        )
+        await connection.execute(
+            text(
+                "GRANT USAGE ON SCHEMA control,security TO rdc_phase1p_queue_rls_test"
+            )
+        )
+        await connection.execute(
+            text(
+                "GRANT SELECT ON control.request_queues,control.request_queue_transitions TO rdc_phase1p_queue_rls_test"
+            )
+        )
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SET LOCAL ROLE rdc_phase1p_queue_rls_test"))
+            await connection.execute(
+                text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                {"u": str(user_a)},
+            )
+            await connection.execute(
+                text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                {"o": str(org_a)},
+            )
+            visible_queues = (
+                await connection.execute(
+                    text(
+                        "SELECT id FROM control.request_queues WHERE id IN (:a,:b) ORDER BY id"
+                    ),
+                    {"a": queue_a, "b": queue_b},
+                )
+            ).scalars().all()
+            visible_transitions = (
+                await connection.execute(
+                    text(
+                        "SELECT queue_id FROM control.request_queue_transitions WHERE queue_id IN (:a,:b) ORDER BY queue_id"
+                    ),
+                    {"a": queue_a, "b": queue_b},
+                )
+            ).scalars().all()
+            assert visible_queues == [queue_a]
+            assert visible_transitions == [queue_a]
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text("DROP OWNED BY rdc_phase1p_queue_rls_test"))
+            await connection.execute(text("DROP ROLE rdc_phase1p_queue_rls_test"))
 
 
 @pytest.mark.parametrize(

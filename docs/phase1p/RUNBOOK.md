@@ -10,6 +10,10 @@ incident and retain immutable transition history for investigation.
 
 Authenticated queue readers can retrieve bounded transition history. Treat it
 as forensic data: it is immutable and should not be edited or deleted.
+Project Queue listings and transition history return at most 200 records and a
+signed `next_cursor`. Preserve the original project, Queue, state, and optional
+request filter when following a cursor. Treat `INVALID_CURSOR` responses as a
+client replay/tampering signal; never decode or rewrite cursors outside the API.
 
 Monitor the immutable audit stream for `request_queue.request_enqueued`,
 `request_queue.request_claimed`, `request_queue.request_reclaimed`,

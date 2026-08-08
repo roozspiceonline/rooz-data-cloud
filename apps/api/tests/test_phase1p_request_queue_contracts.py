@@ -36,6 +36,10 @@ def test_phase1p_routes_use_server_derived_queue_ownership() -> None:
     source = (API_ROOT / "app/api/routes/request_queues.py").read_text()
     assert 'require_request_queue_permission("queue.enqueue")' in source
     assert "organization_id=" not in source
+    assert "decode_request_queue_list_cursor" in source
+    assert "decode_queue_transition_cursor" in source
+    assert "list_request_queues" in source
+    assert "list_queue_transitions" in source
 
 
 def test_phase1p_migration_upgrade_and_downgrade_cover_all_queue_tables() -> None:

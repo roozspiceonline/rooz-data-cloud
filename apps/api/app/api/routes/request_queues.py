@@ -1,5 +1,6 @@
 # ruff: noqa: E501
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import or_, select
@@ -9,10 +10,13 @@ from ...core.database import get_db
 from ...core.errors import request_id, success_payload
 from ...core.pagination import (
     decode_queue_request_cursor,
+    decode_queue_transition_cursor,
+    decode_request_queue_list_cursor,
     encode_queue_request_cursor,
+    encode_queue_transition_cursor,
+    encode_request_queue_list_cursor,
     normalize_limit,
 )
-from ...models import RequestQueue
 from ...request_queue_protocol import RequestQueueProtocolError, validate_queue_enqueue
 from ...request_queue_schemas import (
     CreateRequestQueueRequest,
@@ -22,6 +26,8 @@ from ...request_queue_schemas import (
 from ...services.request_queues import (
     create_request_queue,
     enqueue_request,
+    list_queue_transitions,
+    list_request_queues,
     queue_summary,
     receipt_summary,
     request_summary,
@@ -53,9 +59,15 @@ async def create_queue(payload: CreateRequestQueueRequest, request: Request, acc
 
 
 @router.get("/projects/{project_id}/request-queues")
-async def list_queues(request: Request, access: Annotated[ProjectAccess, Depends(require_project_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object]:
-    rows = (await db.scalars(select(RequestQueue).where(RequestQueue.project_id == access.project.id).order_by(RequestQueue.created_at.desc()))).all()
-    return {"data": [queue_summary(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request)}}
+async def list_queues(request: Request, access: Annotated[ProjectAccess, Depends(require_project_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)], cursor: Annotated[str | None, Query()] = None, limit: Annotated[int, Query()] = 50) -> dict[str, object]:
+    normalized = normalize_limit(limit)
+    position = decode_request_queue_list_cursor(cursor, project_id=access.project.id)
+    rows, has_more = await list_request_queues(db, project_id=access.project.id, cursor=position, limit=normalized)
+    next_cursor = None
+    if has_more and rows:
+        final = rows[-1]
+        next_cursor = encode_request_queue_list_cursor(project_id=access.project.id, created_at=final.created_at, resource_id=final.id)
+    return {"data": [queue_summary(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request), "page": {"next_cursor": next_cursor, "has_more": next_cursor is not None}}}
 
 
 @router.get("/request-queues/{queue_id}")
@@ -92,7 +104,12 @@ async def list_requests(request: Request, access: Annotated[RequestQueueAccess, 
 
 
 @router.get("/request-queues/{queue_id}/transitions")
-async def list_transitions(request: Request, access: Annotated[RequestQueueAccess, Depends(require_request_queue_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)], limit: Annotated[int, Query()] = 50) -> dict[str, object]:
-    from ...models import RequestQueueTransition
-    rows = (await db.scalars(select(RequestQueueTransition).where(RequestQueueTransition.queue_id == access.queue.id).order_by(RequestQueueTransition.created_at.desc(), RequestQueueTransition.id.desc()).limit(normalize_limit(limit)))).all()
-    return {"data": [QueueTransitionSummary.model_validate(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request)}}
+async def list_transitions(request: Request, access: Annotated[RequestQueueAccess, Depends(require_request_queue_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)], cursor: Annotated[str | None, Query()] = None, limit: Annotated[int, Query()] = 50, queue_request_id: Annotated[UUID | None, Query(alias="request_id")] = None) -> dict[str, object]:
+    normalized = normalize_limit(limit)
+    position = decode_queue_transition_cursor(cursor, queue_id=access.queue.id, request_id=queue_request_id)
+    rows, has_more = await list_queue_transitions(db, queue_id=access.queue.id, request_id=queue_request_id, cursor=position, limit=normalized)
+    next_cursor = None
+    if has_more and rows:
+        final = rows[-1]
+        next_cursor = encode_queue_transition_cursor(queue_id=access.queue.id, request_id=queue_request_id, created_at=final.created_at, resource_id=final.id)
+    return {"data": [QueueTransitionSummary.model_validate(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request), "page": {"next_cursor": next_cursor, "has_more": next_cursor is not None}}}

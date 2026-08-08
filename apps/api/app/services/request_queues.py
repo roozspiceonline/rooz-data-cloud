@@ -2,10 +2,14 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.errors import ApiError
+from ..core.pagination import (
+    QueueTransitionCursorPosition,
+    RequestQueueListCursorPosition,
+)
 from ..models import (
     Project,
     RequestQueue,
@@ -40,6 +44,75 @@ def request_summary(record: RequestQueueRequest) -> QueueRequestSummary:
 def receipt_summary(outcome: EnqueueOutcome) -> EnqueueReceiptSummary:
     receipt = outcome.receipt
     return EnqueueReceiptSummary(id=receipt.id, queue_id=receipt.queue_id, request_id=receipt.request_id, idempotency_key=receipt.idempotency_key, request_digest=receipt.request_digest, replayed=outcome.replayed, created_at=receipt.created_at)
+
+
+async def list_request_queues(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    cursor: RequestQueueListCursorPosition | None,
+    limit: int,
+) -> tuple[list[RequestQueue], bool]:
+    statement = select(RequestQueue).where(RequestQueue.project_id == project_id)
+    if cursor is not None:
+        statement = statement.where(
+            or_(
+                RequestQueue.created_at < cursor.created_at,
+                and_(
+                    RequestQueue.created_at == cursor.created_at,
+                    RequestQueue.id < cursor.resource_id,
+                ),
+            )
+        )
+    rows = list(
+        (
+            await session.scalars(
+                statement.order_by(
+                    RequestQueue.created_at.desc(),
+                    RequestQueue.id.desc(),
+                ).limit(limit + 1)
+            )
+        ).all()
+    )
+    return rows[:limit], len(rows) > limit
+
+
+async def list_queue_transitions(
+    session: AsyncSession,
+    *,
+    queue_id: UUID,
+    request_id: UUID | None,
+    cursor: QueueTransitionCursorPosition | None,
+    limit: int,
+) -> tuple[list[RequestQueueTransition], bool]:
+    statement = select(RequestQueueTransition).where(
+        RequestQueueTransition.queue_id == queue_id
+    )
+    if request_id is not None:
+        statement = statement.where(
+            RequestQueueTransition.request_id == request_id
+        )
+    if cursor is not None:
+        statement = statement.where(
+            or_(
+                RequestQueueTransition.created_at < cursor.created_at,
+                and_(
+                    RequestQueueTransition.created_at == cursor.created_at,
+                    RequestQueueTransition.id < cursor.resource_id,
+                ),
+            )
+        )
+    rows = list(
+        (
+            await session.scalars(
+                statement.order_by(
+                    RequestQueueTransition.created_at.desc(),
+                    RequestQueueTransition.id.desc(),
+                ).limit(limit + 1)
+            )
+        ).all()
+    )
+    return rows[:limit], len(rows) > limit
 
 
 async def create_request_queue(session: AsyncSession, *, project: Project, user_id: UUID, actor_type: str, actor_id: str, request_id: str, payload: CreateRequestQueueRequest) -> RequestQueue:

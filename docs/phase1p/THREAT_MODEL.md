@@ -19,6 +19,13 @@ user data, claim tokens, or failure summaries. PostgreSQL rejects audit events
 whose project does not belong to the recorded organization, and rejects audit
 event updates and deletes.
 
+Project Queue listings, Queue request listings, and immutable transition
+history use bounded keyset pagination with filter-bound signed cursors. Cursor
+kinds cannot cross collection boundaries. Queue-list cursors are bound to the
+server-resolved project; request cursors are bound to Queue and state filter;
+transition cursors are bound to Queue and optional request filter. Invalid,
+non-canonical, tampered, or replayed cursors fail closed.
+
 Worker claim and completion require an ACTIVE unexpired lease plus a dedicated
 false-by-default canary gate. Queue tenancy is derived from the lease, and each
 completion is bound to both the claiming worker and an unguessable claim token.
