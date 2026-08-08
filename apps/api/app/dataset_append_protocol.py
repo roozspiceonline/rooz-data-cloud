@@ -5,6 +5,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from typing import NoReturn
 
 SCHEMA_VERSION = "rdc.dataset-append/v1"
 MAX_ITEMS = 100
@@ -32,7 +33,7 @@ class ValidatedDatasetAppend:
         return len(self.items)
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     raise DatasetAppendProtocolError(message)
 
 
