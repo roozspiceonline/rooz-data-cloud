@@ -769,8 +769,8 @@ class RequestQueueTransition(UUIDPrimaryKeyMixin, Base):
     __table_args__ = {"schema": "control"}
     organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="CASCADE"), nullable=False, index=True)
-    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="RESTRICT"), nullable=False, index=True)
+    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="RESTRICT"), nullable=False, index=True)
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(String(80), nullable=False)
