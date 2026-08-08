@@ -256,11 +256,16 @@ def _browser_navigation_live_canary_enabled(
         return False
     try:
         return (
-            _manifest_resource(version, "memoryMb") <= settings.sandbox_canary_max_memory_mb
-            and _manifest_resource(version, "cpuUnits") <= settings.sandbox_canary_max_cpu_millis
-            and _manifest_resource(version, "maxProcesses") <= settings.sandbox_canary_max_pids
-            and _manifest_resource(version, "ephemeralDiskMb") <= settings.sandbox_canary_max_ephemeral_disk_mb
-            and _manifest_resource(version, "timeoutSeconds") <= settings.sandbox_canary_max_run_seconds
+            _manifest_resource(version, "memoryMb")
+            <= settings.sandbox_canary_max_memory_mb
+            and _manifest_resource(version, "cpuUnits")
+            <= settings.sandbox_canary_max_cpu_millis
+            and _manifest_resource(version, "maxProcesses")
+            <= settings.sandbox_canary_max_pids
+            and _manifest_resource(version, "ephemeralDiskMb")
+            <= settings.sandbox_canary_max_ephemeral_disk_mb
+            and _manifest_resource(version, "timeoutSeconds")
+            <= settings.sandbox_canary_max_run_seconds
         )
     except ApiError:
         return False

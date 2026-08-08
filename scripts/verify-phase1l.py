@@ -76,21 +76,27 @@ def main() -> None:
         "RDC_SANDBOX_CANARY_BROWSER_ENABLED=false" in env,
         "browser gate does not default false",
     )
+    require(
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false" in env,
+        "live-navigation upgrade gate does not default false",
+    )
 
     main_source = read("apps/api/app/main.py")
     for marker in [
-        'version="0.12.0-phase1l"',
-        '"phase": "1L"',
-        '"status": "controlled-browser-offline-canary-foundation"',
+        'version="0.13.0-phase1m"',
+        '"phase": "1M"',
+        '"status": "controlled-browser-navigation-canary"',
         '"browser_request_contract": "rdc.browser/v1"',
         '"browser_policy_contract": "rdc.browser-policy/v1"',
         '"browser_runtime_self_test_available": True',
-        '"browser_public_navigation_enabled": False',
+        '"browser_public_navigation_enabled": '
+        "_browser_live_navigation_canary_enabled()",
         '"browser_canary_activation_enabled"',
+        '"browser_live_navigation_gate_enabled"',
     ]:
         require(
             marker in main_source,
-            "Phase 1L API status missing: " + marker,
+            "Phase 1L compatibility status missing: " + marker,
         )
 
     config = read("apps/api/app/core/config.py")
@@ -205,7 +211,7 @@ def main() -> None:
         "sandbox worker does not bridge the isolated browser self-test",
     )
     require(
-        '"BROWSER_RUNTIME_SELF_TEST_FAILED"' in sandbox_worker,
+        '"BROWSER_RUNTIME_FAILED"' in sandbox_worker,
         "sandbox worker lacks bounded browser self-test failure code",
     )
     require(
@@ -317,7 +323,7 @@ def main() -> None:
         "browser_digest != browser_policy.digest",
         "validate_browser_plan(browser_plan, policy=browser_policy)",
         "run_browser_self_test",
-        '"BROWSER_RUNTIME_SELF_TEST_FAILED"',
+        '"BROWSER_RUNTIME_FAILED"',
     ]:
         require(
             marker in worker_source,
