@@ -7,7 +7,26 @@ REPO_ROOT = API_ROOT.parents[1]
 
 def test_phase1p_migration_has_rls_tenancy_and_immutable_history() -> None:
     source = (API_ROOT / "migrations/versions/20260809_0015_request_queues.py").read_text()
-    for marker in ("request_queues", "request_queue_requests", "request_queue_transitions", "ENABLE ROW LEVEL SECURITY", "rdc_request_queue_org", "request_queue_transition_immutable", "enforce_request_queue_tenancy", "enforce_audit_event_tenancy", "audit_event_immutable"):
+    for marker in ("request_queues", "request_queue_requests", "request_queue_transitions", "ENABLE ROW LEVEL SECURITY", "rdc_request_queue_org", "request_queue_transition_immutable", "request_queue_enqueue_receipt_immutable", "Request Queue request identity is immutable", "enforce_request_queue_tenancy", "enforce_audit_event_tenancy", "audit_event_immutable"):
+        assert marker in source
+
+
+def test_phase1p_rls_separates_tenant_commands_and_scopes_workers_to_run_leases() -> None:
+    source = (API_ROOT / "migrations/versions/20260809_0015_request_queues.py").read_text()
+    assert "request_queue_requests_tenant_update" not in source
+    assert "request_queue_transitions_tenant_update" not in source
+    assert "request_queue_enqueue_receipts_tenant_update" not in source
+    assert "request_queues_tenant_update" in source
+    for marker in (
+        "request_queues_execution_worker_select",
+        "request_queues_execution_worker_update",
+        "request_queue_requests_execution_worker_select",
+        "request_queue_requests_execution_worker_update",
+        "request_queue_transitions_execution_worker_insert",
+        "lease.work_kind = 'RUN_START'",
+        "lease.organization_id",
+        "lease.project_id",
+    ):
         assert marker in source
 
 

@@ -10,7 +10,10 @@ All untrusted Agent and browser execution remains release-blocked. PostgreSQL,
 object-storage, worker and lease credentials never enter Agent or Chromium
 containers; worker capabilities are false-by-default and lease-scoped.
 
-Phase 1P, tenant-scoped Request Queues, is active. It will add bounded,
-idempotent queue lifecycle controls without weakening existing tenancy, egress,
-Dataset or KV protections. See [the RDC v1 roadmap](docs/roadmap/RDC_V1_ROADMAP.md)
-for implemented capabilities, remaining work, and release gates.
+Phase 1P, tenant-scoped Request Queues, is implemented and awaiting its final
+exact-head merge gate. It adds bounded idempotent enqueue, race-safe
+claim/reclaim/completion, immutable transition and audit lineage, signed reads,
+and tenant/lease-scoped PostgreSQL RLS without weakening existing tenancy,
+egress, Dataset, or KV protections. See [the Phase 1P documentation](docs/phase1p/README.md)
+and [the RDC v1 roadmap](docs/roadmap/RDC_V1_ROADMAP.md) for security controls,
+remaining work, and release gates.

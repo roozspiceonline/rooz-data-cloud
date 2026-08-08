@@ -348,7 +348,7 @@ def main() -> None:
         "durable Dataset results",
         "versioned Key-Value Store state",
         "All untrusted Agent and browser execution remains release-blocked.",
-        "Phase 1P, tenant-scoped Request Queues, is active.",
+        "Phase 1P, tenant-scoped Request Queues, is implemented",
     ]:
         require(marker in root_readme, "root README Phase 1N marker missing: " + marker)
 

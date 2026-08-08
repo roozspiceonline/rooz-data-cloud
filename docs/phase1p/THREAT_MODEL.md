@@ -3,6 +3,11 @@
 Queue ownership is derived from the server-resolved project and queue. Queue
 requests, receipts, and immutable transition records carry matching organization
 and project identifiers and are guarded by PostgreSQL RLS and tenancy triggers.
+Tenant policies are command-specific: request and history rows cannot be
+updated or deleted through tenant authority, and Queue rows cannot be deleted.
+Request identity fields and enqueue receipts are immutable even for privileged
+database paths. Transition and receipt references must resolve to a request in
+the same Queue, organization, and project.
 
 Enqueue accepts only canonical HTTPS envelopes. It rejects credentials, IP
 literals, fragments, unsafe keys, and non-JSON user data. DNS and egress checks
@@ -32,3 +37,8 @@ completion is bound to both the claiming worker and an unguessable claim token.
 The gate additionally pins the configured canary worker, immutable Agent
 version, worker capability, and manifest `requestQueue` declaration. Expired
 claims cannot complete even if reclaim has not yet run.
+
+Defense-in-depth worker RLS accepts only ACTIVE, unexpired `RUN_START` leases
+whose organization and project match each Queue row. Worker authority is
+limited to selecting and updating Queue/request lifecycle rows and inserting
+transition history; it cannot mutate enqueue receipts or existing history.

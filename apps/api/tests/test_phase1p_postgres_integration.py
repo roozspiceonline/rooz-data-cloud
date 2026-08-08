@@ -192,6 +192,38 @@ async def test_postgres_tenancy_trigger_rejects_cross_project_queue_request() ->
             )
 
 
+async def test_postgres_request_identity_and_enqueue_receipts_are_immutable() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_id, org_id, project_id, queue_id, request_id = await _seed()
+    receipt_id = uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO control.request_queue_enqueue_receipts (id,organization_id,project_id,queue_id,request_id,idempotency_key,request_digest,identity_digest,created_by_user_id) VALUES (:id,:o,:p,:q,:r,'immutable-receipt','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',:u)"
+            ),
+            {"id": receipt_id, "o": org_id, "p": project_id, "q": queue_id, "r": request_id, "u": user_id},
+        )
+    with pytest.raises(DBAPIError, match="request identity is immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE control.request_queue_requests SET request_url='https://example.com/changed' WHERE id=:r"),
+                {"r": request_id},
+            )
+    with pytest.raises(DBAPIError, match="enqueue receipts are immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE control.request_queue_enqueue_receipts SET request_digest=:digest WHERE id=:id"),
+                {"id": receipt_id, "digest": "c" * 64},
+            )
+    with pytest.raises(DBAPIError, match="enqueue receipts are immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM control.request_queue_enqueue_receipts WHERE id=:id"),
+                {"id": receipt_id},
+            )
+
+
 async def test_postgres_expired_claim_requeues_and_reconciles_counters() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
@@ -528,7 +560,7 @@ async def test_postgres_queue_and_transition_rls_hide_other_tenant() -> None:
         )
         await connection.execute(
             text(
-                "GRANT SELECT ON control.request_queues,control.request_queue_transitions TO rdc_phase1p_queue_rls_test"
+                "GRANT SELECT,UPDATE,DELETE ON control.request_queues,control.request_queue_requests,control.request_queue_transitions,control.request_queue_enqueue_receipts TO rdc_phase1p_queue_rls_test"
             )
         )
     try:
@@ -558,8 +590,27 @@ async def test_postgres_queue_and_transition_rls_hide_other_tenant() -> None:
                     {"a": queue_a, "b": queue_b},
                 )
             ).scalars().all()
+            visible_requests = (
+                await connection.execute(
+                    text(
+                        "SELECT id FROM control.request_queue_requests WHERE id IN (:a,:b) ORDER BY id"
+                    ),
+                    {"a": request_a, "b": request_b},
+                )
+            ).scalars().all()
+            request_update = await connection.execute(
+                text("UPDATE control.request_queue_requests SET status='FAILED' WHERE id=:r"),
+                {"r": request_a},
+            )
+            queue_delete = await connection.execute(
+                text("DELETE FROM control.request_queues WHERE id=:q"),
+                {"q": queue_a},
+            )
             assert visible_queues == [queue_a]
             assert visible_transitions == [queue_a]
+            assert visible_requests == [request_a]
+            assert request_update.rowcount == 0
+            assert queue_delete.rowcount == 0
     finally:
         async with engine.begin() as connection:
             await connection.execute(text("DROP OWNED BY rdc_phase1p_queue_rls_test"))
@@ -606,7 +657,7 @@ async def test_postgres_worker_completion_emits_tenant_bound_audit_event(
         id=uuid4(),
         organization_id=org_id,
         project_id=project_id,
-        work_kind="RUN",
+        work_kind="RUN_START",
         payload_snapshot={
             "agent_version_id": "phase1p-version",
             "manifest": {"capabilities": {"requestQueue": True}},
@@ -681,7 +732,7 @@ async def test_postgres_stale_claim_token_cannot_complete(monkeypatch: pytest.Mo
         id=uuid4(),
         organization_id=org_id,
         project_id=project_id,
-        work_kind="RUN",
+        work_kind="RUN_START",
         payload_snapshot={
             "agent_version_id": "phase1p-version",
             "manifest": {"capabilities": {"requestQueue": True}},

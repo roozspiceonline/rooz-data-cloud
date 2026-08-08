@@ -23,7 +23,7 @@ settings = get_settings()
 def _enabled(lease: ExecutionLease, worker: WorkerIdentity) -> None:
     manifest = lease.payload_snapshot.get("manifest")
     capabilities = manifest.get("capabilities") if isinstance(manifest, dict) else None
-    if not settings.sandbox_execution_enabled or settings.sandbox_activation_mode != "canary" or not settings.sandbox_canary_request_queue_enabled or lease.work_kind != "RUN" or worker.name != settings.sandbox_canary_worker_name.strip() or "REQUEST_QUEUE_ACCESS" not in worker.capabilities or str(lease.payload_snapshot.get("agent_version_id", "")) != settings.sandbox_canary_agent_version_id.strip() or not isinstance(capabilities, dict) or capabilities.get("requestQueue") is not True:
+    if not settings.sandbox_execution_enabled or settings.sandbox_activation_mode != "canary" or not settings.sandbox_canary_request_queue_enabled or lease.work_kind != "RUN_START" or worker.name != settings.sandbox_canary_worker_name.strip() or "REQUEST_QUEUE_ACCESS" not in worker.capabilities or str(lease.payload_snapshot.get("agent_version_id", "")) != settings.sandbox_canary_agent_version_id.strip() or not isinstance(capabilities, dict) or capabilities.get("requestQueue") is not True:
         raise ApiError(status_code=403, code="WORKER_REQUEST_QUEUE_DISABLED", message="Worker Request Queue access is disabled.")
 
 

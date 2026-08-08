@@ -9,7 +9,7 @@ def test_worker_queue_gate_defaults_off_and_requires_canary_run_lease() -> None:
     service = (API_ROOT / "app/services/worker_request_queue.py").read_text()
     assert "sandbox_canary_request_queue_enabled: bool = False" in config
     assert 'settings.sandbox_activation_mode != "canary"' in service
-    assert 'lease.work_kind != "RUN"' in service
+    assert 'lease.work_kind != "RUN_START"' in service
     assert '"REQUEST_QUEUE_ACCESS" not in worker.capabilities' in service
     assert 'capabilities.get("requestQueue") is not True' in service
 

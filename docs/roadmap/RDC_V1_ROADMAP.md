@@ -20,12 +20,15 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Phase 1P: Request Queue | Active | Runs, worker leases, Dataset and KV controls |
+| Phase 1P: Request Queue | Implemented — final merge gate pending | Runs, worker leases, Dataset and KV controls |
 
-Phase 1P must supply strict protocol validation; Queue/request/history
-persistence under RLS; race-safe claim/reclaim transitions; idempotency; a
-false-by-default lease-scoped worker path; authenticated bounded reads with
-filter-bound signed cursors; audit events; tests; threat model; and runbook.
+Phase 1P supplies strict protocol validation; Queue/request/immutable-history
+persistence under command-specific tenant and lease-scoped worker RLS;
+race-safe claim/reclaim/terminal transitions; idempotency; a false-by-default
+worker path; authenticated bounded reads with filter-bound signed cursors;
+tenant-bound audit events; adversarial tests; threat model; and runbook. It
+becomes complete only after PR #56 is merged and the exact merged commit is
+verified.
 
 ## Remaining RDC v1 workstreams
 
