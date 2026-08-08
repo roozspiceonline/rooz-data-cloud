@@ -77,6 +77,8 @@ jobs:
       RDC_WORKER_LEASE_SECONDS: "60"
       RDC_WORKER_LEASE_MAX_SECONDS: "300"
       RDC_WORKER_MAX_ATTEMPTS: "5"
+      RDC_WORKER_RETRY_BASE_SECONDS: "2"
+      RDC_WORKER_RETRY_MAX_SECONDS: "300"
       RDC_WORKER_SECRET_ENVELOPE_SECONDS: "60"
       RDC_SANDBOX_EXECUTION_ENABLED: "false"
       RDC_SANDBOX_REQUIRED_PROFILE: rdc.sandbox/v1
@@ -125,4 +127,5 @@ jobs:
       - run: python3 scripts/verify-phase1n.py
       - run: python3 scripts/verify-phase1o.py
       - run: python3 scripts/verify-phase1p.py
+      - run: python3 scripts/verify-execution-recovery.py
       - run: docker compose config --quiet

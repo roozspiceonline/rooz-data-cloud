@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = 60
     worker_lease_max_seconds: int = 300
     worker_max_attempts: int = 5
+    worker_retry_base_seconds: int = 2
+    worker_retry_max_seconds: int = 300
     worker_secret_envelope_seconds: int = 60
 
     sandbox_execution_enabled: bool = False
@@ -156,6 +158,10 @@ class Settings(BaseSettings):
             raise ValueError("Worker lease maximum must exceed the default lease.")
         if not 1 <= self.worker_max_attempts <= 20:
             raise ValueError("Worker max attempts must be between 1 and 20.")
+        if not 1 <= self.worker_retry_base_seconds <= 60:
+            raise ValueError("Worker retry base must be between 1 and 60 seconds.")
+        if not self.worker_retry_base_seconds <= self.worker_retry_max_seconds <= 3600:
+            raise ValueError("Worker retry maximum must be between its base and one hour.")
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
         if self.sandbox_required_profile != "rdc.sandbox/v1":

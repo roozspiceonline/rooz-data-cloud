@@ -26,6 +26,7 @@ from ..core.worker_crypto import (
     worker_secret_aad,
 )
 from ..dataset_schemas import CreateDatasetRequest
+from ..execution_recovery import execution_retry_allowed, retry_available_at
 from ..execution_schemas import (
     AppendWorkerEventsRequest,
     ArtifactDownloadGrant,
@@ -764,8 +765,7 @@ async def _reset_expired_source(
     *,
     lease: ExecutionLease,
     now: datetime,
-) -> None:
-    retry = lease.attempt < settings.worker_max_attempts
+) -> datetime | None:
     if lease.work_kind == "BUILD":
         source = await session.scalar(
             select(BuildDispatchOutbox).where(
@@ -775,9 +775,26 @@ async def _reset_expired_source(
         build = await session.scalar(
             select(Build).where(Build.id == lease.build_id)
         )
+        retry = execution_retry_allowed(
+            requested=True,
+            outcome="FAILED",
+            attempt=lease.attempt,
+            max_attempts=settings.worker_max_attempts,
+            source_available=source is not None,
+        )
+        next_attempt_at = (
+            retry_available_at(
+                now=now,
+                attempt=lease.attempt,
+                base_seconds=settings.worker_retry_base_seconds,
+                max_seconds=settings.worker_retry_max_seconds,
+            )
+            if retry
+            else None
+        )
         if source is not None:
             source.status = "PENDING" if retry else "FAILED"
-            source.available_at = now + timedelta(seconds=min(300, 2**lease.attempt))
+            source.available_at = next_attempt_at or now
             source.last_error_code = "LEASE_EXPIRED"
             source.updated_at = now
         if build is not None:
@@ -787,7 +804,7 @@ async def _reset_expired_source(
             build.completed_at = None if retry else now
             build.updated_at = now
             build.version += 1
-        return
+        return next_attempt_at
 
     source = await session.scalar(
         select(RunCommandOutbox).where(
@@ -795,13 +812,30 @@ async def _reset_expired_source(
         )
     )
     run = await session.scalar(select(Run).where(Run.id == lease.run_id))
+    retry = execution_retry_allowed(
+        requested=True,
+        outcome="FAILED",
+        attempt=lease.attempt,
+        max_attempts=settings.worker_max_attempts,
+        source_available=source is not None,
+    )
+    next_attempt_at = (
+        retry_available_at(
+            now=now,
+            attempt=lease.attempt,
+            base_seconds=settings.worker_retry_base_seconds,
+            max_seconds=settings.worker_retry_max_seconds,
+        )
+        if retry
+        else None
+    )
     if source is not None:
         source.status = "PENDING" if retry else "FAILED"
-        source.available_at = now + timedelta(seconds=min(300, 2**lease.attempt))
+        source.available_at = next_attempt_at or now
         source.last_error_code = "LEASE_EXPIRED"
         source.updated_at = now
     if run is None:
-        return
+        return next_attempt_at
     previous = run.status
     if lease.work_kind == "RUN_START":
         run.status = "QUEUED" if retry else "FAILED"
@@ -822,6 +856,7 @@ async def _reset_expired_source(
             event_type="run.status",
             payload={"previous_status": previous, "status": run.status},
         )
+    return next_attempt_at
 
 
 async def reap_expired_leases(
@@ -846,7 +881,9 @@ async def reap_expired_leases(
         ).all()
     )
     for lease in records:
-        await _reset_expired_source(session, lease=lease, now=current)
+        next_attempt_at = await _reset_expired_source(
+            session, lease=lease, now=current
+        )
         grants = list(
             (
                 await session.scalars(
@@ -878,6 +915,12 @@ async def reap_expired_leases(
                 "work_kind": lease.work_kind,
                 "attempt": lease.attempt,
                 "worker_id": str(lease.worker_id),
+                "retry_scheduled": next_attempt_at is not None,
+                "next_attempt_at": (
+                    next_attempt_at.isoformat()
+                    if next_attempt_at is not None
+                    else None
+                ),
             },
         )
     return len(records)
@@ -1891,11 +1934,14 @@ async def complete_lease(
 ) -> ExecutionLeaseSummary:
     now = datetime.now(UTC)
     source = await _source_for_lease(session, lease)
-    retry = (
-        payload.retryable
-        and payload.outcome in {"FAILED", "TIMED_OUT"}
-        and lease.attempt < settings.worker_max_attempts
+    retry = execution_retry_allowed(
+        requested=payload.retryable,
+        outcome=payload.outcome,
+        attempt=lease.attempt,
+        max_attempts=settings.worker_max_attempts,
+        source_available=source is not None,
     )
+    next_attempt_at: datetime | None = None
     registrations = (
         [payload.artifact]
         if payload.artifact is not None
@@ -1919,13 +1965,19 @@ async def complete_lease(
     )
 
     if retry:
+        next_attempt_at = retry_available_at(
+            now=now,
+            attempt=lease.attempt,
+            base_seconds=settings.worker_retry_base_seconds,
+            max_seconds=settings.worker_retry_max_seconds,
+        )
         lease.status = "FAILED"
         lease.completed_at = now
         lease.failure_code = payload.error_code or "WORKER_RETRYABLE_FAILURE"
         lease.failure_summary = payload.error_summary
         if source is not None:
             source.status = "PENDING"
-            source.available_at = now + timedelta(seconds=min(300, 2**lease.attempt))
+            source.available_at = next_attempt_at
             source.last_error_code = lease.failure_code
             source.updated_at = now
         await _reset_retry_target(
@@ -2087,6 +2139,11 @@ async def complete_lease(
             "work_kind": lease.work_kind,
             "outcome": payload.outcome,
             "retryable": retry,
+            "next_attempt_at": (
+                next_attempt_at.isoformat()
+                if next_attempt_at is not None
+                else None
+            ),
             "artifact_id": str(artifact.id) if artifact is not None else None,
         },
     )
