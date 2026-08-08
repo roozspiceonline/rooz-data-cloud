@@ -177,6 +177,12 @@ async def foundation_status() -> dict[str, object]:
         "browser_egress_policy_available": True,
         "browser_egress_transport_wired": False,
         "browser_egress_subresource_revalidation": True,
+        "browser_gateway_transport_contract": (
+            "rdc.browser-gateway-transport-self-test/v1"
+        ),
+        "browser_gateway_transport_mode": "unix-domain-socket",
+        "browser_gateway_transport_self_test_available": True,
+        "browser_gateway_live_forwarding_enabled": False,
         "browser_policy_contract": "rdc.browser-policy/v1",
         "browser_runtime_self_test_contract": (
             "rdc.browser-runtime-self-test/v1"
