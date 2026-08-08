@@ -1,7 +1,7 @@
 import importlib.util
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 from uuid import uuid4
 
 import pytest

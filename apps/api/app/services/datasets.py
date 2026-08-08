@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import hashlib
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select

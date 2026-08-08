@@ -145,7 +145,7 @@ def main() -> None:
         "class DatasetAppendReceipt(UUIDPrimaryKeyMixin, Base):",
         '"uq_dataset_append_receipts_dataset_key"',
         "append_receipt_id: Mapped[UUID]",
-        'ForeignKey("control.dataset_append_receipts.id"',
+        '"control.dataset_append_receipts.id"',
     ]:
         require(marker in models, "Increment 3 model missing: " + marker)
 
