@@ -2,9 +2,8 @@
 
 ## Current status
 
-`rdc.browser/v2` is available as a **receipt-only Run intent**.
-
-It is not executable.
+`rdc.browser/v2` is a receipt-only Run intent. The browser-egress gateway policy
+contract now exists, but gateway transport is **not wired**.
 
 Phase 1L controls remain authoritative:
 
@@ -16,38 +15,54 @@ Browser self-test network=none
 
 ## Receipt-only behavior
 
-When a valid `browser_navigation` v2 request is accepted:
+For a valid v2 navigation Run:
 
-1. exact immutable AgentVersion must declare `browser=true`
-2. exact immutable AgentVersion must declare `network=web-egress`
-3. every `goto` hostname must match the operator allowlist
-4. request limits are checked against browser policy
-5. API stores `rdc.browser-navigation-receipt/v1`
-6. Run status is `DRAFT`
-7. no START outbox command is created
+1. immutable AgentVersion requires `browser=true`
+2. immutable AgentVersion requires `network=web-egress`
+3. navigation is checked against `rdc.browser-policy/v1`
+4. API creates `rdc.browser-egress-policy/v1`
+5. gateway-policy SHA-256 digest is bound into the navigation receipt
+6. Run remains `DRAFT`
+7. no START command is created
 8. control-plane v2 activation remains denied
-9. worker-side v2 receipt validation still terminates fail-closed
+9. worker reconstructs the gateway policy from its Phase 1J egress policy
+10. worker verifies payload + digest independently
+11. worker still terminates fail-closed because live navigation is disabled
 
-The receipt binds the deterministic v2 request digest to the browser-policy
-digest and records that execution and dispatch are disabled.
+## Gateway policy invariants
+
+Every future browser network request must be mediated as either a permitted
+top-level document or permitted subresource.
+
+The gateway must:
+
+- validate every URL as HTTPS/443
+- resolve only global/public addresses
+- pin the connection to the validated address
+- preserve TLS SNI/certificate validation for the allowlisted hostname
+- repeat validation on redirects
+- repeat validation on every subresource
+- enforce request, redirect, resource-byte and total-byte budgets
+- strip Authorization, Cookie and Proxy-Authorization
+- strip Set-Cookie
+- reject WebSocket/service-worker/WebRTC/proxy override surfaces
 
 ## Stop conditions
 
-Stop Phase 1M work immediately if any change:
+Stop Phase 1M immediately if any change:
 
-- queues a START command for a v2 receipt-only Run
-- grants v2 a canary sandbox activation
-- sends a public URL into the Phase 1L self-test runtime
-- removes `--network none` from the Agent
-- removes `--network none` from the browser runtime before the dedicated
-  browser-egress transport exists
-- allows HTTP or IP-literal navigation
-- adds click/type/evaluate/CDP
-- enables project secrets or persistent browser profiles
-- permits a receipt with `execution_enabled=true`
-- permits a receipt with `dispatch_enabled=true`
+- wires gateway transport before the policy receipt is independently verified
+- queues START for a receipt-only v2 Run
+- grants v2 sandbox activation
+- removes `--network none` from the current browser runtime
+- permits HTTP, IP literals, non-global DNS or non-allowlisted hosts
+- permits redirects/subresources without revalidation
+- permits WebSocket, service worker, WebRTC or arbitrary proxying
+- enables project secrets, persistent cookies or browser profiles
+- sets `transport_wired=true`
+- sets receipt execution/dispatch true
 
 ## Next increment
 
-Define the dedicated browser-egress gateway contract and SSRF/subresource
-mediation. Chromium must not receive unrestricted host networking.
+Implement an isolated browser-to-gateway transport namespace without granting
+Chromium unrestricted host networking.
