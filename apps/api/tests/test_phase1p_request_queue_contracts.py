@@ -7,7 +7,7 @@ REPO_ROOT = API_ROOT.parents[1]
 
 def test_phase1p_migration_has_rls_tenancy_and_immutable_history() -> None:
     source = (API_ROOT / "migrations/versions/20260809_0015_request_queues.py").read_text()
-    for marker in ("request_queues", "request_queue_requests", "request_queue_transitions", "ENABLE ROW LEVEL SECURITY", "rdc_request_queue_org", "request_queue_transition_immutable", "request_queue_enqueue_receipt_immutable", "Request Queue request identity is immutable", "enforce_request_queue_tenancy", "enforce_audit_event_tenancy", "audit_event_immutable"):
+    for marker in ("request_queues", "request_queue_requests", "request_queue_transitions", "ENABLE ROW LEVEL SECURITY", "rdc_request_queue_org", "request_queue_transition_immutable", "request_queue_enqueue_receipt_immutable", "Request Queue request identity is immutable", "enforce_request_queue_tenancy", "enforce_request_queue_request_reference", "enforce_audit_event_tenancy", "audit_event_immutable"):
         assert marker in source
 
 

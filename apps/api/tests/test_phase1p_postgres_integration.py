@@ -192,6 +192,34 @@ async def test_postgres_tenancy_trigger_rejects_cross_project_queue_request() ->
             )
 
 
+async def test_postgres_transition_rejects_request_from_another_queue() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_id, org_id, project_id, queue_id, _ = await _seed()
+    other_queue_id, other_request_id = uuid4(), uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id) VALUES (:q,:o,:p,'other',:u)"
+            ),
+            {"q": other_queue_id, "o": org_id, "p": project_id, "u": user_id},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO control.request_queue_requests (id,organization_id,project_id,queue_id,request_url,identity_digest,user_data,created_by_user_id) VALUES (:r,:o,:p,:q,'https://example.com/other','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','{}',:u)"
+            ),
+            {"r": other_request_id, "o": org_id, "p": project_id, "q": other_queue_id, "u": user_id},
+        )
+    with pytest.raises(DBAPIError, match="request tenancy mismatch"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO control.request_queue_transitions (organization_id,project_id,queue_id,request_id,from_status,to_status,reason,attempt_count,details) VALUES (:o,:p,:q,:r,NULL,'PENDING','ENQUEUED',0,'{}')"
+                ),
+                {"o": org_id, "p": project_id, "q": queue_id, "r": other_request_id},
+            )
+
+
 async def test_postgres_request_identity_and_enqueue_receipts_are_immutable() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
