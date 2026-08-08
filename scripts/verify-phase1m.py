@@ -522,6 +522,7 @@ def main() -> None:
             + forbidden,
         )
 
+    main_source = read("apps/api/app/main.py")
     for marker in [
         '"rdc.browser-gateway-transport-self-test/v1"',
         '"browser_gateway_transport_mode": "unix-domain-socket"',
@@ -583,7 +584,6 @@ def main() -> None:
             "worker v2 receipt guard missing: " + marker,
         )
 
-    main_source = read("apps/api/app/main.py")
     for marker in [
         '"browser_navigation_request_contract": "rdc.browser/v2"',
         '"rdc.browser-navigation-receipt/v1"',
