@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-egress-policy.schema.json",
+  "title": "RDC Browser Egress Policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "mode",
+    "allowed_schemes",
+    "allowed_methods",
+    "allowed_resource_types",
+    "allowed_hosts",
+    "deny_ip_literals",
+    "require_global_dns",
+    "pin_validated_address",
+    "revalidate_redirects",
+    "revalidate_subresources",
+    "strip_request_headers",
+    "strip_response_headers",
+    "service_workers_enabled",
+    "websockets_enabled",
+    "webrtc_enabled",
+    "proxy_override_enabled",
+    "persistent_cookies_enabled",
+    "max_requests",
+    "max_resource_bytes",
+    "max_total_bytes",
+    "max_redirects",
+    "connect_timeout_seconds",
+    "request_timeout_seconds",
+    "transport_wired",
+    "browser_network"
+  ],
+  "properties": {
+    "schema_version": {"const": "rdc.browser-egress-policy/v1"},
+    "mode": {"const": "gateway-policy-only"},
+    "allowed_schemes": {"const": ["https"]},
+    "allowed_methods": {"const": ["GET", "HEAD"]},
+    "allowed_resource_types": {
+      "const": [
+        "document",
+        "fetch",
+        "font",
+        "image",
+        "script",
+        "stylesheet",
+        "xhr"
+      ]
+    },
+    "allowed_hosts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 3, "maxLength": 253}
+    },
+    "deny_ip_literals": {"const": true},
+    "require_global_dns": {"const": true},
+    "pin_validated_address": {"const": true},
+    "revalidate_redirects": {"const": true},
+    "revalidate_subresources": {"const": true},
+    "strip_request_headers": {
+      "const": ["authorization", "cookie", "proxy-authorization"]
+    },
+    "strip_response_headers": {"const": ["set-cookie"]},
+    "service_workers_enabled": {"const": false},
+    "websockets_enabled": {"const": false},
+    "webrtc_enabled": {"const": false},
+    "proxy_override_enabled": {"const": false},
+    "persistent_cookies_enabled": {"const": false},
+    "max_requests": {"type": "integer", "minimum": 1, "maximum": 32},
+    "max_resource_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 8388608
+    },
+    "max_total_bytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 33554432
+    },
+    "max_redirects": {"type": "integer", "minimum": 0, "maximum": 5},
+    "connect_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 15
+    },
+    "request_timeout_seconds": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30
+    },
+    "transport_wired": {"const": false},
+    "browser_network": {"const": "none"}
+  }
+}
