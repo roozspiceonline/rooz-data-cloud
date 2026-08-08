@@ -37,14 +37,13 @@ def test_phase1n_increment2_permissions_are_tenant_role_scoped() -> None:
     ]
 
 
-def test_phase1n_increment2_routes_expose_metadata_only() -> None:
+def test_phase1n_increment2_metadata_routes_remain_available() -> None:
     from app.main import app
 
     paths = app.openapi()["paths"]
     assert "/api/v1/runs/{run_id}/datasets" in paths
     assert "/api/v1/projects/{project_id}/datasets" in paths
     assert "/api/v1/datasets/{dataset_id}" in paths
-    assert "/api/v1/datasets/{dataset_id}/items" not in paths
 
 
 def test_phase1n_increment2_migration_has_rls_and_lineage_guards() -> None:
@@ -72,12 +71,11 @@ def test_phase1n_increment2_migration_has_rls_and_lineage_guards() -> None:
     assert "dataset_items_worker" not in migration
 
 
-def test_phase1n_increment2_service_has_no_item_append_or_execution_surface() -> None:
+def test_phase1n_dataset_service_has_no_execution_or_direct_db_surface() -> None:
     source = Path("app/services/datasets.py").read_text(encoding="utf-8")
     lowered = source.casefold()
 
     for prohibited in [
-        "datasetitem(",
         "subprocess",
         "os.system",
         "docker.sock",
