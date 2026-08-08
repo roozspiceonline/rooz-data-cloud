@@ -167,6 +167,12 @@ async def foundation_status() -> dict[str, object]:
         "versioned_web_fetch_contract_available": True,
         "web_fetch_activation_scope": "phase1j-single-canary",
         "browser_request_contract": "rdc.browser/v1",
+        "browser_navigation_request_contract": "rdc.browser/v2",
+        "browser_navigation_receipt_contract": (
+            "rdc.browser-navigation-receipt/v1"
+        ),
+        "browser_navigation_intent_contract_available": True,
+        "browser_navigation_dispatch_enabled": False,
         "browser_policy_contract": "rdc.browser-policy/v1",
         "browser_runtime_self_test_contract": (
             "rdc.browser-runtime-self-test/v1"
