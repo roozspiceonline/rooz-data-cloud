@@ -1,32 +1,30 @@
-# Rooz Data Cloud — Phase 1I
+# Rooz Data Cloud — Phase 1M in progress
 
-Phase 1I adds controlled sandbox activation for exactly one configured
-immutable AgentVersion and one exact single-concurrency sandbox worker.
+Rooz Data Cloud has completed and merged Phase 1L: the controlled-browser
+execution foundation.
 
-## Included
+The authoritative merged browser baseline provides:
 
-- Global sandbox execution master switch remains disabled by default
-- Separate activation mode defaults to `disabled`
-- `canary` mode requires one exact AgentVersion UUID and one exact worker name
-- Canary worker must use `max_concurrency=1`
-- Canary Agent must have no secrets, network, browser, dataset, key-value
-  store, or request-queue capability
-- Canary-specific resource ceilings are narrower than the Phase 1H sandbox
-- Claim payloads include a digest-bound activation receipt
-- Sandbox worker independently validates the activation receipt
-- Build artifact provenance binds activation, AgentVersion, and source SHA-256
-- Run artifact provenance binds activation, Run ID, and image digest
-- API rejects provenance that does not match the immutable lease snapshot
-- Deterministic offline `examples/canary-agent` fixture and runbook
-- General untrusted Agent execution remains release-blocked
+- strict `rdc.browser/v1` intent
+- operator-owned browser policy receipts and SHA-256 binding
+- controlled-browser activation receipts
+- independent worker verification
+- immutable local browser-runtime image references
+- dedicated Chromium-compatible seccomp
+- isolated `about:blank` Playwright/Chromium self-test
+- forced browser-container cleanup
+- false-by-default browser gate
+- Agent and browser self-test runtime on `--network none`
 
-## Safe default
+Phase 1M is now building the controlled navigation and extraction protocol.
 
-```text
-RDC_SANDBOX_EXECUTION_ENABLED=false
-RDC_SANDBOX_ACTIVATION_MODE=disabled
-```
+## Phase 1M safety boundary
 
-Turning on the master switch alone is insufficient. Phase 1I requires the
-exact canary version and exact worker configuration before any execution claim
-can become enabled.
+The first Phase 1M increment introduces `rdc.browser/v2` protocol validation
+only. Public Chromium navigation is still disabled.
+
+No Phase 1M change may grant unrestricted Internet access to Agent containers
+or Chromium. Live browser navigation requires a dedicated RDC-controlled
+browser-egress gateway with SSRF, redirect, DNS and subresource enforcement.
+
+General untrusted browser execution remains release-blocked.
