@@ -63,7 +63,12 @@ def _https_url(value: object, policy: BrowserPolicy) -> tuple[str, str]:
         _fail("Browser navigation URL requires a hostname.")
     if parsed.username is not None or parsed.password is not None:
         _fail("Browser navigation URL credentials are prohibited.")
-    host = normalize_hostname(parsed.hostname)
+    try:
+        host = normalize_hostname(parsed.hostname)
+    except BrowserPolicyError as exc:
+        raise BrowserNavigationContractError(
+            "Browser navigation hostname is unsafe."
+        ) from exc
     if host not in policy.allowed_hosts:
         _fail("Browser navigation hostname is not operator-allowlisted.")
     return value, host
