@@ -53,6 +53,7 @@ class SandboxWorkerConfig:
     web_egress_connect_timeout_seconds: int
     web_egress_request_timeout_seconds: int
     browser_enabled: bool
+    browser_live_navigation_enabled: bool
     browser_max_pages: int
     browser_max_actions: int
     browser_navigation_timeout_seconds: int
@@ -162,7 +163,14 @@ class SandboxWorkerConfig:
                     "15",
                 )
             ),
-            browser_enabled=_env_bool("RDC_SANDBOX_CANARY_BROWSER_ENABLED", False),
+            browser_enabled=_env_bool(
+                "RDC_SANDBOX_CANARY_BROWSER_ENABLED",
+                False,
+            ),
+            browser_live_navigation_enabled=_env_bool(
+                "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED",
+                False,
+            ),
             browser_max_pages=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_PAGES", "1")),
             browser_max_actions=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_ACTIONS", "8")),
             browser_navigation_timeout_seconds=int(

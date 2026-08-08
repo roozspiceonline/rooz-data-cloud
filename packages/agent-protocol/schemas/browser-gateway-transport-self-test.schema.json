@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-gateway-transport-self-test.schema.json",
+  "title": "RDC Browser Gateway Transport Self-Test v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "browser",
+    "page_url",
+    "downloads_enabled",
+    "service_workers",
+    "remote_cdp",
+    "external_navigation",
+    "gateway_transport",
+    "gateway_policy_digest",
+    "gateway_policy_enforced",
+    "gateway_external_request",
+    "gateway_live_forwarding",
+    "browser_network"
+  ],
+  "properties": {
+    "schema_version": {"const": "rdc.browser-gateway-transport-self-test/v1"},
+    "browser": {"const": "chromium"},
+    "page_url": {"const": "about:blank"},
+    "downloads_enabled": {"const": false},
+    "service_workers": {"const": "blocked"},
+    "remote_cdp": {"const": false},
+    "external_navigation": {"const": false},
+    "gateway_transport": {"const": "unix"},
+    "gateway_policy_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gateway_policy_enforced": {"const": true},
+    "gateway_external_request": {"const": false},
+    "gateway_live_forwarding": {"const": false},
+    "browser_network": {"const": "none"}
+  }
+}

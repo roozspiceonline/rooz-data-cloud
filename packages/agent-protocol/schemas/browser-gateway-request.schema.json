@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-gateway-request.schema.json",
+  "title": "RDC Browser Gateway Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "gateway_policy_digest",
+    "resource_type",
+    "method",
+    "url"
+  ],
+  "properties": {
+    "schema_version": {"const": "rdc.browser-gateway-request/v1"},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "gateway_policy_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "resource_type": {
+      "enum": ["document", "fetch", "font", "image", "script", "stylesheet", "xhr"]
+    },
+    "method": {"enum": ["GET", "HEAD"]},
+    "url": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 8192,
+      "pattern": "^https://"
+    }
+  }
+}

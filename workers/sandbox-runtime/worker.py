@@ -7,7 +7,16 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from browser_executor import BrowserRuntimeError, run_browser_self_test
+from browser_egress_policy import BrowserEgressPolicy
+from browser_executor import (
+    BrowserRuntimeError,
+    run_browser_live_navigation,
+    run_browser_self_test,
+)
+from browser_navigation_contract import (
+    BrowserNavigationContractError,
+    validate_browser_navigation_plan,
+)
 from browser_policy import (
     BrowserPolicy,
     BrowserPolicyError,
@@ -88,12 +97,90 @@ def _worker_browser_policy(
     )
 
 
+def _require_live_browser_navigation_receipt(
+    input_reference: dict[str, object],
+    *,
+    egress_policy: EgressPolicy,
+    browser_policy: BrowserPolicy,
+    live_navigation_enabled: bool,
+) -> None:
+    if not live_navigation_enabled:
+        raise SandboxPolicyError("Worker live browser navigation gate is disabled.")
+    navigation = input_reference.get("browser_navigation")
+    receipt = input_reference.get("browser_navigation_receipt")
+    stored_policy = input_reference.get("browser_policy")
+    stored_policy_digest = input_reference.get("browser_policy_digest")
+    stored_egress_policy = input_reference.get("browser_egress_policy")
+    stored_egress_digest = input_reference.get(
+        "browser_egress_policy_digest"
+    )
+    if (
+        not isinstance(navigation, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(stored_policy, dict)
+        or not isinstance(stored_policy_digest, str)
+        or not isinstance(stored_egress_policy, dict)
+        or not isinstance(stored_egress_digest, str)
+    ):
+        raise SandboxPolicyError(
+            "Phase 1M browser navigation claim lacks immutable receipts."
+        )
+    if _canonical_digest(stored_policy) != browser_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M stored browser policy does not match worker policy."
+        )
+    if stored_policy_digest != browser_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M browser policy digest does not match worker policy."
+        )
+    browser_egress_policy = BrowserEgressPolicy.create(
+        egress_policy
+    )
+    if stored_egress_policy != browser_egress_policy.as_dict():
+        raise SandboxPolicyError(
+            "Phase 1M stored browser egress policy does not match worker policy."
+        )
+    if stored_egress_digest != browser_egress_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M browser egress policy digest does not match worker policy."
+        )
+
+    try:
+        normalized = validate_browser_navigation_plan(
+            navigation,
+            policy=browser_policy,
+        )
+    except BrowserNavigationContractError as exc:
+        raise SandboxPolicyError(
+            "Phase 1M navigation failed independent worker validation."
+        ) from exc
+
+    expected_receipt = {
+        "schema_version": "rdc.browser-navigation-receipt/v1",
+        "request_schema_version": "rdc.browser/v2",
+        "request_digest": normalized["request_digest"],
+        "browser_policy_digest": browser_policy.digest,
+        "browser_egress_policy_digest": browser_egress_policy.digest,
+        "execution_enabled": True,
+        "dispatch_enabled": True,
+        "browser_network": "none",
+        "browser_egress_gateway_required": True,
+    }
+    if receipt != expected_receipt:
+        raise SandboxPolicyError(
+            "Phase 1M browser navigation receipt does not match the Run intent."
+        )
+    return None
+
+
+
 def _require_canary_activation(
     payload: dict[str, Any],
     *,
     worker_name: str,
     egress_policy: EgressPolicy | None,
     browser_policy: BrowserPolicy | None,
+    browser_live_navigation_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -218,27 +305,35 @@ def _require_canary_activation(
             raise SandboxPolicyError(
                 "Controlled-browser claim lacks an input reference."
             )
-        browser_plan = input_reference.get("browser")
-        stored_policy = input_reference.get("browser_policy")
-        stored_digest = input_reference.get("browser_policy_digest")
-        if not isinstance(stored_policy, dict):
-            raise SandboxPolicyError(
-                "Controlled-browser claim lacks a policy receipt."
+        if "browser_navigation" in input_reference:
+            _require_live_browser_navigation_receipt(
+                input_reference,
+                egress_policy=egress_policy,
+                browser_policy=browser_policy,
+                live_navigation_enabled=browser_live_navigation_enabled,
             )
-        if _canonical_digest(stored_policy) != browser_policy.digest:
-            raise SandboxPolicyError(
-                "Stored browser policy receipt does not match worker policy."
-            )
-        if stored_digest != browser_policy.digest:
-            raise SandboxPolicyError(
-                "Stored browser policy digest does not match worker policy."
-            )
-        try:
-            validate_browser_plan(browser_plan, policy=browser_policy)
-        except BrowserPolicyError as exc:
-            raise SandboxPolicyError(
-                "Browser plan failed independent worker validation."
-            ) from exc
+        else:
+            browser_plan = input_reference.get("browser")
+            stored_policy = input_reference.get("browser_policy")
+            stored_digest = input_reference.get("browser_policy_digest")
+            if not isinstance(stored_policy, dict):
+                raise SandboxPolicyError(
+                    "Controlled-browser claim lacks a policy receipt."
+                )
+            if _canonical_digest(stored_policy) != browser_policy.digest:
+                raise SandboxPolicyError(
+                    "Stored browser policy receipt does not match worker policy."
+                )
+            if stored_digest != browser_policy.digest:
+                raise SandboxPolicyError(
+                    "Stored browser policy digest does not match worker policy."
+                )
+            try:
+                validate_browser_plan(browser_plan, policy=browser_policy)
+            except BrowserPolicyError as exc:
+                raise SandboxPolicyError(
+                    "Browser plan failed independent worker validation."
+                ) from exc
     else:
         raise SandboxPolicyError(
             "Canary activation capability profile is unsupported."
@@ -321,6 +416,9 @@ def _build(
             worker_name=worker_name,
             egress_policy=egress_policy,
             browser_policy=browser_policy,
+            browser_live_navigation_enabled=(
+                config.browser_live_navigation_enabled
+            ),
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -410,36 +508,84 @@ def _run(
             worker_name=worker_name,
             egress_policy=egress_policy,
             browser_policy=browser_policy,
+            browser_live_navigation_enabled=(
+                config.browser_live_navigation_enabled
+            ),
         )
         if activation.get("capability_profile") == "controlled-browser":
+            input_reference = payload.get("input_reference")
+            if not isinstance(input_reference, dict):
+                raise SandboxPolicyError("Controlled-browser Run lacks input reference.")
+            browser_navigation = input_reference.get("browser_navigation")
             try:
                 client.status(lease_id, token, status="RUNNING")
-                browser_output, browser_log = run_browser_self_test(
-                    config=config,
-                    run_id=str(payload["run_id"]),
-                    workspace=workspace,
-                )
-            except BrowserRuntimeError:
+                if browser_navigation is not None:
+                    if (
+                        not isinstance(browser_navigation, dict)
+                        or egress_policy is None
+                        or browser_policy is None
+                    ):
+                        raise SandboxPolicyError("Live browser Run lacks validated policy.")
+                    browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
+                    receipt = input_reference.get("browser_navigation_receipt")
+                    if not isinstance(receipt, dict):
+                        raise SandboxPolicyError("Live browser Run lacks receipt.")
+                    request_digest = receipt.get("request_digest")
+                    if not isinstance(request_digest, str):
+                        raise SandboxPolicyError("Live browser Run request digest is invalid.")
+                    browser_output, browser_log = run_browser_live_navigation(
+                        config=config,
+                        run_id=str(payload["run_id"]),
+                        workspace=workspace,
+                        navigation_plan=browser_navigation,
+                        browser_policy_digest=browser_policy.digest,
+                        browser_egress_policy=browser_egress_policy,
+                        request_digest=request_digest,
+                        max_screenshot_bytes=browser_policy.max_screenshot_bytes,
+                        navigation_timeout_seconds=browser_policy.navigation_timeout_seconds,
+                        runtime_timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
+                    )
+                    browser_provenance = {
+                        "activation": activation,
+                        "run_id": str(payload["run_id"]),
+                        "browser_runtime_mode": "bounded-unix-gateway-navigation",
+                        "browser_runtime_image_ref": config.browser_runtime_image_ref,
+                        "request_digest": request_digest,
+                        "browser_policy_digest": browser_policy.digest,
+                        "browser_egress_policy_digest": browser_egress_policy.digest,
+                        "browser_network": "none",
+                        "gateway_transport": "unix",
+                        "direct_browser_internet": False,
+                        "external_navigation": True,
+                    }
+                else:
+                    browser_output, browser_log = run_browser_self_test(
+                        config=config,
+                        run_id=str(payload["run_id"]),
+                        workspace=workspace,
+                    )
+                    browser_provenance = {
+                        "activation": activation,
+                        "run_id": str(payload["run_id"]),
+                        "browser_runtime_mode": "about-blank-self-test",
+                        "browser_runtime_image_ref": config.browser_runtime_image_ref,
+                        "browser_network": "none",
+                        "direct_browser_internet": False,
+                        "external_navigation": False,
+                    }
+            except (BrowserRuntimeError, SandboxPolicyError):
                 client.complete(
                     lease_id,
                     token,
                     {
                         "outcome": "FAILED",
                         "retryable": False,
-                        "error_code": "BROWSER_RUNTIME_SELF_TEST_FAILED",
-                        "error_summary": (
-                            "The isolated browser runtime self-test failed closed."
-                        ),
+                        "error_code": "BROWSER_RUNTIME_FAILED",
+                        "error_summary": "Controlled browser execution failed closed.",
                     },
                 )
                 return
 
-            browser_provenance = {
-                "activation": activation,
-                "run_id": str(payload["run_id"]),
-                "browser_runtime_mode": "about-blank-self-test",
-                "external_navigation": False,
-            }
             browser_artifacts: list[LocalArtifact] = []
             for kind, path, media_type in [
                 ("RUN_OUTPUT", browser_output, "application/json"),

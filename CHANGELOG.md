@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.13.0-phase1m — 2026-08-08
+
+- Added strict `rdc.browser/v2` controlled navigation/extraction.
+- Added exact HTTPS allowlists, global DNS, validated-address pinning, TLS
+  hostname verification, redirect/subresource revalidation and bounded budgets.
+- Added Unix-domain-socket browser gateway transport while Chromium remains
+  `--network none`.
+- Added plan-bound browser navigation results and artifact provenance.
+- Added independent false-by-default
+  `RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED`.
+- Bound live navigation to exact AgentVersion, exact worker, no secrets,
+  concurrency 1 and hard canary resource ceilings.
+- Preserved DRAFT/no-START behavior when the live canary is inactive.
+- Kept general untrusted browser execution release-blocked.
+
 ## 0.12.0-phase1l — 2026-08-08
 
 - Added the strict `rdc.browser/v1` snapshot intent contract and

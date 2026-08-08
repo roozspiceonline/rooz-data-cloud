@@ -241,7 +241,7 @@ def main() -> None:
         '"web_fetch_result_contract": "rdc.web-fetch-result/v1"',
         '"versioned_web_fetch_contract_available": True',
         '"web_fetch_activation_scope": "phase1j-single-canary"',
-        '"browser_execution_enabled": False',
+        '"browser_execution_enabled": _browser_live_navigation_canary_enabled()',
         '"untrusted_agent_execution_enabled": False',
     ]:
         require(
@@ -257,6 +257,11 @@ def main() -> None:
     require(
         "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS=[]" in env_example,
         "web-egress allowlist no longer defaults empty",
+    )
+    require(
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false"
+        in env_example,
+        "live browser navigation no longer defaults false",
     )
 
     canary_manifest = json.loads(

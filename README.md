@@ -1,32 +1,20 @@
-# Rooz Data Cloud — Phase 1I
+# Rooz Data Cloud — Phase 1M merge candidate
 
-Phase 1I adds controlled sandbox activation for exactly one configured
-immutable AgentVersion and one exact single-concurrency sandbox worker.
+Rooz Data Cloud Phase 1M implements controlled browser navigation and bounded
+extraction on top of the merged Phase 1L browser foundation.
 
-## Included
+Live navigation has its own false-by-default gate:
+`RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false`.
 
-- Global sandbox execution master switch remains disabled by default
-- Separate activation mode defaults to `disabled`
-- `canary` mode requires one exact AgentVersion UUID and one exact worker name
-- Canary worker must use `max_concurrency=1`
-- Canary Agent must have no secrets, network, browser, dataset, key-value
-  store, or request-queue capability
-- Canary-specific resource ceilings are narrower than the Phase 1H sandbox
-- Claim payloads include a digest-bound activation receipt
-- Sandbox worker independently validates the activation receipt
-- Build artifact provenance binds activation, AgentVersion, and source SHA-256
-- Run artifact provenance binds activation, Run ID, and image digest
-- API rejects provenance that does not match the immutable lease snapshot
-- Deterministic offline `examples/canary-agent` fixture and runbook
-- General untrusted Agent execution remains release-blocked
+The capability includes strict `rdc.browser/v2`, exact HTTPS hostname allowlists,
+global-DNS validation, validated-address pinning, TLS hostname/SNI verification,
+redirect/subresource revalidation, per-Run Unix gateway transport, plan-bound
+results and bounded text/HTML/viewport screenshot extraction.
 
-## Safe default
+Agent containers and Chromium remain `--network none`. Browser cookies,
+Authorization headers and request bodies never cross the gateway. General
+untrusted browser execution remains release-blocked.
 
-```text
-RDC_SANDBOX_EXECUTION_ENABLED=false
-RDC_SANDBOX_ACTIVATION_MODE=disabled
-```
-
-Turning on the master switch alone is insufficient. Phase 1I requires the
-exact canary version and exact worker configuration before any execution claim
-can become enabled.
+Without the full exact canary configuration, new v2 Runs remain DRAFT with no
+START command. PR #50 remains draft and unmerged until exact-head CI is green
+and the Product Owner explicitly approves the Phase 1M merge.

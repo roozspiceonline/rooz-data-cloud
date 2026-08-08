@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-navigation-result.schema.json",
+  "title": "RDC Browser Navigation Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_digest",
+    "browser_policy_digest",
+    "browser_egress_policy_digest",
+    "browser_network",
+    "gateway_transport",
+    "gateway_live_forwarding",
+    "final_url",
+    "steps",
+    "egress_budget"
+  ],
+  "properties": {
+    "schema_version": {"const": "rdc.browser-navigation-result/v1"},
+    "request_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "browser_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "browser_egress_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "browser_network": {"const": "none"},
+    "gateway_transport": {"const": "unix"},
+    "gateway_live_forwarding": {"const": true},
+    "final_url": {"type": "string", "pattern": "^https://"},
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {"type": "object"}
+    },
+    "egress_budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requests_used",
+        "bytes_received",
+        "redirects_used",
+        "max_requests",
+        "max_total_bytes",
+        "max_redirects"
+      ],
+      "properties": {
+        "requests_used": {"type": "integer", "minimum": 0},
+        "bytes_received": {"type": "integer", "minimum": 0},
+        "redirects_used": {"type": "integer", "minimum": 0},
+        "max_requests": {"type": "integer", "minimum": 1},
+        "max_total_bytes": {"type": "integer", "minimum": 1024},
+        "max_redirects": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

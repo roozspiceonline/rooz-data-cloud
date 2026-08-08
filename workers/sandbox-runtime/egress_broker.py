@@ -190,6 +190,26 @@ def _request_once(
         connection.close()
 
 
+def broker_validated_resource_once(
+    *,
+    target: ValidatedTarget,
+    method: str,
+    policy: EgressPolicy,
+    connection_factory: ConnectionFactory = _default_connection,
+) -> tuple[int, dict[str, str], bytes, str | None]:
+    normalized_method = method.strip().upper()
+    if normalized_method not in {"GET", "HEAD"}:
+        raise EgressPolicyError(
+            "Validated broker request permits GET and HEAD only."
+        )
+    return _request_once(
+        target=target,
+        method=normalized_method,
+        policy=policy,
+        connection_factory=connection_factory,
+    )
+
+
 def _fetch(
     *,
     request_id: str,
