@@ -22,3 +22,12 @@ def test_phase1p_routes_use_server_derived_queue_ownership() -> None:
     source = (API_ROOT / "app/api/routes/request_queues.py").read_text()
     assert 'require_request_queue_permission("queue.enqueue")' in source
     assert "organization_id=" not in source
+
+
+def test_phase1p_migration_upgrade_and_downgrade_cover_all_queue_tables() -> None:
+    source = (API_ROOT / "migrations/versions/20260809_0015_request_queues.py").read_text()
+    assert 'down_revision: str | None = "20260808_0014"' in source
+    downgrade = source.split("def downgrade() -> None:", 1)[1]
+    for table in ("request_queue_enqueue_receipts", "request_queue_transitions", "request_queue_requests", "request_queues"):
+        assert f'op.drop_table("{table}", schema="control")' in downgrade
+    assert downgrade.index('op.drop_table("request_queue_enqueue_receipts"') < downgrade.index('op.drop_table("request_queues"')

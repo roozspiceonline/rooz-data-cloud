@@ -14,3 +14,7 @@ as forensic data: it is immutable and should not be edited or deleted.
 Worker Queue access remains off unless sandbox execution, canary activation,
 and `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` are all enabled. Enable it only
 for the pinned canary and monitor stale-claim, retry, and tenancy failures.
+
+CI runs the migration against PostgreSQL and exercises simultaneous claims and
+cross-project trigger rejection. Rollback removes receipts and transition rows
+before requests and queues so foreign-key dependencies remain valid.
