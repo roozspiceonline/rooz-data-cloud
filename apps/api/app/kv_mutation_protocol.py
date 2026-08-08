@@ -7,6 +7,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from typing import NoReturn
 
 SCHEMA_VERSION = "rdc.kv-write/v1"
 MAX_KEY_LENGTH = 256
@@ -44,7 +45,7 @@ class ValidatedKVMutation:
     value_bytes: bytes | None
 
 
-def _fail(message: str) -> None:
+def _fail(message: str) -> NoReturn:
     raise KVProtocolError(message)
 
 

@@ -350,8 +350,12 @@ async def mutate_key_value_record(
         ):
             raise RuntimeError("Validated SET mutation is missing value lineage.")
 
-        was_live = current is not None and not current.deleted
-        previous_size = current.current_size_bytes if was_live else 0
+        if current is not None and not current.deleted:
+            was_live = True
+            previous_size = current.current_size_bytes
+        else:
+            was_live = False
+            previous_size = 0
         projected_count = (
             locked_store.record_count
             if was_live
