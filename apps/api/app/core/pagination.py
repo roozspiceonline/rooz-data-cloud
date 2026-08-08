@@ -13,6 +13,11 @@ settings = get_settings()
 
 
 @dataclass(frozen=True)
+class DatasetItemCursorPosition:
+    sequence: int
+
+
+@dataclass(frozen=True)
 class CursorPosition:
     created_at: datetime
     resource_id: UUID
@@ -75,6 +80,73 @@ def decode_cursor(value: str | None) -> CursorPosition | None:
             created_at=datetime.fromisoformat(str(data["created_at"])),
             resource_id=UUID(str(data["id"])),
         )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_dataset_item_cursor(
+    *,
+    dataset_id: UUID,
+    sequence: int,
+) -> str:
+    if sequence < 1:
+        raise ValueError("Dataset item cursor sequence must be positive")
+    payload = json.dumps(
+        {
+            "dataset_id": str(dataset_id),
+            "kind": "dataset-items",
+            "sequence": sequence,
+            "v": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    signature = hmac.new(
+        settings.cursor_signing_key.encode(),
+        payload,
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(payload + signature).decode().rstrip("=")
+
+
+def decode_dataset_item_cursor(
+    value: str | None,
+    *,
+    dataset_id: UUID,
+) -> DatasetItemCursorPosition | None:
+    if value is None:
+        return None
+    if not value or len(value) > 512:
+        raise _invalid_cursor()
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode())
+        canonical = base64.urlsafe_b64encode(decoded).decode().rstrip("=")
+        if not hmac.compare_digest(canonical, value):
+            raise ValueError("cursor encoding is not canonical")
+        if len(decoded) <= hashlib.sha256().digest_size:
+            raise ValueError("cursor is too short")
+        payload = decoded[: -hashlib.sha256().digest_size]
+        supplied = decoded[-hashlib.sha256().digest_size :]
+        expected = hmac.new(
+            settings.cursor_signing_key.encode(),
+            payload,
+            hashlib.sha256,
+        ).digest()
+        if not hmac.compare_digest(supplied, expected):
+            raise ValueError("cursor signature mismatch")
+        data = json.loads(payload.decode())
+        raw_sequence = data["sequence"]
+        if (
+            data.get("v") != 1
+            or data.get("kind") != "dataset-items"
+            or data.get("dataset_id") != str(dataset_id)
+            or not isinstance(raw_sequence, int)
+            or isinstance(raw_sequence, bool)
+            or raw_sequence < 1
+        ):
+            raise ValueError("Dataset item cursor binding is invalid")
+        return DatasetItemCursorPosition(sequence=raw_sequence)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _invalid_cursor() from exc
 

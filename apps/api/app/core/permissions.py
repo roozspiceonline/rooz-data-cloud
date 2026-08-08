@@ -8,7 +8,7 @@ PERMISSIONS = frozenset(
         "agent.create", "agent.read", "agent.update", "agent.version_create",
         "build.create", "build.read", "run.create", "run.read", "run.cancel",
         "execution.read", "storage.read", "storage.upload", "storage.download",
-        "dataset.create", "dataset.read", "dataset.write",
+        "dataset.create", "dataset.read", "dataset.write", "dataset.export",
         "secret.read_metadata", "secret.create", "secret.replace", "secret.delete",
         "api_key.create", "api_key.read_metadata", "api_key.revoke", "audit.read",
     }
@@ -24,7 +24,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "agent.update", "agent.version_create", "build.create", "build.read",
             "run.create", "run.read", "run.cancel", "execution.read",
             "storage.read", "storage.upload", "storage.download",
-            "dataset.create", "dataset.read", "dataset.write",
+            "dataset.create", "dataset.read", "dataset.write", "dataset.export",
             "secret.read_metadata", "secret.create", "secret.replace",
             "secret.delete", "api_key.create", "api_key.read_metadata",
             "api_key.revoke",
@@ -34,7 +34,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
         {
             "organization.read", "membership.read", "project.read", "agent.read",
             "build.read", "run.read", "execution.read", "storage.read",
-            "storage.download", "dataset.read", "api_key.read_metadata",
+            "storage.download", "dataset.read", "dataset.export", "api_key.read_metadata",
         }
     ),
     "operator": frozenset(
@@ -42,13 +42,14 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read", "membership.read", "project.read", "agent.read",
             "build.read", "run.create", "run.read", "run.cancel",
             "execution.read", "storage.read", "storage.download", "dataset.read",
+            "dataset.export",
         }
     ),
     "viewer": frozenset(
         {
             "organization.read", "project.read", "agent.read", "build.read",
             "run.read", "execution.read", "storage.read", "storage.download",
-            "dataset.read",
+            "dataset.read", "dataset.export",
         }
     ),
     "billing_manager": frozenset({"organization.read"}),

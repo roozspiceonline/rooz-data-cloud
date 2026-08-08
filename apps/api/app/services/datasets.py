@@ -14,6 +14,7 @@ from ..dataset_append_protocol import (
 from ..dataset_schemas import (
     CreateDatasetRequest,
     DatasetAppendReceiptSummary,
+    DatasetItemSummary,
     DatasetSummary,
 )
 from ..models import Dataset, DatasetAppendReceipt, DatasetItem, Run
@@ -21,6 +22,15 @@ from .identity_tenancy import append_audit_event
 
 MAX_DATASET_ITEMS = 100_000
 MAX_DATASET_BYTES = 268_435_456
+MAX_DATASET_EXPORT_ITEMS = 10_000
+MAX_DATASET_EXPORT_BYTES = 16_777_216
+
+
+@dataclass(frozen=True)
+class DatasetExportOutcome:
+    content: bytes
+    sha256_digest: str
+    item_count: int
 
 
 @dataclass(frozen=True)
@@ -31,6 +41,20 @@ class DatasetAppendOutcome:
 
 def dataset_summary(record: Dataset) -> DatasetSummary:
     return DatasetSummary.model_validate(record)
+
+
+def dataset_item_summary(record: DatasetItem) -> DatasetItemSummary:
+    return DatasetItemSummary(
+        id=record.id,
+        dataset_id=record.dataset_id,
+        append_receipt_id=record.append_receipt_id,
+        run_id=record.run_id,
+        sequence=record.sequence,
+        item=record.item_json,
+        size_bytes=record.size_bytes,
+        sha256_digest=record.sha256_digest,
+        created_at=record.created_at,
+    )
 
 
 def dataset_append_receipt_summary(
@@ -254,3 +278,116 @@ async def list_datasets(
         ).all()
     )
     return rows[:limit], len(rows) > limit
+
+async def list_dataset_items(
+    session: AsyncSession,
+    *,
+    dataset_id: UUID,
+    after_sequence: int | None,
+    limit: int,
+) -> tuple[list[DatasetItem], bool]:
+    statement = select(DatasetItem).where(DatasetItem.dataset_id == dataset_id)
+    if after_sequence is not None:
+        statement = statement.where(DatasetItem.sequence > after_sequence)
+    rows = list(
+        (
+            await session.scalars(
+                statement.order_by(DatasetItem.sequence.asc()).limit(limit + 1)
+            )
+        ).all()
+    )
+    return rows[:limit], len(rows) > limit
+
+
+async def export_dataset_jsonl(
+    session: AsyncSession,
+    *,
+    dataset: Dataset,
+    actor_type: str,
+    actor_id: str,
+    request_id: str,
+) -> DatasetExportOutcome:
+    if dataset.item_count > MAX_DATASET_EXPORT_ITEMS:
+        raise ApiError(
+            status_code=413,
+            code="DATASET_EXPORT_ITEM_LIMIT_EXCEEDED",
+            message=(
+                "The Dataset exceeds the bounded export item limit; "
+                "use cursor pagination."
+            ),
+        )
+    projected_bytes = dataset.total_bytes + dataset.item_count
+    if projected_bytes > MAX_DATASET_EXPORT_BYTES:
+        raise ApiError(
+            status_code=413,
+            code="DATASET_EXPORT_BYTE_LIMIT_EXCEEDED",
+            message=(
+                "The Dataset exceeds the bounded export byte limit; "
+                "use cursor pagination."
+            ),
+        )
+
+    rows = list(
+        (
+            await session.scalars(
+                select(DatasetItem)
+                .where(DatasetItem.dataset_id == dataset.id)
+                .order_by(DatasetItem.sequence.asc())
+                .limit(MAX_DATASET_EXPORT_ITEMS + 1)
+            )
+        ).all()
+    )
+    if len(rows) != dataset.item_count:
+        raise ApiError(
+            status_code=409,
+            code="DATASET_EXPORT_INCOMPLETE",
+            message="Dataset export consistency verification failed.",
+        )
+
+    chunks: list[bytes] = []
+    for expected_sequence, item in enumerate(rows, start=1):
+        if item.sequence != expected_sequence:
+            raise ApiError(
+                status_code=409,
+                code="DATASET_EXPORT_SEQUENCE_GAP",
+                message="Dataset export sequence verification failed.",
+            )
+        chunks.append(canonical_json_bytes(item.item_json) + b"\n")
+
+    content = b"".join(chunks)
+    if len(content) > MAX_DATASET_EXPORT_BYTES:
+        raise ApiError(
+            status_code=413,
+            code="DATASET_EXPORT_BYTE_LIMIT_EXCEEDED",
+            message=(
+                "The encoded Dataset export exceeds the bounded byte limit; "
+                "use cursor pagination."
+            ),
+        )
+
+    digest = hashlib.sha256(content).hexdigest()
+    await append_audit_event(
+        session,
+        organization_id=dataset.organization_id,
+        project_id=dataset.project_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="dataset.exported",
+        resource_type="dataset",
+        resource_id=str(dataset.id),
+        request_id=request_id,
+        details={
+            "run_id": str(dataset.run_id),
+            "agent_version_id": str(dataset.agent_version_id),
+            "format": "jsonl",
+            "item_count": len(rows),
+            "size_bytes": len(content),
+            "sha256_digest": digest,
+        },
+    )
+    return DatasetExportOutcome(
+        content=content,
+        sha256_digest=digest,
+        item_count=len(rows),
+    )
+

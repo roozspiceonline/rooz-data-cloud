@@ -283,13 +283,89 @@ def main() -> None:
         for marker in markers:
             require(marker in source, path + " missing: " + marker)
 
-    main_source = read("apps/api/app/main.py")
+
+    pagination = read("apps/api/app/core/pagination.py")
+    for marker in [
+        "DatasetItemCursorPosition",
+        "encode_dataset_item_cursor",
+        "decode_dataset_item_cursor",
+        '"kind": "dataset-items"',
+        'data.get("dataset_id") != str(dataset_id)',
+    ]:
+        require(marker in pagination, "Dataset item cursor guard missing: " + marker)
+
+    dataset_routes = read("apps/api/app/api/routes/datasets.py")
+    for marker in [
+        '@router.get("/datasets/{dataset_id}/items")',
+        '@router.post("/datasets/{dataset_id}/export")',
+        'Depends(require_dataset_permission("dataset.export"))',
+        "Depends(require_csrf)",
+        'media_type="application/x-ndjson"',
+    ]:
+        require(marker in dataset_routes, "Dataset read/export route missing: " + marker)
+    for forbidden in [
+        '@router.put("/datasets/{dataset_id}/items',
+        '@router.patch("/datasets/{dataset_id}/items',
+        '@router.delete("/datasets/{dataset_id}/items',
+    ]:
+        require(forbidden not in dataset_routes, "mutable DatasetItem route added")
+
+    dataset_service = read("apps/api/app/services/datasets.py")
+    for marker in [
+        "MAX_DATASET_EXPORT_ITEMS = 10_000",
+        "MAX_DATASET_EXPORT_BYTES = 16_777_216",
+        "async def list_dataset_items(",
+        "async def export_dataset_jsonl(",
+        ".limit(MAX_DATASET_EXPORT_ITEMS + 1)",
+        "DATASET_EXPORT_SEQUENCE_GAP",
+        "canonical_json_bytes(item.item_json)",
+        'action="dataset.exported"',
+        '"agent_version_id": str(dataset.agent_version_id)',
+    ]:
+        require(marker in dataset_service, "Dataset final service guard missing: " + marker)
+
+    permissions = read("apps/api/app/core/permissions.py")
     require(
-        '"untrusted_agent_execution_enabled": False' in main_source,
-        "general execution release block changed",
+        '"dataset.export"' in permissions,
+        "dataset.export permission is missing",
     )
 
-    print("Phase 1N Increment 4 worker Dataset append verification: PASS")
+    final_tests = read(
+        "apps/api/tests/test_phase1n_dataset_read_export_contracts.py"
+    )
+    for marker in [
+        "test_phase1n_dataset_item_cursor_is_signed_and_dataset_bound",
+        "test_phase1n_dataset_export_has_explicit_scope",
+        "test_phase1n_dataset_read_and_export_routes_are_bounded",
+        "test_phase1n_dataset_service_enforces_export_bounds_and_audit",
+        "test_phase1n_final_foundation_status_is_explicit_and_fail_closed",
+    ]:
+        require(marker in final_tests, "final Phase 1N test missing: " + marker)
+
+    root_readme = " ".join(read("README.md").split())
+    for marker in [
+        "Phase 1N merge candidate",
+        "Phase 1M merge candidate",
+        "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false",
+        "Whole-Dataset JSONL export",
+        "General untrusted browser execution remains release-blocked.",
+    ]:
+        require(marker in root_readme, "root README Phase 1N marker missing: " + marker)
+
+    main_source = read("apps/api/app/main.py")
+    for marker in [
+        'version="0.14.0-phase1n"',
+        '"phase": "1N"',
+        '"status": "tenant-dataset-durable-results"',
+        '"dataset_item_read_enabled": True',
+        '"dataset_bounded_export_enabled": True',
+        '"dataset_public_export_enabled": False',
+        '"dataset_worker_append_canary_enabled": _dataset_worker_canary_enabled()',
+        '"untrusted_agent_execution_enabled": False',
+    ]:
+        require(marker in main_source, "final API status guard missing: " + marker)
+
+    print("Phase 1N final Dataset verification: PASS")
     print("  protocol digest parity: PASS")
     print("  Dataset append idempotency: PRESERVED")
     print("  Dataset quotas: PRESERVED")
@@ -300,6 +376,10 @@ def main() -> None:
     print("  worker Dataset DELETE policy: ABSENT")
     print("  Agent direct Postgres access: PROHIBITED")
     print("  Chromium direct Postgres access: PROHIBITED")
+    print("  Dataset item pagination: SIGNED + DATASET-BOUND")
+    print("  Dataset export: AUTHENTICATED + 10K/16M BOUNDED")
+    print("  DatasetItem mutation routes: ABSENT")
+    print("  public Dataset export: DISABLED")
 
 
 if __name__ == "__main__":

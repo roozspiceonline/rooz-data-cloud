@@ -5,17 +5,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
-from ...core.pagination import decode_cursor, encode_cursor, normalize_limit
+from ...core.pagination import (
+    decode_cursor,
+    decode_dataset_item_cursor,
+    encode_cursor,
+    encode_dataset_item_cursor,
+    normalize_limit,
+)
 from ...dataset_schemas import (
     CreateDatasetRequest,
     DatasetAppendRequest,
     DatasetAppendResult,
+    DatasetExportRequest,
 )
 from ...services.datasets import (
     append_dataset_items,
     create_dataset,
     dataset_append_receipt_summary,
+    dataset_item_summary,
     dataset_summary,
+    export_dataset_jsonl,
+    list_dataset_items,
     list_datasets,
 )
 from ..agent_dependencies import (
@@ -148,6 +158,80 @@ async def list_datasets_route(
             },
         },
     }
+
+
+@router.get("/datasets/{dataset_id}/items")
+async def list_dataset_items_route(
+    request: Request,
+    access: Annotated[
+        DatasetAccess,
+        Depends(require_dataset_permission("dataset.read")),
+    ],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query()] = 100,
+) -> dict[str, object]:
+    normalized = normalize_limit(limit)
+    position = decode_dataset_item_cursor(
+        cursor,
+        dataset_id=access.dataset.id,
+    )
+    records, has_more = await list_dataset_items(
+        db,
+        dataset_id=access.dataset.id,
+        after_sequence=position.sequence if position is not None else None,
+        limit=normalized,
+    )
+    next_cursor = None
+    if has_more and records:
+        next_cursor = encode_dataset_item_cursor(
+            dataset_id=access.dataset.id,
+            sequence=records[-1].sequence,
+        )
+    return {
+        "data": [
+            dataset_item_summary(record).model_dump(mode="json")
+            for record in records
+        ],
+        "meta": {
+            "request_id": request_id(request),
+            "page": {
+                "next_cursor": next_cursor,
+                "has_more": next_cursor is not None,
+            },
+        },
+    }
+
+
+@router.post("/datasets/{dataset_id}/export")
+async def export_dataset_route(
+    payload: DatasetExportRequest,
+    request: Request,
+    access: Annotated[
+        DatasetAccess,
+        Depends(require_dataset_permission("dataset.export")),
+    ],
+    _: Annotated[AuthContext, Depends(require_csrf)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    actor_type, actor_id = actor(access.context)
+    outcome = await export_dataset_jsonl(
+        db,
+        dataset=access.dataset,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        request_id=request_id(request),
+    )
+    filename = f"{access.dataset.name}-{access.dataset.id}.jsonl"
+    return Response(
+        content=outcome.content,
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-RDC-Content-SHA256": outcome.sha256_digest,
+            "X-RDC-Item-Count": str(outcome.item_count),
+        },
+    )
 
 
 @router.get("/datasets/{dataset_id}")

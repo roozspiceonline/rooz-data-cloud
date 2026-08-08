@@ -28,7 +28,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.13.0-phase1m",
+    version="0.14.0-phase1n",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -141,13 +141,23 @@ def _browser_live_navigation_canary_enabled() -> bool:
     )
 
 
+def _dataset_worker_canary_enabled() -> bool:
+    return (
+        settings.sandbox_execution_enabled
+        and settings.sandbox_activation_mode == "canary"
+        and settings.sandbox_canary_dataset_writes_enabled
+        and bool(settings.sandbox_canary_agent_version_id.strip())
+        and bool(settings.sandbox_canary_worker_name.strip())
+    )
+
+
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1M",
+        "phase": "1N",
         "service": "rdc-api",
-        "status": "controlled-browser-navigation-canary",
+        "status": "tenant-dataset-durable-results",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -240,6 +250,24 @@ async def foundation_status() -> dict[str, object]:
             and bool(settings.sandbox_canary_agent_version_id.strip())
             and bool(settings.sandbox_canary_worker_name.strip())
         ),
+        "dataset_append_contract": "rdc.dataset-append/v1",
+        "dataset_metadata_persistence_enabled": True,
+        "dataset_item_append_enabled": True,
+        "dataset_item_read_enabled": True,
+        "dataset_item_cursor_signed": True,
+        "dataset_bounded_export_enabled": True,
+        "dataset_export_format": "jsonl",
+        "dataset_export_max_items": 10_000,
+        "dataset_export_max_bytes": 16_777_216,
+        "dataset_export_requires_authentication": True,
+        "dataset_public_export_enabled": False,
+        "dataset_worker_capability_contract": "rdc.dataset-worker-capability/v1",
+        "dataset_worker_write_gate_enabled": (
+            settings.sandbox_canary_dataset_writes_enabled
+        ),
+        "dataset_worker_append_canary_enabled": _dataset_worker_canary_enabled(),
+        "dataset_rls_enabled": True,
+        "dataset_items_immutable": True,
         "untrusted_agent_execution_enabled": False,
     }
 

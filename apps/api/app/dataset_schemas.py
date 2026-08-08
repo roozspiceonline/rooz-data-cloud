@@ -59,6 +59,22 @@ class DatasetSummary(ORMModel):
     version: int
 
 
+class DatasetItemSummary(StrictModel):
+    id: UUID
+    dataset_id: UUID
+    append_receipt_id: UUID
+    run_id: UUID
+    sequence: int
+    item: dict[str, object]
+    size_bytes: int
+    sha256_digest: str
+    created_at: datetime
+
+
+class DatasetExportRequest(StrictModel):
+    format: Literal["jsonl"] = "jsonl"
+
+
 class DatasetAppendReceiptSummary(ORMModel):
     id: UUID
     organization_id: UUID

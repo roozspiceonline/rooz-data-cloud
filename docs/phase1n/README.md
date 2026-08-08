@@ -3,7 +3,7 @@
 Phase 1N adds durable append-only Run results without giving Agent or browser
 containers database credentials.
 
-## Verified increments
+## Completed increments
 
 ### Increment 1 — protocol foundation
 
@@ -21,40 +21,41 @@ Added `control.dataset_append_receipts`, Dataset row locking, monotonic
 sequences, item/byte quotas, immutable append provenance and the authenticated
 control-plane item append route.
 
-## Increment 4 — controlled worker append path
+### Increment 4 — controlled worker append path
 
-Increment 4 wires Dataset append into the existing private execution plane.
+Added an independent false-by-default Dataset write gate, explicit
+`DATASET_APPEND` worker capability, `rdc.dataset-worker-capability/v1`, worker
+side protocol validation, a private ACTIVE-lease-scoped append endpoint and
+operation-specific worker RLS. Worker Dataset append default           disabled.
 
-Security properties:
+### Increment 5 — bounded reads, export and final hardening
 
-- independent master gate:
-  `RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false`
-- the gate is false by default in API and worker configuration
-- only `RUN_START` leases can append
-- worker must carry explicit `DATASET_APPEND` capability
-- exact configured canary Worker and AgentVersion are required
-- browser + Dataset capability is rejected in this increment
-- claim contains `rdc.dataset-worker-capability/v1`
-- claim receipt is bound into the immutable lease payload digest/snapshot
-- Agent output must itself be a valid `rdc.dataset-append/v1` envelope
-- worker validates the envelope before forwarding
-- internal append requires worker token + ACTIVE lease token
-- control plane independently recomputes and compares the capability receipt
-- the target is only the Run-scoped `default` Dataset
-- Dataset ownership is derived from the lease and Run
-- existing Increment 3 append/idempotency/quota transaction is reused
-- Dataset RLS gains only ACTIVE-lease-scoped worker SELECT/INSERT/UPDATE access
-  required by the API's worker-authenticated DB transaction
-- no Dataset worker DELETE policy exists
-- DatasetItem and append-receipt mutation triggers remain in force
-- Agent and Chromium receive no worker token, lease token or Postgres
-  credentials
+DatasetItem reads use a signed HMAC cursor bound to the exact Dataset ID and
+monotonic sequence. Page size is limited to 1–200 records.
 
-## Current capability boundary
+Whole-Dataset export is:
+
+- authenticated and separately scoped with `dataset.export`;
+- CSRF protected for session users;
+- canonical JSONL only;
+- limited to 10,000 items;
+- limited to 16 MiB including JSONL newlines;
+- rejected on sequence gaps or item-count inconsistency;
+- SHA-256 identified in the response;
+- recorded as `dataset.exported` in the audit log;
+- never public or unauthenticated.
+
+Datasets above either whole-export limit remain fully readable through signed
+cursor pagination.
+
+## Final capability boundary
 
 ```text
 Dataset metadata API                    available
 control-plane Dataset append            available
+DatasetItem cursor pagination           available / signed / Dataset-bound
+bounded JSONL export                    available / authenticated / audited
+public Dataset export                   disabled
 worker Dataset append code              wired
 worker Dataset append default           disabled
 worker Dataset capability               explicit DATASET_APPEND
@@ -62,12 +63,12 @@ worker Dataset RLS                      active-lease scoped
 Agent direct PostgreSQL                 prohibited
 Chromium direct PostgreSQL              prohibited
 arbitrary Dataset item mutation         prohibited
+DatasetItem UPDATE/PATCH/DELETE         absent
 KV Store                                out of scope (Phase 1O)
 Request Queue                           out of scope (Phase 1P)
 ```
 
-## Next increment
-
-Add paginated DatasetItem reads, bounded export/download, expanded audit
-verification and Phase 1N final hardening. The implementation PR remains DRAFT
-until full exact-head CI is green.
+Agent direct PostgreSQL                 prohibited.
+General untrusted execution remains release-blocked. The implementation PR
+remains DRAFT until final exact-head authoritative CI is green and explicit
+Phase 1N merge approval is received.
