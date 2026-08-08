@@ -2,17 +2,13 @@
 
 Phase 1M builds on the merged Phase 1L controlled-browser foundation.
 
-Phase 1L remains authoritative for the existing `rdc.browser/v1` snapshot
-contract, activation receipts, immutable image requirement, offline Chromium
-self-test and false-by-default browser gate.
+Phase 1L remains authoritative for `rdc.browser/v1`, controlled-browser
+activation receipts, the immutable browser image boundary and the isolated
+`about:blank` Chromium self-test.
 
-## Foundation increment
+## Increment 1 — v2 protocol foundation
 
-This first Phase 1M increment introduces `rdc.browser/v2` as a protocol and pure
-policy-validation surface only. It does **not** expose v2 through the Run API and
-does **not** send public URLs to Chromium.
-
-The v2 step set is intentionally narrow:
+`rdc.browser/v2` defines only:
 
 - `goto`
 - `wait_for_selector`
@@ -20,16 +16,35 @@ The v2 step set is intentionally narrow:
 - `extract_html`
 - viewport-only `screenshot`
 
-The first step must be `goto`. Every navigation URL must use lowercase HTTPS
-and resolve to an exact operator-allowlisted hostname at policy-validation time.
-IP literals remain prohibited by the inherited Phase 1L hostname policy.
+The protocol remains bounded by exact fields, action/page limits, selector
+limits, wait limits and extraction limits. URLs must use lowercase HTTPS and
+must match the exact operator hostname allowlist.
 
-Selectors are bounded to 512 characters. Waits, text extraction, HTML
-extraction, page count and action count are all bounded.
+## Increment 2 — receipt-only Run intent
+
+The Run API now accepts a `browser_navigation` v2 intent, but this does **not**
+make live navigation executable.
+
+A v2 intent is stored with:
+
+- the normalized `rdc.browser/v2` request
+- the existing immutable `rdc.browser-policy/v1` payload
+- the browser-policy SHA-256 digest
+- `rdc.browser-navigation-receipt/v1`
+- a deterministic request digest
+- `execution_enabled=false`
+- `dispatch_enabled=false`
+- `browser_network=none`
+- `browser_egress_gateway_required=true`
+
+A v2 Run is created in `DRAFT` and receives **no START outbox command**. The
+control plane explicitly refuses v2 sandbox activation. The worker contains an
+independent v2 receipt validator and still fails closed with navigation
+execution disabled.
 
 ## Execution boundary
 
-Chromium remains offline in this increment.
+Chromium remains offline.
 
 ```text
 Agent container                 browser runtime
@@ -38,16 +53,18 @@ Agent container                 browser runtime
       +---------- no live URL --------+
 ```
 
-`rdc.browser/v2` is not API-executable yet. A later Phase 1M increment must add
-an RDC-controlled browser-egress gateway before any public Chromium navigation
-is possible.
+No Phase 1M code currently sends `browser_navigation` URLs to Chromium.
 
-The browser-egress gateway must mediate top-level requests, redirects and
-subresources and retain the existing SSRF prohibitions. Chromium must never
-receive unrestricted host networking.
+## Required before live navigation
+
+A dedicated RDC-controlled browser-egress gateway must be implemented before a
+v2 Run can leave receipt-only state. That gateway must mediate top-level
+navigation, redirects and subresources while preserving global-DNS and SSRF
+protections.
 
 ## Explicitly blocked
 
+- direct Chromium Internet access
 - arbitrary JavaScript / evaluate
 - clicks, typing and forms
 - arbitrary cookies or auth headers
@@ -57,5 +74,4 @@ receive unrestricted host networking.
 - raw CDP / browser server
 - arbitrary proxies
 - WebRTC
-- unrestricted browser internet access
 - general untrusted browser execution
