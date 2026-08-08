@@ -323,6 +323,45 @@ class S3ObjectStorage:
 
         return await anyio.to_thread.run_sync(operation)
 
+    async def write_object(
+        self,
+        *,
+        object_key: str,
+        content: bytes,
+        content_type: str,
+        sha256_digest: str,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        await self.ensure_bucket()
+
+        actual_digest = hashlib.sha256(content).hexdigest()
+        if actual_digest != sha256_digest:
+            raise StorageBackendError(
+                "STORAGE_DIGEST_MISMATCH",
+                "Object content does not match the supplied SHA-256 digest.",
+            )
+
+        def operation() -> None:
+            object_metadata = {
+                "sha256": sha256_digest,
+                **(metadata or {}),
+            }
+            try:
+                internal_s3_client().put_object(
+                    Bucket=self.bucket,
+                    Key=object_key,
+                    Body=content,
+                    ContentType=content_type,
+                    Metadata=object_metadata,
+                )
+            except ClientError as exc:
+                raise StorageBackendError(
+                    "STORAGE_UNAVAILABLE",
+                    "Object storage content could not be written.",
+                ) from exc
+
+        await anyio.to_thread.run_sync(operation)
+
     async def delete_object(self, *, object_key: str) -> None:
         await self.ensure_bucket()
 

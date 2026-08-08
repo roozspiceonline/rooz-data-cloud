@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
@@ -10,8 +10,10 @@ from ...kv_schemas import CreateKeyValueStoreRequest
 from ...services.key_value_stores import (
     create_project_key_value_store,
     create_run_key_value_store,
+    key_value_mutation_receipt_summary,
     key_value_store_summary,
     list_key_value_stores,
+    mutate_key_value_record,
 )
 from ..agent_dependencies import (
     KeyValueStoreAccess,
@@ -146,4 +148,60 @@ async def get_key_value_store_route(
     return success_payload(
         request,
         key_value_store_summary(access.store).model_dump(mode="json"),
+    )
+
+
+@router.put("/key-value-stores/{store_id}/records")
+async def set_key_value_record_route(
+    payload: Annotated[object, Body()],
+    request: Request,
+    access: Annotated[
+        KeyValueStoreAccess,
+        Depends(require_key_value_store_permission("kv.write")),
+    ],
+    _: Annotated[AuthContext, Depends(require_csrf)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    actor_type, actor_id = actor(access.context)
+    outcome = await mutate_key_value_record(
+        db,
+        store=access.store,
+        user_id=access.context.user.id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        request_id=request_id(request),
+        payload=payload,
+        required_operation="set",
+    )
+    return success_payload(
+        request,
+        key_value_mutation_receipt_summary(outcome).model_dump(mode="json"),
+    )
+
+
+@router.delete("/key-value-stores/{store_id}/records")
+async def delete_key_value_record_route(
+    payload: Annotated[object, Body()],
+    request: Request,
+    access: Annotated[
+        KeyValueStoreAccess,
+        Depends(require_key_value_store_permission("kv.delete")),
+    ],
+    _: Annotated[AuthContext, Depends(require_csrf)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    actor_type, actor_id = actor(access.context)
+    outcome = await mutate_key_value_record(
+        db,
+        store=access.store,
+        user_id=access.context.user.id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        request_id=request_id(request),
+        payload=payload,
+        required_operation="delete",
+    )
+    return success_payload(
+        request,
+        key_value_mutation_receipt_summary(outcome).model_dump(mode="json"),
     )

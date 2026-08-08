@@ -35,3 +35,20 @@ class KeyValueStoreSummary(ORMModel):
     created_at: datetime
     updated_at: datetime
     version: int
+
+class KeyValueMutationReceiptSummary(StrictModel):
+    id: UUID
+    store_id: UUID
+    record_id: UUID
+    record_version_id: UUID
+    schema_version: Literal["rdc.kv-write/v1"]
+    idempotency_key: str
+    request_digest: str
+    operation: Literal["SET", "DELETE"]
+    key: str
+    expected_version: int | None
+    result_version: int
+    value_sha256: str | None
+    size_bytes: int
+    replayed: bool
+    created_at: datetime

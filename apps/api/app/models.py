@@ -725,6 +725,207 @@ class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class KeyValueRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "key_value_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "key",
+            name="uq_key_value_records_store_key",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.key_value_stores.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    key: Mapped[str] = mapped_column(String(256), nullable=False)
+    current_version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+    deleted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    current_size_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+
+
+class KeyValueRecordVersion(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "key_value_record_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "record_id",
+            "version",
+            name="uq_key_value_record_versions_record_version",
+        ),
+        UniqueConstraint(
+            "object_key",
+            name="uq_key_value_record_versions_object_key",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.key_value_stores.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    record_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.key_value_records.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    operation: Mapped[str] = mapped_column(String(8), nullable=False)
+    tombstone: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+    content_type: Mapped[str | None] = mapped_column(String(160))
+    encoding: Mapped[str | None] = mapped_column(String(16))
+    object_key: Mapped[str | None] = mapped_column(String(1024))
+    value_sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class KeyValueMutationReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "key_value_mutation_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "store_id",
+            "idempotency_key",
+            name="uq_key_value_mutation_receipts_store_key",
+        ),
+        UniqueConstraint(
+            "record_version_id",
+            name="uq_key_value_mutation_receipts_record_version",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    store_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.key_value_stores.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    record_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.key_value_records.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    record_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "control.key_value_record_versions.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+    schema_version: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="rdc.kv-write/v1",
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation: Mapped[str] = mapped_column(String(8), nullable=False)
+    key: Mapped[str] = mapped_column(String(256), nullable=False)
+    expected_version: Mapped[int | None] = mapped_column(BigInteger)
+    result_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    value_sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "datasets"
     __table_args__ = (

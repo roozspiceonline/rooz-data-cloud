@@ -72,3 +72,45 @@ KV worker writes                      disabled
 KV set/delete API                     absent
 ```
 
+## Increment 3 — versioned records + object-backed values
+
+Increment 3 enables authenticated control-plane record mutation after RLS and
+store metadata are already present.
+
+Current capability boundary:
+
+```text
+KV metadata persistence               enabled
+KV record persistence                 enabled
+Control-plane SET                     enabled / kv.write
+Control-plane DELETE                  enabled / kv.delete
+Optimistic expected_version           enabled
+Idempotent mutation receipts          enabled
+Immutable version history             enabled
+DELETE tombstone versions             enabled
+Server-generated object keys          enabled
+Object-backed JSON/text/binary        enabled
+Live record quota                     10,000 per store
+Live byte quota                       268,435,456 per store
+Worker KV mutation                    disabled
+Worker KV RLS                         disabled
+Agent direct PostgreSQL               prohibited
+Agent direct object-storage creds     prohibited
+Chromium direct PostgreSQL            prohibited
+General untrusted Agent execution     release-blocked
+```
+
+`expected_version=0` is create-if-absent. Positive expected versions must match
+the exact current record version. A stale conditional writer fails closed.
+
+Each successful mutation creates an immutable record-version row and an
+idempotency receipt. Reusing the same idempotency key with the same canonical
+request digest replays the original receipt; reusing it with a different digest
+is a conflict.
+
+SET values are written by the trusted control plane to server-generated S3
+object keys derived only from server-owned UUID lineage. The logical KV key is
+never used as an object path. DELETE appends a tombstone version and preserves
+historical object-backed versions.
+
+Increment 4 remains responsible for the controlled worker KV path.

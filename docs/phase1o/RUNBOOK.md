@@ -48,3 +48,24 @@ uploads, `kv.write`, worker KV policies or record tables until Increment 3
 implements immutable version history, optimistic concurrency, idempotency and
 quotas.
 
+## Increment 3 mutation state
+
+Authenticated control-plane mutation is enabled only through the store-scoped
+SET and DELETE routes. `kv.write` and `kv.delete` are separate permissions.
+
+For every mutation:
+
+- validate `rdc.kv-write/v1` before persistence;
+- lock the KeyValueStore row before idempotency, quota and version decisions;
+- same idempotency key + same digest returns the original receipt;
+- same idempotency key + different digest fails with conflict;
+- `expected_version=0` succeeds only when no record lineage exists;
+- a positive expected version must equal the exact current record version;
+- SET writes at most 1 MiB to a server-generated object-storage key;
+- live store state remains within 10,000 records and 256 MiB;
+- DELETE creates a tombstone version instead of deleting history;
+- record versions and mutation receipts are immutable at the database boundary.
+
+Do not add worker KV RLS, worker mutation routes, Agent/Chromium database
+credentials or Agent/Chromium object-storage credentials in Increment 3.
+Increment 4 owns the worker path.

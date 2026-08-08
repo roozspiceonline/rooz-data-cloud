@@ -62,3 +62,42 @@ trigger boundary.
 Increment 2 intentionally contains no record tables, mutation receipts,
 object-storage write path, worker RLS policy or set/delete API endpoint.
 
+## Increment 3 mutation controls
+
+### Stale writers
+
+The control plane locks the store and target record, then applies optimistic
+concurrency. `expected_version=0` is create-if-absent; positive values require
+an exact current-version match. Mismatches fail closed.
+
+### Idempotency races
+
+The store row serializes mutation decisions. Receipts are unique by
+store/idempotency key and immutable. Equal key + equal canonical digest replays;
+equal key + different digest conflicts.
+
+### Object-key confusion
+
+SET object keys are generated from organization/store/record/version UUIDs.
+The logical KV key is never interpolated into an object-storage path or trusted
+filesystem path.
+
+### History rewriting
+
+`control.key_value_record_versions` is append-only. DELETE creates a tombstone
+version. A deferred current-version pointer constraint binds each record to its
+immutable current version.
+
+### Quota bypass
+
+The trusted service updates store counters while holding the store row lock.
+Database constraints cap live records at 10,000 and live bytes at 256 MiB.
+The protocol separately caps every decoded value at 1 MiB.
+
+### Credential escape
+
+Only the trusted API control plane uses the internal S3 client. Worker KV access
+remains disabled until Increment 4. Agent and Chromium receive neither
+PostgreSQL nor object-storage credentials.
+
+General untrusted Agent execution remains release-blocked.

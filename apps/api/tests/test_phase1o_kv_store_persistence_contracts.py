@@ -6,7 +6,7 @@ from app.main import app
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_phase1o_increment2_migration_is_chained_and_tenant_scoped() -> None:
+def test_phase1o_increment2_migration_remains_metadata_only() -> None:
     source = (
         ROOT
         / "apps/api/migrations/versions/"
@@ -28,40 +28,43 @@ def test_phase1o_increment2_migration_is_chained_and_tenant_scoped() -> None:
     for forbidden in [
         "key_value_records",
         "key_value_record_versions",
-        "kv_mutation_receipts",
+        "key_value_mutation_receipts",
         "execution_worker",
-        "FOR DELETE",
     ]:
         assert forbidden not in source
 
 
-def test_phase1o_increment2_metadata_routes_exist_without_record_mutation() -> None:
+def test_phase1o_increment2_metadata_routes_remain_available() -> None:
     paths = app.openapi()["paths"]
     assert "post" in paths["/api/v1/projects/{project_id}/key-value-stores"]
     assert "get" in paths["/api/v1/projects/{project_id}/key-value-stores"]
     assert "post" in paths["/api/v1/runs/{run_id}/key-value-stores"]
     assert "get" in paths["/api/v1/key-value-stores/{store_id}"]
-    for path in paths:
-        assert "/records" not in path
 
 
-def test_phase1o_increment2_permissions_are_metadata_only() -> None:
-    assert validate_scopes(["kv.create", "kv.read"]) == ["kv.create", "kv.read"]
+def test_phase1o_increment3_permissions_extend_metadata_safely() -> None:
+    assert validate_scopes(
+        ["kv.create", "kv.read", "kv.write", "kv.delete"]
+    ) == ["kv.create", "kv.delete", "kv.read", "kv.write"]
     assert role_has_permission("developer", "kv.create")
     assert role_has_permission("developer", "kv.read")
+    assert role_has_permission("developer", "kv.write")
+    assert role_has_permission("developer", "kv.delete")
     for role in ["analyst", "operator", "viewer"]:
         assert role_has_permission(role, "kv.read")
         assert not role_has_permission(role, "kv.create")
-    for forbidden in ["kv.write", "kv.delete", "kv.export"]:
-        try:
-            validate_scopes([forbidden])
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"unexpected KV mutation scope: {forbidden}")
+        assert not role_has_permission(role, "kv.write")
+        assert not role_has_permission(role, "kv.delete")
+
+    try:
+        validate_scopes(["kv.export"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unexpected KV export scope")
 
 
-def test_phase1o_increment2_service_derives_ownership_server_side() -> None:
+def test_phase1o_increment3_service_derives_ownership_server_side() -> None:
     source = (
         ROOT / "apps/api/app/services/key_value_stores.py"
     ).read_text(encoding="utf-8")
@@ -76,6 +79,9 @@ def test_phase1o_increment2_service_derives_ownership_server_side() -> None:
         "agent_id=run.agent_id",
         "agent_version_id=run.agent_version_id",
         'action="kv_store.created"',
+        "_server_object_key(",
+        "organization_id=locked_store.organization_id",
+        "store_id=locked_store.id",
     ]:
         assert marker in source
     for forbidden in [
@@ -88,7 +94,7 @@ def test_phase1o_increment2_service_derives_ownership_server_side() -> None:
         assert forbidden not in source
 
 
-def test_phase1o_increment2_record_storage_remains_disabled() -> None:
+def test_phase1o_increment3_worker_path_remains_disabled() -> None:
     protocol = (
         ROOT / "workers/sandbox-runtime/kv_protocol.py"
     ).read_text(encoding="utf-8")
@@ -98,6 +104,7 @@ def test_phase1o_increment2_record_storage_remains_disabled() -> None:
 
     routes = (
         ROOT / "apps/api/app/api/routes/key_value_stores.py"
-    ).read_text(encoding="utf-8").casefold()
-    for forbidden in ["/records", "validate_kv_mutation", "storage_object", "s3"]:
-        assert forbidden not in routes
+    ).read_text(encoding="utf-8")
+    assert '"/key-value-stores/{store_id}/records"' in routes
+    assert 'require_key_value_store_permission("kv.write")' in routes
+    assert 'require_key_value_store_permission("kv.delete")' in routes
