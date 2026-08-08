@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from browser_executor import BrowserRuntimeError, run_browser_self_test
+from browser_navigation_contract import (
+    BrowserNavigationContractError,
+    validate_browser_navigation_plan,
+)
 from browser_policy import (
     BrowserPolicy,
     BrowserPolicyError,
@@ -86,6 +90,62 @@ def _worker_browser_policy(
         max_dom_bytes=config.browser_max_dom_bytes,
         max_screenshot_bytes=config.browser_max_screenshot_bytes,
     )
+
+
+def _require_blocked_browser_navigation_receipt(
+    input_reference: dict[str, object],
+    *,
+    browser_policy: BrowserPolicy,
+) -> None:
+    navigation = input_reference.get("browser_navigation")
+    receipt = input_reference.get("browser_navigation_receipt")
+    stored_policy = input_reference.get("browser_policy")
+    stored_policy_digest = input_reference.get("browser_policy_digest")
+    if (
+        not isinstance(navigation, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(stored_policy, dict)
+        or not isinstance(stored_policy_digest, str)
+    ):
+        raise SandboxPolicyError(
+            "Phase 1M browser navigation claim lacks immutable receipts."
+        )
+    if _canonical_digest(stored_policy) != browser_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M stored browser policy does not match worker policy."
+        )
+    if stored_policy_digest != browser_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M browser policy digest does not match worker policy."
+        )
+    try:
+        normalized = validate_browser_navigation_plan(
+            navigation,
+            policy=browser_policy,
+        )
+    except BrowserNavigationContractError as exc:
+        raise SandboxPolicyError(
+            "Phase 1M navigation failed independent worker validation."
+        ) from exc
+
+    expected_receipt = {
+        "schema_version": "rdc.browser-navigation-receipt/v1",
+        "request_schema_version": "rdc.browser/v2",
+        "request_digest": normalized["request_digest"],
+        "browser_policy_digest": browser_policy.digest,
+        "execution_enabled": False,
+        "dispatch_enabled": False,
+        "browser_network": "none",
+        "browser_egress_gateway_required": True,
+    }
+    if receipt != expected_receipt:
+        raise SandboxPolicyError(
+            "Phase 1M browser navigation receipt does not match the Run intent."
+        )
+    raise SandboxPolicyError(
+        "Phase 1M browser navigation execution is not enabled."
+    )
+
 
 
 def _require_canary_activation(
@@ -217,6 +277,11 @@ def _require_canary_activation(
         if not isinstance(input_reference, dict):
             raise SandboxPolicyError(
                 "Controlled-browser claim lacks an input reference."
+            )
+        if "browser_navigation" in input_reference:
+            _require_blocked_browser_navigation_receipt(
+                input_reference,
+                browser_policy=browser_policy,
             )
         browser_plan = input_reference.get("browser")
         stored_policy = input_reference.get("browser_policy")
