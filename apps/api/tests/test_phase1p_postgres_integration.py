@@ -11,6 +11,8 @@ from sqlalchemy.exc import DBAPIError, OperationalError
 from app.core.database import engine, session_factory
 from app.services.request_queues import claim_next_request
 
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
 
 async def _database_available() -> bool:
     try:
@@ -40,7 +42,6 @@ async def _cleanup(user_id: UUID, org_id: UUID) -> None:
         await connection.execute(text("DELETE FROM identity.users WHERE id=:u"), {"u": user_id})
 
 
-@pytest.mark.asyncio
 async def test_postgres_simultaneous_claim_is_single_winner_and_counters_hold() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
@@ -63,7 +64,6 @@ async def test_postgres_simultaneous_claim_is_single_winner_and_counters_hold() 
         await _cleanup(user_id, org_id)
 
 
-@pytest.mark.asyncio
 async def test_postgres_tenancy_trigger_rejects_cross_project_queue_request() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")

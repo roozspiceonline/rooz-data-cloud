@@ -27,6 +27,7 @@ def test_phase1p_routes_use_server_derived_queue_ownership() -> None:
 def test_phase1p_migration_upgrade_and_downgrade_cover_all_queue_tables() -> None:
     source = (API_ROOT / "migrations/versions/20260809_0015_request_queues.py").read_text()
     assert 'down_revision: str | None = "20260808_0014"' in source
+    assert 'server_default="PENDING"' in source
     downgrade = source.split("def downgrade() -> None:", 1)[1]
     for table in ("request_queue_enqueue_receipts", "request_queue_transitions", "request_queue_requests", "request_queues"):
         assert f'op.drop_table("{table}", schema="control")' in downgrade
