@@ -214,9 +214,15 @@ def main() -> None:
         "class BrowserSnapshotActionInput",
         "class BrowserSessionInput",
         'browser: BrowserSessionInput | None = None',
-        "Phase 1L does not allow web_fetch and browser in one Run.",
+        "external_surfaces = sum(",
+        "A Run may use only one external web/browser intent surface.",
     ]:
         require(marker in run_schemas, "Run browser contract missing: " + marker)
+    require(
+        "self.web_fetch," in run_schemas
+        and "self.browser," in run_schemas,
+        "Phase 1L web_fetch/browser mutual exclusion disappeared",
+    )
 
     runs_service = read("apps/api/app/services/runs.py")
     for marker in [
