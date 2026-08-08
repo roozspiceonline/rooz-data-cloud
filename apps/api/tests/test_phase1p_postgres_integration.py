@@ -38,7 +38,9 @@ async def _database_available() -> bool:
         return False
 
 
-async def _seed(*, with_request: bool = True) -> tuple[UUID, UUID, UUID, UUID, UUID]:
+async def _seed(
+    *, with_request: bool = True, queue_created_at: str | None = None
+) -> tuple[UUID, UUID, UUID, UUID, UUID]:
     user_id, org_id, project_id, queue_id, request_id = (uuid4() for _ in range(5))
     suffix = uuid4().hex
     async with engine.begin() as connection:
@@ -68,9 +70,9 @@ async def _seed(*, with_request: bool = True) -> tuple[UUID, UUID, UUID, UUID, U
         )
         await connection.execute(
             text(
-                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id) VALUES (:q,:o,:p,'default',:u)"
+                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id,created_at) VALUES (:q,:o,:p,'default',:u,COALESCE(CAST(:created_at AS timestamptz),CURRENT_TIMESTAMP))"
             ),
-            {"q": queue_id, "o": org_id, "p": project_id, "u": user_id},
+            {"q": queue_id, "o": org_id, "p": project_id, "u": user_id, "created_at": queue_created_at},
         )
         if with_request:
             await connection.execute(
@@ -474,26 +476,24 @@ async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
 async def test_postgres_queue_pagination_is_stable_at_equal_timestamps() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
-    user_id, org_id, project_id, first_queue_id, request_id = await _seed()
+    equal_created_at = "2026-08-09T06:00:00+00:00"
+    user_id, org_id, project_id, first_queue_id, request_id = await _seed(
+        queue_created_at=equal_created_at
+    )
     second_queue_id = uuid4()
     transition_ids = [uuid4(), uuid4()]
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id) VALUES (:q,:o,:p,'second',:u)"
+                "INSERT INTO control.request_queues (id,organization_id,project_id,name,created_by_user_id,created_at) VALUES (:q,:o,:p,'second',:u,CAST(:created_at AS timestamptz))"
             ),
             {
                 "q": second_queue_id,
                 "o": org_id,
                 "p": project_id,
                 "u": user_id,
+                "created_at": equal_created_at,
             },
-        )
-        await connection.execute(
-            text(
-                "UPDATE control.request_queues SET created_at='2026-08-09T06:00:00+00:00' WHERE id IN (:a,:b)"
-            ),
-            {"a": first_queue_id, "b": second_queue_id},
         )
         for transition_id, to_status, reason in (
             (transition_ids[0], "PENDING", "ENQUEUED"),
