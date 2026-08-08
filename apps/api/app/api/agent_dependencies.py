@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
@@ -19,6 +20,7 @@ from ..models import (
     OrganizationMembership,
     Project,
     ProjectSecret,
+    RequestQueue,
     Run,
     StorageObject,
 )
@@ -74,6 +76,12 @@ class KeyValueStoreAccess:
 
 
 @dataclass(frozen=True)
+class RequestQueueAccess:
+    context: AuthContext
+    queue: RequestQueue
+
+
+@dataclass(frozen=True)
 class StorageObjectAccess:
     context: AuthContext
     storage_object: StorageObject
@@ -94,6 +102,7 @@ async def _resolved_organization_id(
         "rdc_run_org",
         "rdc_dataset_org",
         "rdc_key_value_store_org",
+        "rdc_request_queue_org",
         "rdc_storage_object_org",
     }
     if function_name not in allowed:
@@ -452,6 +461,26 @@ def require_key_value_store_permission(
                 message="The requested resource was not found.",
             )
         return KeyValueStoreAccess(context=context, store=record)
+
+    return dependency
+
+
+def require_request_queue_permission(
+    permission: str,
+) -> Callable[..., Awaitable[RequestQueueAccess]]:
+    async def dependency(
+        queue_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> RequestQueueAccess:
+        organization_id = await _resolved_organization_id(
+            db, function_name="rdc_request_queue_org", resource_id=queue_id
+        )
+        await _authorize_organization(db, context=context, organization_id=organization_id, permission=permission)
+        record = await db.scalar(select(RequestQueue).where(RequestQueue.id == queue_id, RequestQueue.organization_id == organization_id))
+        if record is None:
+            raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
+        return RequestQueueAccess(context=context, queue=record)
 
     return dependency
 
