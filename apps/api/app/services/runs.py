@@ -187,6 +187,58 @@ def _browser_policy_payload() -> dict[str, object]:
     }
 
 
+def _browser_egress_policy_payload() -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "schema_version": "rdc.browser-egress-policy/v1",
+        "mode": "gateway-policy-only",
+        "allowed_schemes": ["https"],
+        "allowed_methods": ["GET", "HEAD"],
+        "allowed_resource_types": [
+            "document",
+            "fetch",
+            "font",
+            "image",
+            "script",
+            "stylesheet",
+            "xhr",
+        ],
+        "allowed_hosts": sorted(
+            settings.sandbox_canary_web_egress_allowed_hosts
+        ),
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "pin_validated_address": True,
+        "revalidate_redirects": True,
+        "revalidate_subresources": True,
+        "strip_request_headers": [
+            "authorization",
+            "cookie",
+            "proxy-authorization",
+        ],
+        "strip_response_headers": ["set-cookie"],
+        "service_workers_enabled": False,
+        "websockets_enabled": False,
+        "webrtc_enabled": False,
+        "proxy_override_enabled": False,
+        "persistent_cookies_enabled": False,
+        "max_requests": settings.sandbox_canary_web_egress_max_requests,
+        "max_resource_bytes": (
+            settings.sandbox_canary_web_egress_max_response_bytes
+        ),
+        "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
+        "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
+        "connect_timeout_seconds": (
+            settings.sandbox_canary_web_egress_connect_timeout_seconds
+        ),
+        "request_timeout_seconds": (
+            settings.sandbox_canary_web_egress_request_timeout_seconds
+        ),
+        "transport_wired": False,
+        "browser_network": "none",
+    }
+
+
 def _normalize_browser_navigation_hostname(value: str) -> str:
     import ipaddress
 
@@ -244,6 +296,7 @@ def _browser_navigation_receipt(
     *,
     browser_policy: dict[str, object],
     browser_policy_digest: str,
+    browser_egress_policy_digest: str,
 ) -> dict[str, object]:
     allowed_hosts_raw = browser_policy.get("allowed_hosts")
     if not isinstance(allowed_hosts_raw, list) or not allowed_hosts_raw:
@@ -366,6 +419,7 @@ def _browser_navigation_receipt(
         "request_schema_version": "rdc.browser/v2",
         "request_digest": canonical_fingerprint(browser_navigation),
         "browser_policy_digest": browser_policy_digest,
+        "browser_egress_policy_digest": browser_egress_policy_digest,
         "execution_enabled": False,
         "dispatch_enabled": False,
         "browser_network": "none",
@@ -566,6 +620,8 @@ async def create_run(
 
     browser_policy: dict[str, object] | None = None
     browser_policy_digest: str | None = None
+    browser_egress_policy: dict[str, object] | None = None
+    browser_egress_policy_digest: str | None = None
     browser_navigation_receipt: dict[str, object] | None = None
     if browser is not None or browser_navigation is not None:
         if _manifest_network(version) != "web-egress":
@@ -583,10 +639,17 @@ async def create_run(
         browser_policy = _browser_policy_payload()
         browser_policy_digest = canonical_fingerprint(browser_policy)
         if browser_navigation is not None:
+            browser_egress_policy = _browser_egress_policy_payload()
+            browser_egress_policy_digest = canonical_fingerprint(
+                browser_egress_policy
+            )
             browser_navigation_receipt = _browser_navigation_receipt(
                 browser_navigation,
                 browser_policy=browser_policy,
                 browser_policy_digest=browser_policy_digest,
+                browser_egress_policy_digest=(
+                    browser_egress_policy_digest
+                ),
             )
 
     fingerprint = canonical_fingerprint(
@@ -599,6 +662,7 @@ async def create_run(
             "browser_navigation": browser_navigation,
             "browser_navigation_receipt": browser_navigation_receipt,
             "browser_policy_digest": browser_policy_digest,
+            "browser_egress_policy_digest": browser_egress_policy_digest,
             "runtime": runtime,
         }
     )
@@ -652,6 +716,10 @@ async def create_run(
         )
         input_reference["browser_policy"] = browser_policy
         input_reference["browser_policy_digest"] = browser_policy_digest
+        input_reference["browser_egress_policy"] = browser_egress_policy
+        input_reference["browser_egress_policy_digest"] = (
+            browser_egress_policy_digest
+        )
 
     navigation_receipt_only = browser_navigation is not None
     initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"
@@ -749,6 +817,8 @@ async def create_run(
                 else None
             ),
             "browser_navigation_dispatch_enabled": False,
+            "browser_egress_policy_digest": browser_egress_policy_digest,
+            "browser_egress_transport_wired": False,
         },
     )
     return snapshot
