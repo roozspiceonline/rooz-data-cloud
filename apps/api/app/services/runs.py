@@ -259,12 +259,28 @@ def _browser_navigation_receipt(
         _normalize_browser_navigation_hostname(str(host))
         for host in allowed_hosts_raw
     }
-    max_pages = int(browser_policy["max_pages"])
-    max_actions = int(browser_policy["max_actions"])
-    navigation_timeout_ms = (
-        int(browser_policy["navigation_timeout_seconds"]) * 1000
-    )
-    max_dom_bytes = int(browser_policy["max_dom_bytes"])
+    max_pages = browser_policy["max_pages"]
+    max_actions = browser_policy["max_actions"]
+    navigation_timeout_seconds = browser_policy[
+        "navigation_timeout_seconds"
+    ]
+    max_dom_bytes = browser_policy["max_dom_bytes"]
+    for name, value in (
+        ("max_pages", max_pages),
+        ("max_actions", max_actions),
+        ("navigation_timeout_seconds", navigation_timeout_seconds),
+        ("max_dom_bytes", max_dom_bytes),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ApiError(
+                status_code=409,
+                code="BROWSER_NAVIGATION_POLICY_UNAVAILABLE",
+                message=(
+                    "Browser navigation policy field is not a valid integer: "
+                    + name
+                ),
+            )
+    navigation_timeout_ms = navigation_timeout_seconds * 1000
 
     steps = browser_navigation.get("steps")
     if not isinstance(steps, list) or not 1 <= len(steps) <= max_actions:
