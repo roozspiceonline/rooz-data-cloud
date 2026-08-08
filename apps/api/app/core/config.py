@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     sandbox_canary_browser_live_navigation_enabled: bool = False
     sandbox_canary_dataset_writes_enabled: bool = False
     sandbox_canary_key_value_store_enabled: bool = False
+    sandbox_canary_request_queue_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15

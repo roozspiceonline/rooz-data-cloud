@@ -344,11 +344,11 @@ def main() -> None:
 
     root_readme = " ".join(read("README.md").split())
     for marker in [
-        "Phase 1N merge candidate",
-        "Phase 1M merge candidate",
-        "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false",
-        "Whole-Dataset JSONL export",
-        "General untrusted browser execution remains release-blocked.",
+        "tenant-isolated scraping and automation control plane",
+        "durable Dataset results",
+        "versioned Key-Value Store state",
+        "All untrusted Agent and browser execution remains release-blocked.",
+        "Phase 1P, tenant-scoped Request Queues, is implemented",
     ]:
         require(marker in root_readme, "root README Phase 1N marker missing: " + marker)
 

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -723,6 +724,73 @@ class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     version: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=1
     )
+
+
+class RequestQueue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "request_queues"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_request_queues_project_name"), {"schema": "control"})
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    pending_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    claimed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    handled_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class RequestQueueRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "request_queue_requests"
+    __table_args__ = (UniqueConstraint("queue_id", "identity_digest", name="uq_request_queue_requests_identity"), {"schema": "control"})
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="CASCADE"), nullable=False, index=True)
+    request_url: Mapped[str] = mapped_column(Text, nullable=False)
+    unique_key: Mapped[str | None] = mapped_column(String(256))
+    identity_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_data: Mapped[object] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    claimed_by: Mapped[str | None] = mapped_column(String(128))
+    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(80))
+    failure_summary: Mapped[str | None] = mapped_column(Text)
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class RequestQueueTransition(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "request_queue_transitions"
+    __table_args__ = {"schema": "control"}
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="RESTRICT"), nullable=False, index=True)
+    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="RESTRICT"), nullable=False, index=True)
+    from_status: Mapped[str | None] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(String(80), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    details: Mapped[object] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class RequestQueueEnqueueReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "request_queue_enqueue_receipts"
+    __table_args__ = (UniqueConstraint("queue_id", "idempotency_key", name="uq_request_queue_enqueue_idempotency"), {"schema": "control"})
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="CASCADE"), nullable=False, index=True)
+    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="CASCADE"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class KeyValueRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):

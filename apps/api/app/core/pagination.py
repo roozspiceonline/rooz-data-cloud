@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 import base64
 import hashlib
 import hmac
@@ -26,6 +27,24 @@ class CursorPosition:
 @dataclass(frozen=True)
 class KeyValueRecordCursorPosition:
     key: str
+
+
+@dataclass(frozen=True)
+class QueueRequestCursorPosition:
+    created_at: datetime
+    resource_id: UUID
+
+
+@dataclass(frozen=True)
+class RequestQueueListCursorPosition:
+    created_at: datetime
+    resource_id: UUID
+
+
+@dataclass(frozen=True)
+class QueueTransitionCursorPosition:
+    created_at: datetime
+    resource_id: UUID
 
 
 def normalize_limit(limit: int) -> int:
@@ -203,6 +222,86 @@ def decode_key_value_record_cursor(
             raise ValueError("cursor binding is invalid")
         return KeyValueRecordCursorPosition(key=key)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def _encode_queue_cursor(payload_data: dict[str, object]) -> str:
+    payload = json.dumps(
+        payload_data,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    signature = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(payload + signature).decode().rstrip("=")
+
+
+def _decode_queue_cursor(value: str) -> dict[str, object]:
+    if not value or len(value) > 512:
+        raise _invalid_cursor()
+    try:
+        decoded = base64.urlsafe_b64decode((value + "=" * (-len(value) % 4)).encode())
+        canonical = base64.urlsafe_b64encode(decoded).decode().rstrip("=")
+        if not hmac.compare_digest(canonical, value):
+            raise ValueError("cursor encoding is not canonical")
+        digest_size = hashlib.sha256().digest_size
+        if len(decoded) <= digest_size:
+            raise ValueError("cursor is too short")
+        payload, supplied = decoded[:-digest_size], decoded[-digest_size:]
+        expected = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+        data = json.loads(payload.decode())
+        if not hmac.compare_digest(supplied, expected) or not isinstance(data, dict):
+            raise ValueError("cursor signature or payload is invalid")
+        return data
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_queue_request_cursor(*, queue_id: UUID, status: str | None, created_at: datetime, resource_id: UUID) -> str:
+    return _encode_queue_cursor({"created_at": created_at.isoformat(), "id": str(resource_id), "kind": "queue-requests", "queue_id": str(queue_id), "status": status, "v": 1})
+
+
+def decode_queue_request_cursor(value: str | None, *, queue_id: UUID, status: str | None) -> QueueRequestCursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        if set(data) != {"created_at", "id", "kind", "queue_id", "status", "v"} or data.get("v") != 1 or data.get("kind") != "queue-requests" or data.get("queue_id") != str(queue_id) or data.get("status") != status:
+            raise ValueError("cursor binding is invalid")
+        return QueueRequestCursorPosition(created_at=datetime.fromisoformat(str(data["created_at"])), resource_id=UUID(str(data["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_request_queue_list_cursor(*, project_id: UUID, created_at: datetime, resource_id: UUID) -> str:
+    return _encode_queue_cursor({"created_at": created_at.isoformat(), "id": str(resource_id), "kind": "request-queue-list", "project_id": str(project_id), "v": 1})
+
+
+def decode_request_queue_list_cursor(value: str | None, *, project_id: UUID) -> RequestQueueListCursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        if set(data) != {"created_at", "id", "kind", "project_id", "v"} or data.get("v") != 1 or data.get("kind") != "request-queue-list" or data.get("project_id") != str(project_id):
+            raise ValueError("cursor binding is invalid")
+        return RequestQueueListCursorPosition(created_at=datetime.fromisoformat(str(data["created_at"])), resource_id=UUID(str(data["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_queue_transition_cursor(*, queue_id: UUID, request_id: UUID | None, created_at: datetime, resource_id: UUID) -> str:
+    return _encode_queue_cursor({"created_at": created_at.isoformat(), "id": str(resource_id), "kind": "queue-transitions", "queue_id": str(queue_id), "request_id": str(request_id) if request_id is not None else None, "v": 1})
+
+
+def decode_queue_transition_cursor(value: str | None, *, queue_id: UUID, request_id: UUID | None) -> QueueTransitionCursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        expected_request_id = str(request_id) if request_id is not None else None
+        if set(data) != {"created_at", "id", "kind", "queue_id", "request_id", "v"} or data.get("v") != 1 or data.get("kind") != "queue-transitions" or data.get("queue_id") != str(queue_id) or data.get("request_id") != expected_request_id:
+            raise ValueError("cursor binding is invalid")
+        return QueueTransitionCursorPosition(created_at=datetime.fromisoformat(str(data["created_at"])), resource_id=UUID(str(data["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
         raise _invalid_cursor() from exc
 
 

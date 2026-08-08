@@ -10,7 +10,20 @@ force-push or weaken CI, authentication, authorization, RLS, sandboxing, browser
 controls, egress policy, or quota checks to make tests pass. Preserve published
 feature branches after merge unless an explicit repository rule changes that policy.
 
-Before merging a phase, run its verifier plus relevant tests, lint and type checks;
-then verify required GitHub checks are green for the exact PR head. Keep docs,
-threat models and runbooks aligned with shipped behavior, and do not claim a
-capability is enabled until its security boundary is actually enforced.
+Before merging a workstream, inspect the exact PR head, complete changed-file
+review, migrations, relevant security/adversarial tests, Ruff, mypy, pytest,
+frontend lint/typecheck/tests/build, verifier scripts and Compose validation.
+Merge only with exact-head authoritative GitHub CI green, mergeability confirmed,
+and no blocking review feedback. Preserve feature branches and close the linked
+issue after a verified merge.
+
+Maintain `docs/roadmap/RDC_V1_ROADMAP.md` as the durable source of current,
+completed and remaining RDC v1 work. Do not stop at phase initialization or a
+merged increment: continue to the next documented dependency. Keep the root
+README, threat models, runbooks, API contracts and schema documentation factual.
+
+Permanent prohibitions: no anonymous tenant-resource access; no arbitrary SQL,
+filesystem/object-key trust, or caller-owned tenancy; no Agent/Chromium database
+or object-storage credentials; no secret logging; no security-test removal;
+no force-push; and no relaxation of RLS, sandbox, browser, egress, CI or branch
+protection merely to obtain green checks.

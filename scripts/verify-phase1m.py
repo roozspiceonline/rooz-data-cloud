@@ -621,10 +621,9 @@ def main() -> None:
 
     root_readme = " ".join(read("README.md").split())
     for marker in [
-        "Phase 1M merge candidate",
-        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false",
-        "Agent containers and Chromium remain `--network none`",
-        "General untrusted browser execution remains release-blocked.",
+        "tenant-isolated scraping and automation control plane",
+        "All untrusted Agent and browser execution remains release-blocked.",
+        "docs/roadmap/RDC_V1_ROADMAP.md",
     ]:
         require(
             marker in root_readme,
