@@ -16,31 +16,56 @@ activation receipts, the immutable browser image boundary and the isolated
 - `extract_html`
 - viewport-only `screenshot`
 
-The protocol remains bounded by exact fields, action/page limits, selector
-limits, wait limits and extraction limits. URLs must use lowercase HTTPS and
-must match the exact operator hostname allowlist.
-
 ## Increment 2 — receipt-only Run intent
 
-The Run API now accepts a `browser_navigation` v2 intent, but this does **not**
-make live navigation executable.
+The API accepts `browser_navigation` but stores it as a receipt-only `DRAFT`
+Run. No START outbox is created and control-plane activation remains denied.
 
-A v2 intent is stored with:
+The immutable `rdc.browser-navigation-receipt/v1` binds:
 
-- the normalized `rdc.browser/v2` request
-- the existing immutable `rdc.browser-policy/v1` payload
-- the browser-policy SHA-256 digest
-- `rdc.browser-navigation-receipt/v1`
-- a deterministic request digest
+- request digest
+- `rdc.browser-policy/v1` digest
+- `rdc.browser-egress-policy/v1` digest
 - `execution_enabled=false`
 - `dispatch_enabled=false`
 - `browser_network=none`
-- `browser_egress_gateway_required=true`
 
-A v2 Run is created in `DRAFT` and receives **no START outbox command**. The
-control plane explicitly refuses v2 sandbox activation. The worker contains an
-independent v2 receipt validator and still fails closed with navigation
-execution disabled.
+## Increment 3 — browser-egress gateway policy
+
+`rdc.browser-egress-policy/v1` now defines the security contract that a future
+gateway transport must obey.
+
+It reuses the Phase 1J egress limits and allowlist, and requires:
+
+- HTTPS only
+- GET/HEAD only
+- exact operator allowlist
+- IP literals denied
+- global DNS only
+- validated address pinning
+- redirect revalidation
+- subresource revalidation
+- bounded request/resource/total-byte budgets
+- bounded connect/request timeouts
+- authorization/cookie/proxy-authorization request headers stripped
+- Set-Cookie response headers stripped
+- service workers disabled
+- WebSockets disabled
+- WebRTC disabled
+- arbitrary proxy override disabled
+- persistent cookies disabled
+
+Allowed network resource classes are intentionally narrow:
+
+- document
+- stylesheet
+- script
+- image
+- font
+- xhr
+- fetch
+
+Unknown resource classes fail closed.
 
 ## Execution boundary
 
@@ -53,25 +78,20 @@ Agent container                 browser runtime
       +---------- no live URL --------+
 ```
 
-No Phase 1M code currently sends `browser_navigation` URLs to Chromium.
+The gateway **transport is not wired**. The policy contract can validate a
+resource or redirect and returns the already-validated global IP addresses that
+a later TLS transport must pin. No Phase 1M code sends browser traffic to those
+addresses yet.
 
-## Required before live navigation
-
-A dedicated RDC-controlled browser-egress gateway must be implemented before a
-v2 Run can leave receipt-only state. That gateway must mediate top-level
-navigation, redirects and subresources while preserving global-DNS and SSRF
-protections.
-
-## Explicitly blocked
+## Still blocked
 
 - direct Chromium Internet access
 - arbitrary JavaScript / evaluate
 - clicks, typing and forms
-- arbitrary cookies or auth headers
 - project secrets
-- uploads and downloads
+- uploads/downloads
 - persistent profiles
 - raw CDP / browser server
 - arbitrary proxies
-- WebRTC
+- WebSockets / service workers / WebRTC
 - general untrusted browser execution
