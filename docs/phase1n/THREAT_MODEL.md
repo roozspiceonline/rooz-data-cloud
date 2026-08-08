@@ -17,9 +17,9 @@ Phase 1N assumes Agent output and scraped Dataset content are hostile.
 
 ### Credential exfiltration
 
-The Agent must never receive worker tokens, lease tokens or database
-credentials. The worker reads Agent output only after sandbox execution and
-forwards it itself.
+The Agent must never receive worker tokens, lease tokens or database credentials.
+The worker reads Agent output only after sandbox execution and forwards it
+itself.
 
 ### Stolen or stale worker request
 
