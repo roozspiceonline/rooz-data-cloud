@@ -163,12 +163,21 @@ def main() -> None:
         "launch_server",
         "websocket_endpoint",
         "http://",
-        "https://",
         "--no-sandbox",
     ]:
         require(
             forbidden not in runtime_source,
-            "browser runtime exposes forbidden live behavior: " + forbidden,
+            "browser runtime exposes forbidden Phase 1L surface: " + forbidden,
+        )
+    for marker in [
+        "def _self_test()",
+        'page.goto("about:blank"',
+        "if args.self_test:",
+        "Phase 1L self-test cannot accept live arguments.",
+    ]:
+        require(
+            marker in runtime_source,
+            "Phase 1L self-test isolation guard missing: " + marker,
         )
 
     for marker in [

@@ -24,42 +24,80 @@ receipt.
 
 ## Increment 4 — isolated Unix gateway transport
 
-The browser→gateway transport self-test uses a per-Run Unix-domain socket:
+The browser→gateway transport uses a per-Run Unix-domain socket while the
+browser container remains `--network none`.
 
-`/rdc-ipc/gateway.sock`
+## Increment 5 — bounded forwarding and extraction contracts
 
-The browser container still runs with:
+The live forwarding implementation now exists behind the fail-closed Run
+boundary, but normal v2 Run dispatch is still disabled.
 
-`--network none`
+New contracts:
 
-Only the private per-Run IPC directory is bind-mounted read-only into the
-browser runtime. No CNI bridge, host network, published port, Docker socket or
-containerd socket is exposed.
+- `rdc.browser-gateway-request/v1`
+- `rdc.browser-gateway-response/v1`
+- `rdc.browser-gateway-error/v1`
+- `rdc.browser-navigation-result/v1`
 
-The runtime sends `rdc.browser-gateway-ping/v1` carrying the exact
-browser-egress policy digest. The worker-side self-test server returns
-`rdc.browser-gateway-pong/v1` only when the digest and bounded nonce are valid.
+The browser runtime can intercept HTTPS requests with Playwright routing and
+send only these fields to the worker-side gateway:
 
-`rdc.browser-gateway-transport-self-test/v1` proves that Chromium remains on
-`about:blank`, browser networking is `none`, the gateway makes no external
-request, and live forwarding is false.
+- request id
+- immutable gateway-policy digest
+- resource type
+- method
+- URL
 
-The self-test transport contains no DNS, HTTP or TLS forwarding code.
+Browser request headers, cookies, authorization data and request bodies are
+never forwarded.
 
-## Next boundary
+The worker-side gateway reuses the Phase 1J pinned HTTPS primitive. Every
+document and subresource is validated against `rdc.browser-egress-policy/v1`
+before the gateway connects. The connection is made only to a DNS-validated
+global address while TLS hostname/SNI validation remains bound to the
+allowlisted hostname.
 
-Live navigation will later use Playwright request interception: Chromium's
-network requests will be intercepted and sent over the Unix socket to the
-worker-side RDC gateway. Only that gateway may perform policy-validated,
-address-pinned HTTPS requests.
+Redirects are not trusted. A redirect Location is normalized and independently
+revalidated before it is returned to Chromium. Chromium then issues the target
+request through the same Unix gateway, causing validation again before the next
+connection.
+
+Gateway budgets cover total requests, total response bytes, redirects,
+per-resource bytes, connect timeout and request timeout.
+
+Playwright fulfills network requests from gateway responses. Unsupported
+resource types or gateway denials are aborted. The runtime never uses
+`route.continue_()` for external requests.
+
+Extraction results are bounded:
+
+- text by `max_chars`
+- HTML by `max_bytes`
+- screenshot by browser policy
+- screenshot is viewport-only PNG with size and SHA-256 verification
 
 Chromium itself must remain network-none.
 
+## Current activation boundary
+
+Increment 5 does **not** make receipt-only v2 Runs executable.
+
+```text
+v2 Run state                  DRAFT
+START dispatch                blocked
+control-plane v2 activation   denied
+browser live forwarding       disabled for normal Runs
+Chromium network              none
+```
+
+The live path is code-available for independent contract verification only.
+The worker does not call it in this increment.
+
 ## Still blocked
 
-- live gateway forwarding
-- public Chromium navigation
-- arbitrary JavaScript/evaluate
+- normal v2 Run execution
+- public browser activation
+- arbitrary JavaScript/evaluate input
 - clicks/forms/type
 - project secrets
 - uploads/downloads

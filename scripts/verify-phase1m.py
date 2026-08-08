@@ -204,6 +204,12 @@ def main() -> None:
         "browser gateway schema version changed",
     )
 
+    sys.modules["browser_egress_policy"] = browser_egress_module
+    egress_broker_module = load_module(
+        "workers/sandbox-runtime/egress_broker.py",
+        "rdc_phase1m_egress_broker",
+    )
+    sys.modules["egress_broker"] = egress_broker_module
     gateway_transport_module = load_module(
         "workers/sandbox-runtime/browser_gateway_transport.py",
         "rdc_phase1m_browser_gateway_transport",
@@ -621,6 +627,320 @@ def main() -> None:
     ]:
         require(marker in docs, "Phase 1M docs missing: " + marker)
 
+
+    # Increment 5: bounded live forwarding exists, but normal v2 worker wiring
+    # must remain absent until final hardening/activation.
+    gateway_transport_source = read(
+        "workers/sandbox-runtime/browser_gateway_transport.py"
+    )
+    for marker in [
+        "BrowserGatewayBroker",
+        "BrowserGatewayLiveServer",
+        "_request_once",
+        "live_forwarding_enabled",
+        "socket.AF_UNIX",
+        '"rdc.browser-gateway-request/v1"',
+        '"rdc.browser-gateway-response/v1"',
+    ]:
+        require(
+            marker in gateway_transport_source,
+            "bounded browser gateway forwarding guard missing: " + marker,
+        )
+    for forbidden in [
+        "socket.AF_INET",
+        "urllib.request",
+        "requests.",
+    ]:
+        require(
+            forbidden not in gateway_transport_source,
+            "browser gateway gained an alternate network stack: " + forbidden,
+        )
+
+    class FakeResponse:
+        status = 200
+
+        def getheaders(self):
+            return [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Set-Cookie", "should-never-cross=1"),
+                ("Content-Length", "13"),
+            ]
+
+        def getheader(self, name):
+            if name == "Content-Encoding":
+                return "identity"
+            if name == "Location":
+                return None
+            return None
+
+        def read(self, amount):
+            return b"<h1>safe</h1>"
+
+    class FakeConnection:
+        def request(self, method, path, headers):
+            self.request_headers = dict(headers)
+
+        def getresponse(self):
+            return FakeResponse()
+
+        def close(self):
+            return None
+
+    def fake_connection(target, policy):
+        return FakeConnection()
+
+    live_broker = gateway_transport_module.BrowserGatewayBroker(
+        policy=browser_egress,
+        gateway_policy_digest=browser_egress.digest,
+        live_forwarding_enabled=True,
+        resolver=public_resolver,
+        connection_factory=fake_connection,
+    )
+    live_response = live_broker.handle_request(
+        {
+            "schema_version": "rdc.browser-gateway-request/v1",
+            "request_id": "doc-1",
+            "gateway_policy_digest": browser_egress.digest,
+            "resource_type": "document",
+            "method": "GET",
+            "url": "https://example.com/",
+        }
+    )
+    require(
+        live_response["schema_version"]
+        == "rdc.browser-gateway-response/v1",
+        "live browser gateway response contract changed",
+    )
+    require(
+        live_response["status"] == 200
+        and live_response["size_bytes"] == len(b"<h1>safe</h1>"),
+        "live browser gateway response body changed",
+    )
+    live_headers = live_response["headers"]
+    require(
+        isinstance(live_headers, dict)
+        and "set-cookie" not in live_headers
+        and "content-length" not in live_headers,
+        "live browser gateway leaked forbidden response headers",
+    )
+    live_budget = live_response["budget"]
+    require(
+        isinstance(live_budget, dict)
+        and live_budget["requests_used"] == 1
+        and live_budget["bytes_received"] == len(b"<h1>safe</h1>"),
+        "live browser gateway budget accounting changed",
+    )
+
+    disabled_broker = gateway_transport_module.BrowserGatewayBroker(
+        policy=browser_egress,
+        gateway_policy_digest=browser_egress.digest,
+        live_forwarding_enabled=False,
+        resolver=public_resolver,
+        connection_factory=fake_connection,
+    )
+    try:
+        disabled_broker.handle_request(
+            {
+                "schema_version": "rdc.browser-gateway-request/v1",
+                "request_id": "blocked-1",
+                "gateway_policy_digest": browser_egress.digest,
+                "resource_type": "document",
+                "method": "GET",
+                "url": "https://example.com/",
+            }
+        )
+    except gateway_transport_module.BrowserGatewayTransportError:
+        pass
+    else:
+        raise SystemExit(
+            "Phase 1M verification failed: disabled live gateway accepted a request"
+        )
+
+    result_module = load_module(
+        "workers/sandbox-runtime/browser_navigation_result.py",
+        "rdc_phase1m_navigation_result",
+    )
+    sample_image = b"\x89PNG\r\n\x1a\n"
+    sample_plan = {
+        "schema_version": "rdc.browser/v2",
+        "steps": [
+            {
+                "id": "open",
+                "type": "goto",
+                "url": "https://example.com/",
+                "wait_until": "load",
+            },
+            {
+                "id": "shot",
+                "type": "screenshot",
+                "full_page": False,
+            },
+        ],
+    }
+    sample_request_digest = __import__("hashlib").sha256(
+        json.dumps(
+            sample_plan,
+            sort_keys=True,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    sample_result = {
+        "schema_version": "rdc.browser-navigation-result/v1",
+        "request_digest": sample_request_digest,
+        "browser_policy_digest": "2" * 64,
+        "browser_egress_policy_digest": "3" * 64,
+        "browser_network": "none",
+        "gateway_transport": "unix",
+        "gateway_live_forwarding": True,
+        "final_url": "https://example.com/",
+        "steps": [
+            {"id": "open", "type": "goto", "url": "https://example.com/"},
+            {
+                "id": "shot",
+                "type": "screenshot",
+                "media_type": "image/png",
+                "image_base64": __import__("base64").b64encode(
+                    sample_image
+                ).decode("ascii"),
+                "size_bytes": len(sample_image),
+                "sha256": __import__("hashlib").sha256(
+                    sample_image
+                ).hexdigest(),
+            },
+        ],
+        "egress_budget": {
+            "requests_used": 1,
+            "bytes_received": 13,
+            "redirects_used": 0,
+            "max_requests": 8,
+            "max_total_bytes": 4_194_304,
+            "max_redirects": 3,
+        },
+    }
+    validated_result = result_module.validate_browser_navigation_result(
+        sample_result,
+        request_digest=sample_request_digest,
+        browser_policy_digest="2" * 64,
+        browser_egress_policy_digest="3" * 64,
+        navigation_plan=sample_plan,
+        max_screenshot_bytes=2_097_152,
+    )
+    require(
+        validated_result["browser_network"] == "none",
+        "browser navigation result network boundary changed",
+    )
+    tampered_result = dict(sample_result)
+    tampered_result["steps"] = [
+        sample_result["steps"][1],
+        sample_result["steps"][0],
+    ]
+    try:
+        result_module.validate_browser_navigation_result(
+            tampered_result,
+            request_digest=sample_request_digest,
+            browser_policy_digest="2" * 64,
+            browser_egress_policy_digest="3" * 64,
+            navigation_plan=sample_plan,
+            max_screenshot_bytes=2_097_152,
+        )
+    except result_module.BrowserNavigationResultError:
+        pass
+    else:
+        raise SystemExit(
+            "Phase 1M verification failed: result/plan substitution was accepted"
+        )
+
+    for schema_path, expected_version in [
+        (
+            "packages/agent-protocol/schemas/browser-gateway-request.schema.json",
+            "rdc.browser-gateway-request/v1",
+        ),
+        (
+            "packages/agent-protocol/schemas/browser-navigation-result.schema.json",
+            "rdc.browser-navigation-result/v1",
+        ),
+    ]:
+        new_schema = json.loads(read(schema_path))
+        require(
+            new_schema.get("additionalProperties") is False
+            and new_schema["properties"]["schema_version"]["const"]
+            == expected_version,
+            "new Phase 1M schema changed: " + schema_path,
+        )
+    response_schema = json.loads(
+        read(
+            "packages/agent-protocol/schemas/browser-gateway-response.schema.json"
+        )
+    )
+    require(
+        isinstance(response_schema.get("oneOf"), list)
+        and len(response_schema["oneOf"]) == 2,
+        "browser gateway response/error schema changed",
+    )
+
+    for marker in [
+        'context.route("**/*", _route_request)',
+        "route.fulfill(",
+        "route.abort(",
+        '"rdc.browser-gateway-request/v1"',
+        '"rdc.browser-navigation-result/v1"',
+        '_RESULT_PATH = "/rdc-output/result.json"',
+        '"browser_network": "none"',
+    ]:
+        require(
+            marker in runtime,
+            "browser live runtime guard missing: " + marker,
+        )
+    require(
+        "route.continue_" not in runtime,
+        "browser live runtime can bypass the gateway",
+    )
+
+    for marker in [
+        "browser_live_navigation_command",
+        "validate_live_navigation_result_file",
+        '"--live-navigation"',
+        '":/rdc-ipc:ro"',
+        '":/rdc-output:rw"',
+        '"--network"',
+        '"none"',
+    ]:
+        require(
+            marker in executor,
+            "browser live executor guard missing: " + marker,
+        )
+
+    for forbidden in [
+        "BrowserGatewayLiveServer",
+        "browser_live_navigation_command",
+        "run_browser_live_navigation",
+    ]:
+        require(
+            forbidden not in worker_source,
+            "normal v2 worker path became live too early: " + forbidden,
+        )
+
+    for marker in [
+        '"browser_gateway_live_forwarding_enabled": False',
+        '"browser_gateway_live_forwarding_contract_available": True',
+        '"browser_gateway_request_contract": "rdc.browser-gateway-request/v1"',
+        '"browser_gateway_response_contract": "rdc.browser-gateway-response/v1"',
+        '"browser_navigation_result_contract": "rdc.browser-navigation-result/v1"',
+        '"browser_navigation_live_code_available": True',
+        '"browser_navigation_live_worker_wired": False',
+        '"browser_navigation_dispatch_enabled": False',
+        '"browser_execution_enabled": False',
+    ]:
+        require(
+            marker in main_source,
+            "API increment-5 status guard missing: " + marker,
+        )
+
+    print("  bounded Unix gateway forwarding contract: PASS")
+    print("  Playwright request interception contract: PASS")
+    print("  plan-bound browser navigation result contract: PASS")
+    print("  normal v2 live worker wiring: BLOCKED")
     print("  Unix browser->gateway transport self-test: PASS")
     print("  Chromium network: NONE")
     print("  gateway external request: FALSE")

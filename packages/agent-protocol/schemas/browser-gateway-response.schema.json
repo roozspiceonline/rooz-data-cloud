@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "browser-gateway-response.schema.json",
+  "title": "RDC Browser Gateway Response v1",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "request_id",
+        "gateway_policy_digest",
+        "status",
+        "headers",
+        "redirect_url",
+        "body_base64",
+        "size_bytes",
+        "body_sha256",
+        "budget"
+      ],
+      "properties": {
+        "schema_version": {"const": "rdc.browser-gateway-response/v1"},
+        "request_id": {"type": "string"},
+        "gateway_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "headers": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "maxLength": 2048}
+        },
+        "redirect_url": {"type": ["string", "null"]},
+        "body_base64": {"type": "string"},
+        "size_bytes": {"type": "integer", "minimum": 0, "maximum": 8388608},
+        "body_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "requests_used",
+            "bytes_received",
+            "redirects_used",
+            "max_requests",
+            "max_total_bytes",
+            "max_redirects"
+          ],
+          "properties": {
+            "requests_used": {"type": "integer", "minimum": 0},
+            "bytes_received": {"type": "integer", "minimum": 0},
+            "redirects_used": {"type": "integer", "minimum": 0},
+            "max_requests": {"type": "integer", "minimum": 1},
+            "max_total_bytes": {"type": "integer", "minimum": 1024},
+            "max_redirects": {"type": "integer", "minimum": 0}
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "request_id",
+        "gateway_policy_digest",
+        "error_code"
+      ],
+      "properties": {
+        "schema_version": {"const": "rdc.browser-gateway-error/v1"},
+        "request_id": {"type": ["string", "null"]},
+        "gateway_policy_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "error_code": {"const": "BROWSER_GATEWAY_POLICY_DENIED"}
+      }
+    }
+  ]
+}

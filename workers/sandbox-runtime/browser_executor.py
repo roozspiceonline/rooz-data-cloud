@@ -9,6 +9,10 @@ from browser_gateway_transport import (
     BrowserGatewaySelfTestServer,
     BrowserGatewayTransportError,
 )
+from browser_navigation_result import (
+    BrowserNavigationResultError,
+    validate_browser_navigation_result,
+)
 from config import SandboxWorkerConfig
 from policy import SandboxPolicyError
 
@@ -425,4 +429,152 @@ def run_browser_transport_self_test(
         encoding="utf-8",
     )
     return output_path, log_path
+
+
+def browser_live_navigation_command(
+    *,
+    config: SandboxWorkerConfig,
+    run_id: str,
+    ipc_dir: Path,
+    output_dir: Path,
+    gateway_policy_digest: str,
+    browser_policy_digest: str,
+    request_digest: str,
+    max_screenshot_bytes: int,
+    navigation_timeout_seconds: int,
+) -> tuple[str, list[str]]:
+    for digest in (
+        gateway_policy_digest,
+        browser_policy_digest,
+        request_digest,
+    ):
+        if _DIGEST.fullmatch(digest) is None:
+            raise BrowserRuntimeError(
+                "Browser live-navigation digest is invalid."
+            )
+    navigation_file = ipc_dir / "navigation.json"
+    if (
+        not ipc_dir.is_dir()
+        or ipc_dir.name != "browser-ipc"
+        or not navigation_file.is_file()
+        or navigation_file.is_symlink()
+        or not output_dir.is_dir()
+        or output_dir.name != "browser-output"
+    ):
+        raise BrowserRuntimeError(
+            "Browser live-navigation mount directory is invalid."
+        )
+    if (
+        isinstance(max_screenshot_bytes, bool)
+        or not 65_536 <= max_screenshot_bytes <= 4_194_304
+        or not 1 <= navigation_timeout_seconds <= 30
+    ):
+        raise BrowserRuntimeError(
+            "Browser live-navigation limit is unsafe."
+        )
+    image_ref = config.browser_runtime_image_ref
+    if _IMAGE_REF.fullmatch(image_ref) is None:
+        raise BrowserRuntimeError(
+            "Browser runtime requires an immutable local image digest."
+        )
+    if not config.browser_seccomp_profile.is_file():
+        raise BrowserRuntimeError("Browser seccomp profile is unavailable.")
+    name = _browser_container_name(run_id)
+    command = [
+        "nerdctl",
+        "--address",
+        config.containerd_address,
+        "--namespace",
+        config.namespace,
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--pull",
+        "never",
+        "--init",
+        "--user",
+        "pwuser",
+        "--read-only",
+        "--security-opt",
+        "no-new-privileges",
+        "--security-opt",
+        "seccomp=" + str(config.browser_seccomp_profile),
+        "--security-opt",
+        "apparmor=" + config.apparmor_profile,
+        "--cap-drop",
+        "ALL",
+        "--pids-limit",
+        "128",
+        "--memory",
+        "512m",
+        "--cpus",
+        "1.0",
+        "--network",
+        "none",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=128m",
+        "--volume",
+        str(ipc_dir) + ":/rdc-ipc:ro",
+        "--volume",
+        str(output_dir) + ":/rdc-output:rw",
+        image_ref,
+        "--live-navigation",
+        "--gateway-socket",
+        _GATEWAY_SOCKET_IN_CONTAINER,
+        "--gateway-policy-digest",
+        gateway_policy_digest,
+        "--browser-policy-digest",
+        browser_policy_digest,
+        "--request-digest",
+        request_digest,
+        "--max-screenshot-bytes",
+        str(max_screenshot_bytes),
+        "--navigation-timeout-ms",
+        str(navigation_timeout_seconds * 1000),
+    ]
+    return name, command
+
+
+def validate_live_navigation_result_file(
+    *,
+    result_path: Path,
+    request_digest: str,
+    browser_policy_digest: str,
+    browser_egress_policy_digest: str,
+    navigation_plan: object,
+    max_screenshot_bytes: int,
+) -> dict[str, object]:
+    if (
+        not result_path.is_file()
+        or result_path.is_symlink()
+        or result_path.name != "result.json"
+    ):
+        raise BrowserRuntimeError(
+            "Browser navigation result file is unavailable."
+        )
+    raw = result_path.read_bytes()
+    if not raw or len(raw) > 16_777_216:
+        raise BrowserRuntimeError(
+            "Browser navigation result file is outside the safe size limit."
+        )
+    try:
+        value = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BrowserRuntimeError(
+            "Browser navigation result file is invalid JSON."
+        ) from exc
+    try:
+        return validate_browser_navigation_result(
+            value,
+            request_digest=request_digest,
+            browser_policy_digest=browser_policy_digest,
+            browser_egress_policy_digest=browser_egress_policy_digest,
+            navigation_plan=navigation_plan,
+            max_screenshot_bytes=max_screenshot_bytes,
+        )
+    except BrowserNavigationResultError as exc:
+        raise BrowserRuntimeError(
+            "Browser navigation result failed independent validation."
+        ) from exc
 

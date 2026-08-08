@@ -183,6 +183,12 @@ async def foundation_status() -> dict[str, object]:
         "browser_gateway_transport_mode": "unix-domain-socket",
         "browser_gateway_transport_self_test_available": True,
         "browser_gateway_live_forwarding_enabled": False,
+        "browser_gateway_live_forwarding_contract_available": True,
+        "browser_gateway_request_contract": "rdc.browser-gateway-request/v1",
+        "browser_gateway_response_contract": "rdc.browser-gateway-response/v1",
+        "browser_navigation_result_contract": "rdc.browser-navigation-result/v1",
+        "browser_navigation_live_code_available": True,
+        "browser_navigation_live_worker_wired": False,
         "browser_policy_contract": "rdc.browser-policy/v1",
         "browser_runtime_self_test_contract": (
             "rdc.browser-runtime-self-test/v1"
