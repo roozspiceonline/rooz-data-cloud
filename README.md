@@ -1,20 +1,30 @@
-# Rooz Data Cloud — Phase 1M merge candidate
+# Rooz Data Cloud — Phase 1N merge candidate
 
-Rooz Data Cloud Phase 1M implements controlled browser navigation and bounded
-extraction on top of the merged Phase 1L browser foundation.
+Rooz Data Cloud Phase 1N adds the first durable structured-result primitive:
+tenant-scoped, append-only Datasets bound to immutable Run and AgentVersion
+lineage.
 
-Live navigation has its own false-by-default gate:
-`RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false`.
+The phase now includes strict `rdc.dataset-append/v1`, PostgreSQL RLS,
+idempotent append receipts, monotonic sequence allocation, Dataset quotas,
+lease-scoped worker append, signed DatasetItem pagination and bounded canonical
+JSONL export.
 
-The capability includes strict `rdc.browser/v2`, exact HTTPS hostname allowlists,
-global-DNS validation, validated-address pinning, TLS hostname/SNI verification,
-redirect/subresource revalidation, per-Run Unix gateway transport, plan-bound
-results and bounded text/HTML/viewport screenshot extraction.
+Worker Dataset writes remain behind the independent false-by-default gate:
+`RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED=false`. The worker path requires an
+ACTIVE unexpired `RUN_START` lease, exact configured AgentVersion and worker,
+and explicit `DATASET_APPEND` capability. Agent and Chromium containers never
+receive worker, lease or PostgreSQL credentials.
 
-Agent containers and Chromium remain `--network none`. Browser cookies,
-Authorization headers and request bodies never cross the gateway. General
-untrusted browser execution remains release-blocked.
+Dataset item pages are signed and Dataset-bound, with a maximum page size of
+200. Whole-Dataset JSONL export is authenticated, separately scoped by
+`dataset.export`, audited, limited to 10,000 items and 16 MiB, and never
+public. Larger Datasets must be consumed through cursor pagination.
 
-Without the full exact canary configuration, new v2 Runs remain DRAFT with no
-START command. PR #50 remains draft and unmerged until exact-head CI is green
-and the Product Owner explicitly approves the Phase 1M merge.
+The previous Phase 1M merge candidate established the controlled browser
+navigation boundary. `RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false`
+remains false by default. Agent containers and Chromium remain `--network none`.
+General untrusted browser execution remains release-blocked.
+
+PR #52 remains DRAFT and unmerged until the full Phase 1N exact-head
+authoritative CI is green and the Product Owner explicitly says
+`approve Phase 1N merge`. The feature branch must be preserved.

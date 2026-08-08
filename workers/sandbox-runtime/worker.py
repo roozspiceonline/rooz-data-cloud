@@ -25,10 +25,16 @@ from browser_policy import (
 from build_executor import LocalArtifact, build_agent
 from config import SandboxWorkerConfig
 from egress_broker import broker_web_requests
+from dataset_protocol import DatasetProtocolError, validate_dataset_append
 from egress_policy import EgressPolicy, EgressPolicyError
 from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
 from policy import SandboxPolicyError, verify_host
-from rdc_worker_client import RdcWorkerClient, decrypt_secret_envelope, generate_worker_key_pair
+from rdc_worker_client import (
+    RdcWorkerClient,
+    WorkerProtocolError,
+    decrypt_secret_envelope,
+    generate_worker_key_pair,
+)
 from run_executor import cancel_run, load_image, run_agent
 from web_fetch_contract import (
     WebFetchContractError,
@@ -181,6 +187,7 @@ def _require_canary_activation(
     egress_policy: EgressPolicy | None,
     browser_policy: BrowserPolicy | None,
     browser_live_navigation_enabled: bool,
+    dataset_writes_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -233,13 +240,54 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Agent browser capability is invalid."
         )
+    dataset = capabilities.get("dataset")
+    if not isinstance(dataset, bool):
+        raise SandboxPolicyError(
+            "Canary Agent Dataset capability is invalid."
+        )
     if (
-        capabilities.get("dataset") is not False
-        or capabilities.get("keyValueStore") is not False
+        capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
     ):
         raise SandboxPolicyError(
             "Canary Agent requested an unsupported storage capability."
+        )
+    if activation.get("dataset_write_enabled") is not dataset:
+        raise SandboxPolicyError(
+            "Canary Dataset activation receipt does not match manifest."
+        )
+    if dataset:
+        if (
+            payload.get("work_kind") != "RUN_START"
+            or browser
+            or not dataset_writes_enabled
+        ):
+            raise SandboxPolicyError(
+                "Canary Dataset writes are not enabled for this Run."
+            )
+        expected_dataset_capability = {
+            "schema_version": "rdc.dataset-worker-capability/v1",
+            "append_schema_version": "rdc.dataset-append/v1",
+            "run_id": str(payload.get("run_id", "")),
+            "agent_version_id": str(payload.get("agent_version_id", "")),
+            "worker_name": worker_name,
+            "dataset_name": "default",
+            "max_items_per_append": 100,
+            "max_item_bytes": 65_536,
+            "max_batch_bytes": 262_144,
+            "max_dataset_items": 100_000,
+            "max_dataset_bytes": 268_435_456,
+            "enabled": True,
+        }
+        if payload.get("dataset_append_capability") != (
+            expected_dataset_capability
+        ):
+            raise SandboxPolicyError(
+                "Canary Dataset capability receipt is invalid."
+            )
+    elif payload.get("dataset_append_capability") is not None:
+        raise SandboxPolicyError(
+            "Dataset-disabled Run cannot carry a Dataset capability."
         )
 
     profile = activation.get("capability_profile")
@@ -419,6 +467,7 @@ def _build(
             browser_live_navigation_enabled=(
                 config.browser_live_navigation_enabled
             ),
+            dataset_writes_enabled=config.dataset_writes_enabled,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -511,6 +560,7 @@ def _run(
             browser_live_navigation_enabled=(
                 config.browser_live_navigation_enabled
             ),
+            dataset_writes_enabled=config.dataset_writes_enabled,
         )
         if activation.get("capability_profile") == "controlled-browser":
             input_reference = payload.get("input_reference")
@@ -734,6 +784,56 @@ def _run(
             workspace=workspace,
             policy=dict(payload["sandbox"]),
         )
+
+        dataset_enabled = (
+            isinstance(manifest.get("capabilities"), dict)
+            and manifest["capabilities"].get("dataset") is True
+        )
+        if dataset_enabled and code == 0:
+            try:
+                if not output_path.is_file():
+                    raise DatasetProtocolError(
+                        "Dataset-enabled Run did not produce an output envelope."
+                    )
+                if output_path.stat().st_size > 262_144:
+                    raise DatasetProtocolError(
+                        "Dataset output envelope exceeds the worker read limit."
+                    )
+                decoded = json.loads(output_path.read_text(encoding="utf-8"))
+                if not isinstance(decoded, dict):
+                    raise DatasetProtocolError(
+                        "Dataset output envelope must be an object."
+                    )
+                dataset_payload = {
+                    str(key): value for key, value in decoded.items()
+                }
+                validate_dataset_append(dataset_payload)
+                client.dataset_append(
+                    lease_id,
+                    token,
+                    dataset_payload,
+                )
+            except (
+                DatasetProtocolError,
+                WorkerProtocolError,
+                json.JSONDecodeError,
+                OSError,
+                UnicodeError,
+            ):
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "DATASET_APPEND_FAILED",
+                        "error_summary": (
+                            "Controlled Dataset append failed closed."
+                        ),
+                    },
+                )
+                return
+
         image_digest = (
             str(artifact_grant["digest_algorithm"])
             + ":"

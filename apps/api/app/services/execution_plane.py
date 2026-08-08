@@ -25,6 +25,7 @@ from ..core.worker_crypto import (
     encrypt_secret_payload_for_worker,
     worker_secret_aad,
 )
+from ..dataset_schemas import CreateDatasetRequest
 from ..execution_schemas import (
     AppendWorkerEventsRequest,
     ArtifactDownloadGrant,
@@ -51,6 +52,7 @@ from ..models import (
     AgentVersion,
     Build,
     BuildDispatchOutbox,
+    Dataset,
     ExecutionArtifact,
     ExecutionLease,
     ProjectSecret,
@@ -59,6 +61,11 @@ from ..models import (
     SecretInjectionGrant,
     StorageObject,
     WorkerIdentity,
+)
+from .datasets import (
+    DatasetAppendOutcome,
+    append_dataset_items,
+    create_dataset,
 )
 from .identity_tenancy import append_audit_event
 from .runs import (
@@ -165,6 +172,7 @@ def _canary_constraints(
     *,
     network: str,
     browser: bool = False,
+    dataset: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -179,7 +187,7 @@ def _canary_constraints(
             else "none"
         ),
         "browser": browser,
-        "dataset": False,
+        "dataset": dataset,
         "key_value_store": False,
         "request_queue": False,
         "secrets": False,
@@ -238,10 +246,19 @@ def _canary_activation(
     browser = capabilities.get("browser")
     if not isinstance(browser, bool):
         return None
+    dataset = capabilities.get("dataset")
+    if not isinstance(dataset, bool):
+        return None
     if (
-        capabilities.get("dataset") is not False
-        or capabilities.get("keyValueStore") is not False
+        capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
+    ):
+        return None
+    if dataset and (
+        str(payload.get("work_kind", "")) != "RUN_START"
+        or browser
+        or not settings.sandbox_canary_dataset_writes_enabled
+        or "DATASET_APPEND" not in worker.capabilities
     ):
         return None
 
@@ -306,6 +323,7 @@ def _canary_activation(
     constraints = _canary_constraints(
         network=network,
         browser=browser,
+        dataset=dataset,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -330,7 +348,60 @@ def _canary_activation(
         capability_profile=capability_profile,
         egress_policy_digest=egress_policy_digest,
         browser_policy_digest=browser_policy_digest,
+        dataset_write_enabled=dataset,
     )
+
+
+
+def _dataset_append_capability(
+    worker: WorkerIdentity,
+    payload: dict[str, object],
+    *,
+    dataset_write_enabled: bool,
+) -> dict[str, object] | None:
+    if (
+        not dataset_write_enabled
+        or not settings.sandbox_canary_dataset_writes_enabled
+        or str(payload.get("work_kind", "")) != "RUN_START"
+        or worker.name != settings.sandbox_canary_worker_name.strip()
+        or "DATASET_APPEND" not in worker.capabilities
+        or str(payload.get("agent_version_id", ""))
+        != settings.sandbox_canary_agent_version_id.strip()
+    ):
+        return None
+
+    manifest = payload.get("manifest")
+    if not isinstance(manifest, dict):
+        return None
+    capabilities = manifest.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return None
+    if (
+        capabilities.get("dataset") is not True
+        or capabilities.get("browser") is not False
+        or capabilities.get("keyValueStore") is not False
+        or capabilities.get("requestQueue") is not False
+    ):
+        return None
+
+    run_id = payload.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return None
+
+    return {
+        "schema_version": "rdc.dataset-worker-capability/v1",
+        "append_schema_version": "rdc.dataset-append/v1",
+        "run_id": run_id,
+        "agent_version_id": str(payload["agent_version_id"]),
+        "worker_name": worker.name,
+        "dataset_name": "default",
+        "max_items_per_append": 100,
+        "max_item_bytes": 65_536,
+        "max_batch_bytes": 262_144,
+        "max_dataset_items": 100_000,
+        "max_dataset_bytes": 268_435_456,
+        "enabled": True,
+    }
 
 
 def _activation_payload(
@@ -395,6 +466,21 @@ def _sandbox_claim_policy(
         return None
     browser = capabilities.get("browser")
     if not isinstance(browser, bool):
+        return None
+    dataset = capabilities.get("dataset")
+    if not isinstance(dataset, bool):
+        return None
+    if (
+        capabilities.get("keyValueStore") is not False
+        or capabilities.get("requestQueue") is not False
+    ):
+        return None
+    if dataset and (
+        str(payload.get("work_kind", "")) != "RUN_START"
+        or browser
+        or not settings.sandbox_canary_dataset_writes_enabled
+        or "DATASET_APPEND" not in worker.capabilities
+    ):
         return None
     if browser:
         if (
@@ -1088,6 +1174,16 @@ async def claim_work(
         claim_payload["execution_enabled"] = execution_enabled
         claim_payload["sandbox"] = sandbox_policy if execution_enabled else None
         claim_payload["activation"] = _activation_payload(activation)
+        claim_payload["dataset_append_capability"] = (
+            _dataset_append_capability(
+                worker,
+                claim_payload,
+                dataset_write_enabled=(
+                    activation is not None
+                    and activation.dataset_write_enabled
+                ),
+            )
+        )
         lease.payload_digest = canonical_fingerprint(claim_payload)
         lease.payload_snapshot = claim_payload
         await append_audit_event(
@@ -1130,6 +1226,106 @@ async def claim_work(
             payload=claim_payload,
         )
     return None
+
+
+async def append_worker_dataset_items(
+    session: AsyncSession,
+    *,
+    lease: ExecutionLease,
+    worker: WorkerIdentity,
+    payload: object,
+    request_id: str,
+) -> DatasetAppendOutcome:
+    if not settings.sandbox_canary_dataset_writes_enabled:
+        raise ApiError(
+            status_code=403,
+            code="DATASET_WORKER_APPEND_DISABLED",
+            message="Worker Dataset append is disabled.",
+        )
+    if lease.work_kind != "RUN_START" or lease.run_id is None:
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_STATE_CONFLICT",
+            message="Only active Run execution leases can append Dataset items.",
+        )
+    if "DATASET_APPEND" not in worker.capabilities:
+        raise ApiError(
+            status_code=403,
+            code="WORKER_CAPABILITY_DENIED",
+            message="The worker cannot append Dataset items.",
+        )
+
+    snapshot = dict(lease.payload_snapshot)
+    activation = snapshot.get("activation")
+    dataset_write_enabled = (
+        isinstance(activation, dict)
+        and activation.get("dataset_write_enabled") is True
+    )
+    expected_capability = _dataset_append_capability(
+        worker,
+        snapshot,
+        dataset_write_enabled=dataset_write_enabled,
+    )
+    if (
+        expected_capability is None
+        or snapshot.get("dataset_append_capability")
+        != expected_capability
+        or str(snapshot.get("run_id", "")) != str(lease.run_id)
+    ):
+        raise ApiError(
+            status_code=403,
+            code="DATASET_WORKER_CAPABILITY_INVALID",
+            message="The worker Dataset capability receipt is invalid.",
+        )
+
+    run = await session.scalar(
+        select(Run).where(
+            Run.id == lease.run_id,
+            Run.organization_id == lease.organization_id,
+            Run.project_id == lease.project_id,
+        )
+    )
+    if (
+        run is None
+        or str(run.agent_version_id)
+        != settings.sandbox_canary_agent_version_id.strip()
+        or str(snapshot.get("agent_version_id", ""))
+        != str(run.agent_version_id)
+    ):
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+
+    dataset = await session.scalar(
+        select(Dataset).where(
+            Dataset.organization_id == run.organization_id,
+            Dataset.project_id == run.project_id,
+            Dataset.run_id == run.id,
+            Dataset.name == "default",
+        )
+    )
+    if dataset is None:
+        dataset = await create_dataset(
+            session,
+            run=run,
+            user_id=run.requested_by_user_id,
+            actor_type="worker",
+            actor_id=str(worker.id),
+            request_id=request_id,
+            payload=CreateDatasetRequest(name="default"),
+        )
+
+    return await append_dataset_items(
+        session,
+        dataset=dataset,
+        user_id=run.requested_by_user_id,
+        actor_type="worker",
+        actor_id=str(worker.id),
+        request_id=request_id,
+        payload=payload,
+    )
 
 
 async def renew_lease(

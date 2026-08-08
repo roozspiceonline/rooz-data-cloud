@@ -98,6 +98,7 @@ class Settings(BaseSettings):
 
     sandbox_canary_browser_enabled: bool = False
     sandbox_canary_browser_live_navigation_enabled: bool = False
+    sandbox_canary_dataset_writes_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -330,6 +331,15 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Canary web-egress request timeout is outside the safe range."
+            )
+
+        if self.sandbox_canary_dataset_writes_enabled and (
+            not self.sandbox_execution_enabled
+            or self.sandbox_activation_mode != "canary"
+        ):
+            raise ValueError(
+                "Dataset worker writes require the sandbox master "
+                "gate and canary mode."
             )
 
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:

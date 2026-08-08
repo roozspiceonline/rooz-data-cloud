@@ -215,6 +215,23 @@ class RdcWorkerClient:
             raise WorkerProtocolError("Artifact-download response was empty.")
         return response
 
+
+    def dataset_append(
+        self,
+        lease_id: str,
+        lease_token: str,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/dataset-append",
+            payload,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Dataset-append response was empty.")
+        return response
+
     def complete(
         self,
         lease_id: str,

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.14.0-phase1n — 2026-08-08
+
+- Added tenant-scoped `control.datasets`, `control.dataset_items` and immutable
+  append receipts under PostgreSQL RLS.
+- Added strict `rdc.dataset-append/v1`, canonical SHA-256 request digests,
+  Dataset-scoped idempotency, row-locked sequence allocation and item/byte
+  quotas.
+- Added authenticated Dataset metadata and append APIs.
+- Added false-by-default lease-scoped worker Dataset append using explicit
+  `DATASET_APPEND` capability and `rdc.dataset-worker-capability/v1`.
+- Kept Agent and Chromium containers without worker, lease or PostgreSQL
+  credentials.
+- Added signed Dataset-bound item pagination with a maximum page size of 200.
+- Added separately scoped, CSRF-protected canonical JSONL export limited to
+  10,000 items and 16 MiB with SHA-256 response metadata and audit events.
+- Kept Dataset items append-only with no item UPDATE/PATCH/DELETE surface.
+- Kept public Dataset export disabled and general untrusted execution
+  release-blocked.
+
 ## 0.13.0-phase1m — 2026-08-08
 
 - Added strict `rdc.browser/v2` controlled navigation/extraction.

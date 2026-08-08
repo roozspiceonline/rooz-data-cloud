@@ -82,10 +82,7 @@ def main() -> None:
     )
 
     main_source = read("apps/api/app/main.py")
-    for marker in [
-        'version="0.13.0-phase1m"',
-        '"phase": "1M"',
-        '"status": "controlled-browser-navigation-canary"',
+    browser_status_markers = [
         '"browser_request_contract": "rdc.browser/v1"',
         '"browser_policy_contract": "rdc.browser-policy/v1"',
         '"browser_runtime_self_test_available": True',
@@ -93,11 +90,32 @@ def main() -> None:
         "_browser_live_navigation_canary_enabled()",
         '"browser_canary_activation_enabled"',
         '"browser_live_navigation_gate_enabled"',
-    ]:
+    ]
+    for marker in browser_status_markers:
         require(
             marker in main_source,
             "Phase 1L compatibility status missing: " + marker,
         )
+
+    accepted_successor_statuses = [
+        (
+            'version="0.13.0-phase1m"',
+            '"phase": "1M"',
+            '"status": "controlled-browser-navigation-canary"',
+        ),
+        (
+            'version="0.14.0-phase1n"',
+            '"phase": "1N"',
+            '"status": "tenant-dataset-durable-results"',
+        ),
+    ]
+    require(
+        any(
+            all(marker in main_source for marker in status_markers)
+            for status_markers in accepted_successor_statuses
+        ),
+        "Phase 1L compatibility status is not an approved successor state",
+    )
 
     config = read("apps/api/app/core/config.py")
     for marker in [

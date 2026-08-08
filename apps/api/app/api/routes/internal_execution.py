@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
+from ...dataset_schemas import DatasetAppendRequest, DatasetAppendResult
 from ...execution_schemas import (
     AppendWorkerEventsRequest,
     ArtifactUploadRequest,
@@ -16,7 +17,9 @@ from ...execution_schemas import (
     SecretEnvelopeRequest,
     WorkerHeartbeatRequest,
 )
+from ...services.datasets import dataset_append_receipt_summary
 from ...services.execution_plane import (
+    append_worker_dataset_items,
     append_worker_events,
     claim_work,
     complete_lease,
@@ -174,6 +177,36 @@ async def issue_secret_envelope_route(
         worker=access.context.worker,
         payload=payload,
         request_id=request_id(request),
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
+
+@router.post(
+    "/leases/{lease_id}/dataset-append",
+    status_code=status.HTTP_201_CREATED,
+)
+async def append_worker_dataset_items_route(
+    payload: DatasetAppendRequest,
+    request: Request,
+    response: Response,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    outcome = await append_worker_dataset_items(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload.model_dump(mode="python"),
+        request_id=request_id(request),
+    )
+    response.status_code = (
+        status.HTTP_200_OK
+        if outcome.replayed
+        else status.HTTP_201_CREATED
+    )
+    result = DatasetAppendResult(
+        receipt=dataset_append_receipt_summary(outcome.receipt),
+        replayed=outcome.replayed,
     )
     return success_payload(request, result.model_dump(mode="json"))
 

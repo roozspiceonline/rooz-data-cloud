@@ -18,6 +18,7 @@ WorkerCapability = Literal[
     "RUN_CANCEL",
     "EVENT_INGEST",
     "SECRET_ENVELOPE",
+    "DATASET_APPEND",
 ]
 WorkKind = Literal["BUILD", "RUN_START", "RUN_CANCEL"]
 LeaseStatus = Literal[
@@ -77,6 +78,7 @@ class SandboxActivation(StrictModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    dataset_write_enabled: bool = False
     max_concurrency: Literal[1] = 1
 
     @model_validator(mode="after")
@@ -138,7 +140,7 @@ class SandboxAttestation(StrictModel):
 
 class RegisterWorkerRequest(StrictModel):
     name: str = Field(min_length=3, max_length=160, pattern=r"^[a-z0-9][a-z0-9._-]+$")
-    capabilities: list[WorkerCapability] = Field(min_length=1, max_length=5)
+    capabilities: list[WorkerCapability] = Field(min_length=1, max_length=6)
     max_concurrency: int = Field(ge=1, le=256)
     protocol_version: Literal["rdc.worker/v1"] = "rdc.worker/v1"
     software_version: str = Field(min_length=1, max_length=80)
