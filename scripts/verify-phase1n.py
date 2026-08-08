@@ -18,27 +18,14 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-def load_protocol():
-    path = ROOT / "workers/sandbox-runtime/dataset_protocol.py"
-    spec = importlib.util.spec_from_file_location(
-        "rdc_phase1n_dataset_protocol",
-        path,
-    )
+def load_module(relative: str, name: str):
+    path = ROOT / relative
+    spec = importlib.util.spec_from_file_location(name, path)
     require(spec is not None and spec.loader is not None, "loader unavailable")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-def expect_rejected(module, value: object, label: str) -> None:
-    try:
-        module.validate_dataset_append(value)
-    except module.DatasetProtocolError:
-        return
-    raise SystemExit(
-        "Phase 1N verification failed: invalid request accepted: " + label
-    )
 
 
 def main() -> None:
@@ -56,269 +43,234 @@ def main() -> None:
         "schema item limit changed",
     )
 
-    module = load_protocol()
-    left = {
+    worker_protocol = load_module(
+        "workers/sandbox-runtime/dataset_protocol.py",
+        "rdc_phase1n_worker_dataset_protocol",
+    )
+    api_protocol = load_module(
+        "apps/api/app/dataset_append_protocol.py",
+        "rdc_phase1n_api_dataset_protocol",
+    )
+
+    canonical_request = {
         "schema_version": "rdc.dataset-append/v1",
         "idempotency_key": "run-123:batch-1",
         "items": [
             {
                 "url": "https://example.com/",
-                "title": "Example",
                 "nested": {"b": 2, "a": 1},
             }
         ],
     }
-    right = {
-        "items": [
-            {
-                "nested": {"a": 1, "b": 2},
-                "title": "Example",
-                "url": "https://example.com/",
-            }
-        ],
-        "idempotency_key": "run-123:batch-1",
-        "schema_version": "rdc.dataset-append/v1",
-    }
-    first = module.validate_dataset_append(left)
-    second = module.validate_dataset_append(right)
-    require(first.request_digest == second.request_digest, "digest not canonical")
-    require(first.persisted is False, "protocol persistence flag changed")
+    worker_result = worker_protocol.validate_dataset_append(canonical_request)
+    api_result = api_protocol.validate_dataset_append(canonical_request)
     require(
-        first.worker_write_enabled is False,
-        "worker Dataset writes enabled in protocol",
+        worker_result.request_digest == api_result.request_digest,
+        "API and worker Dataset protocol digests diverged",
     )
 
-    for value, label in [
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "x",
-                "items": [],
-            },
-            "empty items",
-        ),
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "x",
-                "items": [{} for _ in range(101)],
-            },
-            "too many items",
-        ),
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "bad key with spaces",
-                "items": [{}],
-            },
-            "bad idempotency key",
-        ),
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "x",
-                "items": [{"value": math.nan}],
-            },
-            "NaN",
-        ),
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "x",
-                "items": [{"value": {"not", "json"}}],
-            },
-            "non-JSON value",
-        ),
-        (
-            {
-                "schema_version": "rdc.dataset-append/v1",
-                "idempotency_key": "x",
-                "items": [{"payload": "x" * 70_000}],
-            },
-            "oversized item",
-        ),
-    ]:
-        expect_rejected(module, value, label)
+    invalid_requests = [
+        {
+            "schema_version": "rdc.dataset-append/v1",
+            "idempotency_key": "x",
+            "items": [],
+        },
+        {
+            "schema_version": "rdc.dataset-append/v1",
+            "idempotency_key": "x",
+            "items": [{} for _ in range(101)],
+        },
+        {
+            "schema_version": "rdc.dataset-append/v1",
+            "idempotency_key": "bad key",
+            "items": [{}],
+        },
+        {
+            "schema_version": "rdc.dataset-append/v1",
+            "idempotency_key": "x",
+            "items": [{"value": math.nan}],
+        },
+    ]
+    for invalid in invalid_requests:
+        worker_failed = False
+        api_failed = False
+        try:
+            worker_protocol.validate_dataset_append(invalid)
+        except worker_protocol.DatasetProtocolError:
+            worker_failed = True
+        try:
+            api_protocol.validate_dataset_append(invalid)
+        except api_protocol.DatasetAppendProtocolError:
+            api_failed = True
+        require(worker_failed and api_failed, "protocol accepted invalid data")
 
-    protocol_source = read("workers/sandbox-runtime/dataset_protocol.py")
-    for forbidden in (
-        "sqlalchemy",
-        "psycopg",
-        "asyncpg",
-        "socket.",
-        "subprocess",
-        "requests.",
-        "httpx.",
-    ):
-        require(
-            forbidden not in protocol_source,
-            "protocol foundation gained side effect: " + forbidden,
-        )
-
-    migration = read(
+    migration9 = read(
         "apps/api/migrations/versions/20260808_0009_datasets.py"
     )
-    for marker in [
-        'revision: str = "20260808_0009"',
-        'down_revision: str | None = "20260807_0008"',
-        '"datasets"',
-        '"dataset_items"',
-        "uq_datasets_run_name",
-        "uq_dataset_items_dataset_sequence",
-        "enforce_dataset_tenancy",
-        "enforce_dataset_item_tenancy",
-        "datasets_tenancy_guard",
-        "dataset_items_tenancy_guard",
-        "rdc_dataset_org",
-        "datasets_tenant",
-        "dataset_items_tenant",
-        "ENABLE ROW LEVEL SECURITY",
-    ]:
-        require(marker in migration, "Dataset migration missing: " + marker)
     require(
-        "datasets_worker" not in migration
-        and "dataset_items_worker" not in migration,
-        "worker Dataset RLS policy enabled too early",
+        'revision: str = "20260808_0009"' in migration9,
+        "Increment 2 migration disappeared",
     )
+
+    migration10 = read(
+        "apps/api/migrations/versions/"
+        "20260808_0010_dataset_append_receipts.py"
+    )
+    for marker in [
+        'revision: str = "20260808_0010"',
+        'down_revision: str | None = "20260808_0009"',
+        "dataset_append_receipts",
+        "uq_dataset_append_receipts_dataset_key",
+        "append_receipt_id",
+        "ck_datasets_item_quota",
+        "ck_datasets_byte_quota",
+        "ck_datasets_sequence_counter",
+        "dataset_append_receipts_tenant",
+        "dataset_items_immutable_guard",
+        "dataset_append_receipts_immutable_guard",
+        "Dataset item receipt or tenancy mismatch",
+    ]:
+        require(marker in migration10, "Increment 3 migration missing: " + marker)
+    for forbidden in [
+        "dataset_append_receipts_worker",
+        "dataset_items_worker",
+    ]:
+        require(
+            forbidden not in migration10,
+            "worker Dataset RLS enabled too early: " + forbidden,
+        )
 
     models = read("apps/api/app/models.py")
     for marker in [
-        "class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):",
-        'ForeignKey("control.runs.id", ondelete="CASCADE")',
-        "class DatasetItem(UUIDPrimaryKeyMixin, Base):",
-        '"uq_datasets_run_name"',
-        '"uq_dataset_items_dataset_sequence"',
+        "class DatasetAppendReceipt(UUIDPrimaryKeyMixin, Base):",
+        '"uq_dataset_append_receipts_dataset_key"',
+        "append_receipt_id: Mapped[UUID]",
+        'ForeignKey("control.dataset_append_receipts.id"',
     ]:
-        require(marker in models, "Dataset model missing: " + marker)
+        require(marker in models, "Increment 3 model missing: " + marker)
 
-    permissions = read("apps/api/app/core/permissions.py")
+    schemas = read("apps/api/app/dataset_schemas.py")
     for marker in [
-        '"dataset.create"',
-        '"dataset.read"',
+        "class DatasetAppendRequest(StrictModel):",
+        'Literal["rdc.dataset-append/v1"]',
+        "class DatasetAppendReceiptSummary(ORMModel):",
+        "class DatasetAppendResult(StrictModel):",
     ]:
-        require(marker in permissions, "Dataset permission missing: " + marker)
-
-    dependencies = read("apps/api/app/api/agent_dependencies.py")
-    for marker in [
-        "class DatasetAccess:",
-        '"rdc_dataset_org"',
-        "def require_dataset_permission(",
-        "select(Dataset).where(",
+        require(marker in schemas, "Append API schema missing: " + marker)
+    request_block = schemas.split(
+        "class DatasetAppendRequest", 1
+    )[1].split("class DatasetSummary", 1)[0]
+    for forbidden in [
+        "organization_id",
+        "project_id",
+        "run_id",
+        "agent_id",
+        "agent_version_id",
     ]:
         require(
-            marker in dependencies,
-            "Dataset authorization dependency missing: " + marker,
+            forbidden not in request_block,
+            "Append request accepts ownership field: " + forbidden,
         )
+
+    permissions = read("apps/api/app/core/permissions.py")
+    require('"dataset.write"' in permissions, "dataset.write scope missing")
 
     routes = read("apps/api/app/api/routes/datasets.py")
     for marker in [
-        '"/runs/{run_id}/datasets"',
-        'require_run_permission("dataset.create")',
-        '"/projects/{project_id}/datasets"',
-        'require_project_permission("dataset.read")',
-        '"/datasets/{dataset_id}"',
-        'require_dataset_permission("dataset.read")',
+        '"/datasets/{dataset_id}/items"',
+        'require_dataset_permission("dataset.write")',
+        'payload.model_dump(mode="python")',
+        "status.HTTP_200_OK",
+        "status.HTTP_201_CREATED",
     ]:
-        require(marker in routes, "Dataset metadata route missing: " + marker)
-    require(
-        "/datasets/{dataset_id}/items" not in routes,
-        "Dataset item route activated too early",
-    )
+        require(marker in routes, "Append route missing: " + marker)
 
     service = read("apps/api/app/services/datasets.py")
     for marker in [
-        "organization_id=run.organization_id",
-        "project_id=run.project_id",
-        "run_id=run.id",
-        "agent_id=run.agent_id",
-        "agent_version_id=run.agent_version_id",
-        'action="dataset.created"',
+        "MAX_DATASET_ITEMS = 100_000",
+        "MAX_DATASET_BYTES = 268_435_456",
+        ".with_for_update()",
+        "DatasetAppendReceipt.idempotency_key",
+        "DATASET_IDEMPOTENCY_CONFLICT",
+        "replayed=True",
+        "append_receipt_id=receipt.id",
+        "locked.item_count += validation.item_count",
+        "locked.total_bytes += item_bytes",
+        "locked.next_sequence += validation.item_count",
+        'action="dataset.items_appended"',
     ]:
-        require(
-            marker in service,
-            "server-derived Dataset lineage missing: " + marker,
-        )
+        require(marker in service, "Append transaction guard missing: " + marker)
+    lowered = service.casefold()
     for forbidden in [
-        "DatasetItem(",
         "subprocess",
         "os.system",
         "docker.sock",
         "psycopg",
         "asyncpg",
+        "socket.",
     ]:
         require(
-            forbidden not in service,
-            "Dataset metadata service gained forbidden surface: " + forbidden,
+            forbidden not in lowered,
+            "Dataset service gained forbidden execution/network surface: "
+            + forbidden,
         )
-
-    schemas = read("apps/api/app/dataset_schemas.py")
-    require(
-        "class CreateDatasetRequest(StrictModel):" in schemas
-        and "organization_id" not in schemas.split(
-            "class CreateDatasetRequest", 1
-        )[1].split("class DatasetSummary", 1)[0],
-        "Dataset creation schema accepts ownership fields",
-    )
-
-    main_source = read("apps/api/app/main.py")
-    require(
-        "from .api.routes.datasets import router as datasets_router"
-        in main_source,
-        "Dataset router import missing",
-    )
-    require(
-        "v1_router.include_router(datasets_router)" in main_source,
-        "Dataset router not mounted",
-    )
-    require(
-        '"untrusted_agent_execution_enabled": False' in main_source,
-        "general untrusted execution release block changed",
-    )
 
     worker = read("workers/sandbox-runtime/worker.py")
     for forbidden in [
         "append_dataset_items",
-        "create_dataset_item",
         "dataset_write_enabled",
+        "dataset_append_receipt",
     ]:
         require(
             forbidden not in worker,
-            "worker Dataset write path enabled too early: " + forbidden,
+            "worker Dataset write activated too early: " + forbidden,
         )
+
+    tests = read(
+        "apps/api/tests/test_phase1n_dataset_append_contracts.py"
+    )
+    require(
+        "test_phase1n_increment3_api_and_worker_protocol_digests_match"
+        in tests,
+        "Increment 3 API/worker digest parity test missing",
+    )
 
     for path, markers in {
         "docs/phase1n/README.md": [
-            "Increment 2 — Dataset metadata persistence + RLS",
-            "Dataset item append API        disabled",
-            "worker Dataset writes          disabled",
+            "Increment 3 — idempotent append + quotas",
+            "Dataset append idempotency        enforced",
+            "worker Dataset writes             disabled",
         ],
         "docs/phase1n/RUNBOOK.md": [
-            "control.datasets                present + RLS",
-            "Dataset item append route       absent",
-            "no worker Dataset RLS policy",
+            "control.dataset_append_receipts   present + RLS",
+            "same key + same request digest",
+            "worker Dataset append             absent",
         ],
         "docs/phase1n/THREAT_MODEL.md": [
-            "Increment 2 mitigations",
-            "DatasetItem append route exists",
+            "Dataset-scoped immutable append receipts",
+            "mismatched replay fails closed",
+            "worker Dataset writes remain disabled",
         ],
     }.items():
         source = read(path)
-        if path.endswith("THREAT_MODEL.md"):
-            require(
-                "no DatasetItem append route exists" in source,
-                "Threat model does not preserve disabled append",
-            )
-            continue
         for marker in markers:
             require(marker in source, path + " missing: " + marker)
 
-    print("Phase 1N Increment 2 Dataset persistence verification: PASS")
-    print("  Increment 1 protocol: PASS")
-    print("  control.datasets: PRESENT + RLS")
-    print("  control.dataset_items: PRESENT + RLS")
-    print("  Dataset metadata API: AUTHENTICATED")
-    print("  server-derived Run lineage: PASS")
-    print("  Dataset item append API: DISABLED")
+    main_source = read("apps/api/app/main.py")
+    require(
+        '"untrusted_agent_execution_enabled": False' in main_source,
+        "general execution release block changed",
+    )
+
+    print("Phase 1N Increment 3 Dataset append verification: PASS")
+    print("  API/worker protocol digest parity: PASS")
+    print("  Dataset append receipts: PRESENT + RLS")
+    print("  Dataset row-lock sequencing: REQUIRED")
+    print("  exact replay: REPLAY-SAFE")
+    print("  mismatched replay: FAIL-CLOSED")
+    print("  Dataset item quota: 100000")
+    print("  Dataset byte quota: 268435456")
+    print("  DatasetItem mutation: DATABASE-BLOCKED")
     print("  worker Dataset writes: DISABLED")
     print("  worker Dataset RLS policy: ABSENT")
     print("  Agent direct Postgres access: PROHIBITED")

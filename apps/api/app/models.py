@@ -749,6 +749,63 @@ class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class DatasetAppendReceipt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "dataset_append_receipts"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id",
+            "idempotency_key",
+            name="uq_dataset_append_receipts_dataset_key",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schema_version: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="rdc.dataset-append/v1",
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    first_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    item_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class DatasetItem(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "dataset_items"
     __table_args__ = (
@@ -775,6 +832,15 @@ class DatasetItem(UUIDPrimaryKeyMixin, Base):
     dataset_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("control.datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    append_receipt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "control.dataset_append_receipts.id",
+            ondelete="RESTRICT",
+        ),
         nullable=False,
         index=True,
     )

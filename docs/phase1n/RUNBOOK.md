@@ -1,69 +1,92 @@
 # Phase 1N Operator Runbook
 
-## Increment 2 state
+## Increment 3 state
 
-Dataset metadata persistence and authenticated metadata APIs are available.
-Dataset item writes remain intentionally disabled.
+Authenticated control-plane Dataset item append is now available. Worker
+Dataset writes remain disabled.
 
 Expected state:
 
 ```text
-rdc.dataset-append/v1           available
-control.datasets                present + RLS
-control.dataset_items           present + RLS
-Dataset metadata REST routes    available
-Dataset item append route       absent
-worker Dataset append           absent
-Agent database credentials      absent
-direct Agent Postgres access    absent
+rdc.dataset-append/v1             available
+control.datasets                  present + RLS
+control.dataset_items             present + RLS
+control.dataset_append_receipts   present + RLS
+Dataset metadata routes           available
+Dataset item append route         authenticated control-plane only
+worker Dataset append             absent
+worker Dataset RLS policy         absent
+Agent database credentials        absent
+direct Agent Postgres access      absent
 ```
 
-## Metadata routes
+## Append route
 
-- `POST /api/v1/runs/{run_id}/datasets`
-- `GET /api/v1/projects/{project_id}/datasets`
-- `GET /api/v1/datasets/{dataset_id}`
+`POST /api/v1/datasets/{dataset_id}/items`
 
-Dataset creation derives organization/project/Run/Agent/AgentVersion lineage
-from the already-authorized Run. Ownership identifiers are not accepted in the
-request body.
+Requires `dataset.write` plus the normal authentication/CSRF controls.
 
-## RLS requirements
+Each request must contain:
 
-Both `control.datasets` and `control.dataset_items` must have row-level
-security enabled and tenant policies tied to:
+- `schema_version = rdc.dataset-append/v1`
+- idempotency key
+- 1–100 JSON-object items
 
-- `security.rdc_current_org_id()`
-- `security.rdc_has_org_membership(organization_id)`
+The service revalidates the protocol after Pydantic parsing.
 
-The Dataset resolver is `security.rdc_dataset_org(uuid)`.
+## Idempotency
 
-There is no worker Dataset RLS policy in Increment 2 because worker writes are
-not yet activated.
+The Dataset row is locked before replay, quota and sequence decisions.
 
-## Safe protocol limits reserved for Increment 3 append
+`(dataset_id, idempotency_key)` is unique.
 
-- items per append: 1–100
-- encoded item bytes: <= 65,536
-- encoded batch bytes: <= 262,144
-- JSON nesting depth: <= 32
-- idempotency key: 1–128 characters, restricted safe alphabet
+- same key + same request digest => return original receipt, no new items
+- same key + different request digest => fail closed
+- first request => create receipt and items in the same transaction
+
+## Quotas
+
+Protocol:
+
+- items per append <= 100
+- encoded item <= 65,536 bytes
+- append envelope <= 262,144 bytes
+- JSON nesting depth <= 32
+
+Dataset:
+
+- item count <= 100,000
+- encoded item bytes <= 268,435,456
+
+Database checks mirror the Dataset-level quotas and enforce
+`next_sequence = item_count + 1`.
+
+## Append-only guarantees
+
+`DatasetItem` rows bind to `append_receipt_id`.
+
+Database triggers reject UPDATE or DELETE of:
+
+- Dataset items
+- Dataset append receipts
+
+No item content is emitted into the append audit event.
 
 ## Stop conditions
 
 Stop Phase 1N work if an implementation:
 
-- accepts organization/project/Run ownership from Dataset creation payloads
-- gives Agent or browser containers direct PostgreSQL credentials
-- adds a worker Dataset RLS policy before the controlled append protocol
-- permits cross-project Dataset access
-- permits arbitrary DatasetItem mutation
-- activates Dataset item writes before idempotency/quota/sequence guarantees
-- weakens the Phase 1M network isolation model
+- bypasses `rdc.dataset-append/v1` server validation
+- allocates sequences outside the Dataset row-lock transaction
+- changes item counters before quota checks
+- accepts idempotency replay with a different request digest
+- adds arbitrary DatasetItem update/delete APIs
+- adds worker Dataset RLS before Increment 4 capability design
+- gives Agent or browser containers database credentials
+- weakens Phase 1M network isolation
 
 ## Next increment
 
-Add idempotent Dataset item append with a Dataset-scoped idempotency receipt,
-transactional sequence allocation, record/byte quotas, canonical request
-digest binding, and replay-safe behavior. Worker writes remain disabled until
-Increment 4.
+Add a controlled worker-to-control-plane Dataset append capability. The worker
+must authenticate through the existing private execution-plane identity and
+must never give the Agent or Chromium direct Postgres access.

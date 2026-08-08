@@ -1,71 +1,71 @@
 # Phase 1N — Tenant-scoped Dataset Protocol & Durable Result Storage
 
-Phase 1N starts from the merged Phase 1M baseline and adds the first durable
-structured data primitive required for an Apify-class scraping platform.
-
-The Phase 1N target is an append-only Dataset abstraction for Run results.
+Phase 1N adds the first durable structured Run-output primitive required for an
+Apify-class scraping platform.
 
 ## Increment 1 — protocol foundation
 
-Increment 1 established:
-
-- `rdc.dataset-append/v1`
-- strict top-level fields
-- one idempotency key per append batch
-- 1–100 JSON-object items per batch
-- maximum encoded item size: 65,536 bytes
-- maximum encoded batch size: 262,144 bytes
-- maximum JSON nesting depth: 32
-- NaN and Infinity rejection
-- canonical JSON SHA-256 request digest
+Established the strict `rdc.dataset-append/v1` bounded JSON-object contract,
+canonical SHA-256 digest, idempotency key and payload limits.
 
 ## Increment 2 — Dataset metadata persistence + RLS
 
-Increment 2 adds the persistence boundary without enabling item append:
+Added `control.datasets`, `control.dataset_items`, server-derived Run lineage,
+tenant triggers, PostgreSQL RLS, authenticated metadata routes and
+`dataset.create` / `dataset.read`.
 
-- `control.datasets`
-- `control.dataset_items`
-- Dataset lineage bound to organization, project, Run, Agent and AgentVersion
-- organization/project ownership derived from the authorized Run
-- unique Dataset name per Run
-- Dataset item sequence uniqueness per Dataset
-- server-side tenancy triggers
-- PostgreSQL RLS for both Dataset tables
-- `security.rdc_dataset_org(uuid)` hidden-resource resolver
-- authenticated Dataset metadata create/list/get API
-- `dataset.create` and `dataset.read` permission scopes
-- audit event on Dataset creation
+## Increment 3 — idempotent append + quotas
 
-The client may provide only the Dataset name when creating metadata. It cannot
-provide organization, project, Run, Agent or AgentVersion ownership fields.
+Increment 3 activates **control-plane Dataset item append**:
+
+- `POST /api/v1/datasets/{dataset_id}/items`
+- `dataset.write` permission
+- exact `rdc.dataset-append/v1` server revalidation
+- API/worker canonical digest parity verification
+- `control.dataset_append_receipts`
+- unique `(dataset_id, idempotency_key)`
+- immutable request SHA-256 binding
+- Dataset row lock before replay/sequence/quota decisions
+- exact replay returns the original receipt without duplicate items
+- mismatched replay fails with `DATASET_IDEMPOTENCY_CONFLICT`
+- monotonic sequences allocated transactionally
+- each DatasetItem binds to its append receipt
+- DatasetItem and append-receipt mutation blocked by database triggers
+- maximum 100,000 items per Dataset
+- maximum 268,435,456 encoded item bytes per Dataset
+- existing protocol limits remain 100 items / 65,536 bytes per item /
+  262,144 bytes per append envelope
+- first append writes `dataset.items_appended` audit metadata without item
+  content
 
 ## Current capability boundary
 
 ```text
-Dataset request contract       available
-Dataset metadata persistence   available
-Dataset metadata API           available
-DatasetItem persistence table  available + RLS protected
-Dataset item append API        disabled
-worker Dataset writes          disabled
-Agent direct Postgres access   prohibited
-Dataset item mutation          unsupported
-KV Store                        out of scope (Phase 1O)
-Request Queue                   out of scope (Phase 1P)
+Dataset request contract          available
+Dataset metadata persistence      available
+Dataset metadata API              available
+Dataset item append API           available (authenticated control plane)
+Dataset append idempotency        enforced
+Dataset sequence allocation       transactional
+Dataset item/byte quotas          enforced
+DatasetItem mutation              database-blocked
+worker Dataset writes             disabled
+worker Dataset RLS policy         absent
+Agent direct Postgres access      prohibited
+KV Store                           out of scope (Phase 1O)
+Request Queue                      out of scope (Phase 1P)
 ```
 
-`DatasetItem` exists now so tenancy/RLS can be proven before writes are
-activated. No public or worker path inserts Dataset items in Increment 2.
+No worker or Agent can write Dataset records yet. Increment 4 will add a narrow
+worker-to-control-plane append capability without giving Agent/browser
+containers database credentials.
 
 ## Planned increments
 
-1. Protocol foundation and CI/security verifier.
-2. PostgreSQL Dataset/DatasetItem model, migration, RLS and authenticated
-   metadata API.
-3. Idempotent append transaction, quotas, monotonic item sequence numbers and
-   immutable request-digest lineage.
+1. Protocol foundation.
+2. Dataset/DatasetItem persistence, RLS and metadata API.
+3. Idempotent append transaction, quotas and monotonic sequences.
 4. Controlled worker append path with no Agent database credentials.
 5. Paginated item reads, bounded export, audit expansion and final hardening.
 
-PR governance remains unchanged: the Phase 1N implementation PR remains DRAFT
-until the full phase is exact-head green.
+PR #52 remains DRAFT until the full Phase 1N scope is exact-head green.

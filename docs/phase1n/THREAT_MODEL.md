@@ -1,53 +1,62 @@
 # Phase 1N Threat Model
 
-Phase 1N introduces durable structured Run output. Hostile scraped content and
-hostile Agent-provided records must be assumed.
+Phase 1N treats scraped content and Agent-provided Dataset records as hostile
+application data.
 
 ## Primary threats
 
-1. Cross-tenant Dataset writes or reads.
-2. Caller-supplied ownership identifiers overriding authenticated lineage.
+1. Cross-tenant Dataset access.
+2. Caller-supplied ownership overriding authenticated lineage.
 3. Duplicate records caused by retries.
-4. Oversized records or batches causing memory/database pressure.
-5. Deeply nested JSON causing parser/serializer exhaustion.
-6. NaN/Infinity or non-JSON values creating non-portable records.
-7. Mutable item APIs destroying scrape-result provenance.
-8. Agent containers receiving direct PostgreSQL credentials.
-9. Dataset records being mistaken for trusted authorization metadata.
-10. Unbounded export/read operations.
+4. Idempotency-key reuse with a different payload.
+5. Concurrent append sequence collisions.
+6. Dataset resource exhaustion.
+7. Mutable item history destroying provenance.
+8. Agent containers receiving database credentials.
+9. Dataset content being mistaken for authorization metadata.
+10. Unbounded reads or exports.
 
 ## Increment 1 mitigations
 
 - strict `rdc.dataset-append/v1`
-- bounded JSON-object batches
-- canonical SHA-256 request digest
+- bounded JSON objects
+- canonical digest
 - required idempotency key
-- finite JSON values only
 
 ## Increment 2 mitigations
 
-- Dataset ownership is derived from the authenticated Run
-- Dataset request body carries no tenant or lineage identifiers
-- `control.datasets` and `control.dataset_items` use PostgreSQL RLS
-- Dataset tenancy trigger binds Run, Agent and AgentVersion lineage
-- DatasetItem tenancy trigger binds Dataset, Run, project and organization
-- hidden-resource lookup uses `security.rdc_dataset_org(uuid)`
-- Dataset metadata API requires `dataset.create` / `dataset.read`
-- Dataset creation writes an audit event
-- no DatasetItem append route exists
-- no worker Dataset RLS policy exists
-- Agent/Chromium containers receive no database credentials
+- server-derived Run/Agent/AgentVersion lineage
+- Dataset/DatasetItem RLS
+- tenant triggers
+- hidden-resource Dataset resolver
+- authenticated metadata routes
+- no worker write policy
 
-## Mandatory before DatasetItem append activation
+## Increment 3 mitigations
 
-- Dataset-scoped unique idempotency receipt
-- request digest stored and replay-checked
-- monotonic sequence allocation in the same transaction as inserts
-- record-count quota enforced before commit
-- total-byte quota enforced before commit
-- batch/item protocol limits revalidated server-side
-- exact replay returns the original receipt without duplicate rows
-- mismatched replay under the same idempotency key fails closed
-- append audit event
-- no arbitrary UPDATE of Dataset items
-- no direct Agent/Chromium database network path
+- Dataset-scoped immutable append receipts
+- unique `(dataset_id, idempotency_key)`
+- canonical request digest stored on every receipt
+- Dataset row locked before replay/quota/sequence decisions
+- exact replay returns the existing receipt
+- mismatched replay fails closed
+- transactional monotonic sequence allocation
+- Dataset item count quota: 100,000
+- Dataset encoded item-byte quota: 268,435,456
+- per-append protocol limits revalidated server-side
+- DatasetItem rows bind to the exact append receipt
+- database triggers block item/receipt UPDATE and DELETE
+- append audit event excludes hostile item content
+- worker Dataset writes remain disabled
+- no worker Dataset RLS policy
+- Agent/Chromium receive no Postgres credentials
+
+## Mandatory before worker append activation
+
+- worker identity authenticated through the private execution plane
+- exact active Run/lease lineage
+- exact Dataset/Run/AgentVersion match
+- worker capability receipt limiting Dataset append
+- no direct Agent or browser database/network path
+- the worker must submit through a bounded control-plane protocol
+- control plane must reuse the same idempotency/quota/sequence transaction

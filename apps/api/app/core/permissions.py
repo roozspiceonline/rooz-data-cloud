@@ -8,7 +8,7 @@ PERMISSIONS = frozenset(
         "agent.create", "agent.read", "agent.update", "agent.version_create",
         "build.create", "build.read", "run.create", "run.read", "run.cancel",
         "execution.read", "storage.read", "storage.upload", "storage.download",
-        "dataset.create", "dataset.read",
+        "dataset.create", "dataset.read", "dataset.write",
         "secret.read_metadata", "secret.create", "secret.replace", "secret.delete",
         "api_key.create", "api_key.read_metadata", "api_key.revoke", "audit.read",
     }
@@ -24,7 +24,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "agent.update", "agent.version_create", "build.create", "build.read",
             "run.create", "run.read", "run.cancel", "execution.read",
             "storage.read", "storage.upload", "storage.download",
-            "dataset.create", "dataset.read",
+            "dataset.create", "dataset.read", "dataset.write",
             "secret.read_metadata", "secret.create", "secret.replace",
             "secret.delete", "api_key.create", "api_key.read_metadata",
             "api_key.revoke",

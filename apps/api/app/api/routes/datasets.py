@@ -1,14 +1,20 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
 from ...core.pagination import decode_cursor, encode_cursor, normalize_limit
-from ...dataset_schemas import CreateDatasetRequest
+from ...dataset_schemas import (
+    CreateDatasetRequest,
+    DatasetAppendRequest,
+    DatasetAppendResult,
+)
 from ...services.datasets import (
+    append_dataset_items,
     create_dataset,
+    dataset_append_receipt_summary,
     dataset_summary,
     list_datasets,
 )
@@ -60,6 +66,46 @@ async def create_dataset_route(
     return success_payload(
         request,
         dataset_summary(record).model_dump(mode="json"),
+    )
+
+
+@router.post(
+    "/datasets/{dataset_id}/items",
+    status_code=status.HTTP_201_CREATED,
+)
+async def append_dataset_items_route(
+    payload: DatasetAppendRequest,
+    request: Request,
+    response: Response,
+    access: Annotated[
+        DatasetAccess,
+        Depends(require_dataset_permission("dataset.write")),
+    ],
+    _: Annotated[AuthContext, Depends(require_csrf)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    actor_type, actor_id = actor(access.context)
+    outcome = await append_dataset_items(
+        db,
+        dataset=access.dataset,
+        user_id=access.context.user.id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        request_id=request_id(request),
+        payload=payload.model_dump(mode="python"),
+    )
+    response.status_code = (
+        status.HTTP_200_OK
+        if outcome.replayed
+        else status.HTTP_201_CREATED
+    )
+    result = DatasetAppendResult(
+        receipt=dataset_append_receipt_summary(outcome.receipt),
+        replayed=outcome.replayed,
+    )
+    return success_payload(
+        request,
+        result.model_dump(mode="json"),
     )
 
 
