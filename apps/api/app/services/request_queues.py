@@ -78,11 +78,16 @@ async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id
     """Worker-only lifecycle primitive; route exposure is deliberately deferred."""
     if not 1 <= lease_seconds <= 300:
         raise ValueError("lease_seconds must be between 1 and 300")
+    queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id).with_for_update())
+    if queue is None:
+        return None
     row = await session.scalar(select(RequestQueueRequest).where(RequestQueueRequest.queue_id == queue_id, RequestQueueRequest.status == "PENDING", RequestQueueRequest.available_at <= func.now()).order_by(RequestQueueRequest.created_at, RequestQueueRequest.id).with_for_update(skip_locked=True).limit(1))
     if row is None:
         return None
     row.status, row.claimed_by, row.claim_token = "CLAIMED", worker_id, uuid4()
     row.attempt_count += 1
+    queue.pending_count -= 1
+    queue.claimed_count += 1
     row.claim_expires_at = await session.scalar(
         select(func.now() + text(f"INTERVAL '{lease_seconds} seconds'"))
     )
@@ -92,6 +97,9 @@ async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id
 
 async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> int:
     """Lock-safe reclaim primitive; public routes intentionally cannot call it."""
+    queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id).with_for_update())
+    if queue is None:
+        return 0
     rows = (
         await session.scalars(
             select(RequestQueueRequest)
@@ -109,6 +117,11 @@ async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> 
         row.claimed_by = None
         row.claim_token = None
         row.claim_expires_at = None
+        queue.claimed_count -= 1
+        if target == "FAILED":
+            queue.failed_count += 1
+        else:
+            queue.pending_count += 1
         if target == "FAILED":
             row.failure_code = "LEASE_EXPIRED"
             row.failure_summary = "Worker lease expired before completion."

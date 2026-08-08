@@ -6,7 +6,11 @@ and project identifiers and are guarded by PostgreSQL RLS and tenancy triggers.
 
 Enqueue accepts only canonical HTTPS envelopes. It rejects credentials, IP
 literals, fragments, unsafe keys, and non-JSON user data. DNS and egress checks
-remain a worker responsibility; no worker route is exposed in this increment.
+remain a worker responsibility.
 
 Idempotency is serialized by a queue-row lock. A reused key with different bytes
 fails closed. Equivalent request identities are unique per queue.
+
+Worker claim and completion require an ACTIVE unexpired lease plus a dedicated
+false-by-default canary gate. Queue tenancy is derived from the lease, and each
+completion is bound to both the claiming worker and an unguessable claim token.

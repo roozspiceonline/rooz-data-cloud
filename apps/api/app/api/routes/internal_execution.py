@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Request, Response, status
@@ -36,6 +37,10 @@ from ...services.storage_delivery import issue_build_source_download_grant
 from ...services.worker_key_value_store import (
     mutate_worker_key_value_record,
     read_worker_key_value_records,
+)
+from ...services.worker_request_queue import (
+    claim_worker_queue_request,
+    complete_worker_queue_request,
 )
 from ..internal_dependencies import (
     LeaseAccess,
@@ -257,6 +262,21 @@ async def mutate_worker_key_value_record_route(
     return success_payload(request, result.model_dump(mode="json"))
 
 
+@router.post("/leases/{lease_id}/queue-claim")
+async def claim_queue_request_route(payload: Annotated[object, Body()], request: Request, response: Response, access: Annotated[LeaseAccess, Depends(require_lease_access)], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object] | None:
+    result = await claim_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload)
+    if result is None:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
+    return success_payload(request, {"id": str(result.id), "queue_id": str(result.queue_id), "url": result.request_url, "user_data": result.user_data, "attempt_count": result.attempt_count, "claim_token": str(result.claim_token)})
+
+
+@router.post("/leases/{lease_id}/queue-complete")
+async def complete_queue_request_route(payload: Annotated[object, Body()], request: Request, access: Annotated[LeaseAccess, Depends(require_lease_access)], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object]:
+    result = await complete_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload)
+    return success_payload(request, {"id": str(result.id), "status": result.status, "attempt_count": result.attempt_count})
+
+
 @router.post("/leases/{lease_id}/complete")
 async def complete_lease_route(
     payload: CompleteLeaseRequest,
@@ -318,4 +338,3 @@ async def issue_artifact_download_route(
         request_id=request_id(request),
     )
     return success_payload(request, result.model_dump(mode="json"))
-
