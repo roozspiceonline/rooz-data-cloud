@@ -210,6 +210,8 @@ def _canary_activation(
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
             return None
+        if "browser_navigation" in input_reference:
+            return None
         browser_plan = input_reference.get("browser")
         stored_policy = input_reference.get("browser_policy")
         stored_digest = input_reference.get("browser_policy_digest")
@@ -354,6 +356,8 @@ def _sandbox_claim_policy(
             return None
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
+            return None
+        if "browser_navigation" in input_reference:
             return None
         if (
             not isinstance(input_reference.get("browser"), dict)
