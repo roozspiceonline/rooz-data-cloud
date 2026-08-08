@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.pagination import CursorPosition
 from ..core.security import canonical_fingerprint
@@ -145,6 +146,44 @@ def _manifest_network(version: AgentVersion) -> str:
             message="The immutable Agent version has invalid network capability.",
         )
     return str(network)
+
+
+def _manifest_browser(version: AgentVersion) -> bool:
+    capabilities = version.manifest.get("capabilities")
+    if not isinstance(capabilities, dict):
+        raise ApiError(
+            status_code=409,
+            code="AGENT_MANIFEST_INVALID",
+            message="The immutable Agent version has invalid capabilities.",
+        )
+    browser = capabilities.get("browser")
+    if not isinstance(browser, bool):
+        raise ApiError(
+            status_code=409,
+            code="AGENT_MANIFEST_INVALID",
+            message="The immutable Agent version has invalid browser capability.",
+        )
+    return browser
+
+
+def _browser_policy_payload() -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "schema_version": "rdc.browser-policy/v1",
+        "enabled": settings.sandbox_canary_browser_enabled,
+        "allowed_hosts": sorted(settings.sandbox_canary_web_egress_allowed_hosts),
+        "max_pages": settings.sandbox_canary_browser_max_pages,
+        "max_actions": settings.sandbox_canary_browser_max_actions,
+        "navigation_timeout_seconds": settings.sandbox_canary_browser_navigation_timeout_seconds,
+        "max_dom_bytes": settings.sandbox_canary_browser_max_dom_bytes,
+        "max_screenshot_bytes": settings.sandbox_canary_browser_max_screenshot_bytes,
+        "agent_container_network": "none",
+        "project_secrets_available": False,
+        "persistent_profile": False,
+        "downloads_enabled": False,
+        "uploads_enabled": False,
+        "remote_cdp_enabled": False,
+    }
 
 
 def _manifest_resource(version: AgentVersion, key: str) -> int:
@@ -317,6 +356,11 @@ async def create_run(
         if payload.web_fetch is not None
         else None
     )
+    browser = (
+        payload.browser.model_dump(mode="json")
+        if payload.browser is not None
+        else None
+    )
     if web_fetch is not None and _manifest_network(version) != "web-egress":
         raise ApiError(
             status_code=422,
@@ -326,12 +370,33 @@ async def create_run(
                 "network=web-egress."
             ),
         )
+
+    browser_policy: dict[str, object] | None = None
+    browser_policy_digest: str | None = None
+    if browser is not None:
+        if _manifest_network(version) != "web-egress":
+            raise ApiError(
+                status_code=422,
+                code="BROWSER_NETWORK_CAPABILITY_REQUIRED",
+                message="Browser Runs require immutable network=web-egress.",
+            )
+        if not _manifest_browser(version):
+            raise ApiError(
+                status_code=422,
+                code="BROWSER_CAPABILITY_REQUIRED",
+                message="This immutable Agent version does not declare browser=true.",
+            )
+        browser_policy = _browser_policy_payload()
+        browser_policy_digest = canonical_fingerprint(browser_policy)
+
     fingerprint = canonical_fingerprint(
         {
             "agent_version_id": str(version.id),
             "build_id": str(build.id),
             "input": payload.input,
             "web_fetch": web_fetch,
+            "browser": browser,
+            "browser_policy_digest": browser_policy_digest,
             "runtime": runtime,
         }
     )
@@ -374,6 +439,10 @@ async def create_run(
     }
     if web_fetch is not None:
         input_reference["web_fetch"] = web_fetch
+    if browser is not None:
+        input_reference["browser"] = browser
+        input_reference["browser_policy"] = browser_policy
+        input_reference["browser_policy_digest"] = browser_policy_digest
 
     record = Run(
         id=uuid4(),

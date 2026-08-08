@@ -237,16 +237,17 @@ def main() -> None:
 
     main_api = read("apps/api/app/main.py")
     for marker in [
-        'version="0.11.0-phase1k"',
-        '"phase": "1K"',
-        '"status": "generalized-web-fetch-runtime-contract"',
         '"web_fetch_request_contract": "rdc.web-fetch/v1"',
         '"web_fetch_result_contract": "rdc.web-fetch-result/v1"',
+        '"versioned_web_fetch_contract_available": True',
         '"web_fetch_activation_scope": "phase1j-single-canary"',
         '"browser_execution_enabled": False',
         '"untrusted_agent_execution_enabled": False',
     ]:
-        require(marker in main_api, "foundation status missing: " + marker)
+        require(
+            marker in main_api,
+            "Phase 1K web-fetch foundation compatibility missing: " + marker,
+        )
 
     env_example = read(".env.example")
     require(
@@ -337,7 +338,7 @@ def main() -> None:
     )
 
     print("Phase 1K final verification: PASS")
-    print("  foundation status Phase 1K: PASS")
+    print("  Phase 1K web-fetch foundation compatibility: PASS")
     print("  console/operator evidence: PASS")
     print("  Phase 1J compatibility regression: PASS")
     print("  versioned Run web_fetch contract: PASS")

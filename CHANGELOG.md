@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.12.0-phase1l — 2026-08-08
+
+- Added the strict `rdc.browser/v1` snapshot intent contract and
+  `rdc.browser-policy/v1` operator-owned policy receipts.
+- Added `controlled-browser` activation receipts with egress-policy and
+  browser-policy digest binding.
+- Added independent worker-side browser policy and Run-plan validation.
+- Added a Playwright `1.61.0` dedicated browser runtime boundary with an
+  immutable local image digest requirement.
+- Added a Chromium-compatible browser seccomp profile and an isolated
+  `about:blank` self-test bridge.
+- Added forced browser-container cleanup, bounded runtime timeout validation and
+  isolated stdout JSON handling.
+- Kept Agent containers and the browser self-test runtime on `--network none`.
+- Kept public Chromium navigation, project secrets, persistence, downloads,
+  uploads, remote CDP and general untrusted browser execution blocked.
+
 ## Phase 1I — Controlled Sandbox Activation & End-to-End Execution
 
 - Added a second activation gate that defaults to `disabled`.

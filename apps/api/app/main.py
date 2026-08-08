@@ -27,7 +27,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.11.0-phase1k",
+    version="0.12.0-phase1l",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -130,9 +130,9 @@ v1_router.include_router(storage_router)
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1K",
+        "phase": "1L",
         "service": "rdc-api",
-        "status": "generalized-web-fetch-runtime-contract",
+        "status": "controlled-browser-offline-canary-foundation",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -166,7 +166,23 @@ async def foundation_status() -> dict[str, object]:
         "web_fetch_result_contract": "rdc.web-fetch-result/v1",
         "versioned_web_fetch_contract_available": True,
         "web_fetch_activation_scope": "phase1j-single-canary",
+        "browser_request_contract": "rdc.browser/v1",
+        "browser_policy_contract": "rdc.browser-policy/v1",
+        "browser_runtime_self_test_contract": (
+            "rdc.browser-runtime-self-test/v1"
+        ),
+        "browser_runtime_self_test_available": True,
         "browser_execution_enabled": False,
+        "browser_public_navigation_enabled": False,
+        "browser_canary_activation_enabled": (
+            settings.sandbox_execution_enabled
+            and settings.sandbox_activation_mode == "canary"
+            and settings.sandbox_canary_web_egress_enabled
+            and settings.sandbox_canary_browser_enabled
+            and bool(settings.sandbox_canary_web_egress_allowed_hosts)
+            and bool(settings.sandbox_canary_agent_version_id.strip())
+            and bool(settings.sandbox_canary_worker_name.strip())
+        ),
         "brokered_web_egress_enabled": (
             settings.sandbox_execution_enabled
             and settings.sandbox_activation_mode == "canary"

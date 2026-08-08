@@ -61,7 +61,11 @@ from ..models import (
     WorkerIdentity,
 )
 from .identity_tenancy import append_audit_event
-from .runs import append_run_event, sanitize_event_payload
+from .runs import (
+    _browser_policy_payload,
+    append_run_event,
+    sanitize_event_payload,
+)
 
 settings = get_settings()
 
@@ -111,7 +115,11 @@ def _egress_policy_payload() -> dict[str, object]:
     }
 
 
-def _canary_constraints(*, network: str) -> dict[str, object]:
+def _canary_constraints(
+    *,
+    network: str,
+    browser: bool = False,
+) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
         "cpu_millis": settings.sandbox_canary_max_cpu_millis,
@@ -124,7 +132,7 @@ def _canary_constraints(*, network: str) -> dict[str, object]:
             if network == "web-egress"
             else "none"
         ),
-        "browser": False,
+        "browser": browser,
         "dataset": False,
         "key_value_store": False,
         "request_queue": False,
@@ -181,13 +189,44 @@ def _canary_activation(
         and not settings.sandbox_canary_web_egress_enabled
     ):
         return None
+    browser = capabilities.get("browser")
+    if not isinstance(browser, bool):
+        return None
     if (
-        capabilities.get("browser") is not False
-        or capabilities.get("dataset") is not False
+        capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
         or capabilities.get("requestQueue") is not False
     ):
         return None
+
+    browser_policy_digest: str | None = None
+    if browser:
+        if (
+            str(payload.get("work_kind", "")) != "RUN_START"
+            or network != "web-egress"
+            or not settings.sandbox_canary_browser_enabled
+        ):
+            return None
+        input_reference = payload.get("input_reference")
+        if not isinstance(input_reference, dict):
+            return None
+        browser_plan = input_reference.get("browser")
+        stored_policy = input_reference.get("browser_policy")
+        stored_digest = input_reference.get("browser_policy_digest")
+        if (
+            not isinstance(browser_plan, dict)
+            or not isinstance(stored_policy, dict)
+            or not isinstance(stored_digest, str)
+        ):
+            return None
+        current_policy = _browser_policy_payload()
+        current_digest = canonical_fingerprint(current_policy)
+        if (
+            canonical_fingerprint(stored_policy) != current_digest
+            or stored_digest != current_digest
+        ):
+            return None
+        browser_policy_digest = current_digest
 
     try:
         memory_mb = int(resources["memoryMb"])
@@ -213,12 +252,18 @@ def _canary_activation(
     ):
         return None
 
-    constraints = _canary_constraints(network=network)
-    capability_profile = (
-        "brokered-web-egress"
-        if network == "web-egress"
-        else "offline-minimal"
+    constraints = _canary_constraints(
+        network=network,
+        browser=browser,
     )
+    if browser:
+        capability_profile = "controlled-browser"
+    else:
+        capability_profile = (
+            "brokered-web-egress"
+            if network == "web-egress"
+            else "offline-minimal"
+        )
     egress_policy_digest = (
         canonical_fingerprint(_egress_policy_payload())
         if network == "web-egress"
@@ -233,6 +278,7 @@ def _canary_activation(
         constraints_digest=canonical_fingerprint(constraints),
         capability_profile=capability_profile,
         egress_policy_digest=egress_policy_digest,
+        browser_policy_digest=browser_policy_digest,
     )
 
 
@@ -296,8 +342,25 @@ def _sandbox_claim_policy(
         and not settings.sandbox_canary_web_egress_enabled
     ):
         return None
-    if capabilities.get("browser") is True:
+    browser = capabilities.get("browser")
+    if not isinstance(browser, bool):
         return None
+    if browser:
+        if (
+            str(payload.get("work_kind", "")) != "RUN_START"
+            or network != "web-egress"
+            or not settings.sandbox_canary_browser_enabled
+        ):
+            return None
+        input_reference = payload.get("input_reference")
+        if not isinstance(input_reference, dict):
+            return None
+        if (
+            not isinstance(input_reference.get("browser"), dict)
+            or not isinstance(input_reference.get("browser_policy"), dict)
+            or not isinstance(input_reference.get("browser_policy_digest"), str)
+        ):
+            return None
 
     memory_mb = int(
         resources.get("memoryMb", settings.sandbox_max_memory_mb)

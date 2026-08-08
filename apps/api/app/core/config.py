@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     sandbox_canary_web_egress_connect_timeout_seconds: int = 5
     sandbox_canary_web_egress_request_timeout_seconds: int = 15
 
+    sandbox_canary_browser_enabled: bool = False
+    sandbox_canary_browser_max_pages: int = 1
+    sandbox_canary_browser_max_actions: int = 8
+    sandbox_canary_browser_navigation_timeout_seconds: int = 15
+    sandbox_canary_browser_max_dom_bytes: int = 2_097_152
+    sandbox_canary_browser_max_screenshot_bytes: int = 2_097_152
+
     auth_rate_limit_requests: int = 20
     auth_rate_limit_window_seconds: int = 300
 
@@ -323,6 +330,41 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Canary web-egress request timeout is outside the safe range."
             )
+
+        if not 1 <= self.sandbox_canary_browser_max_pages <= 2:
+            raise ValueError("Canary browser page limit is outside the safe range.")
+        if not 1 <= self.sandbox_canary_browser_max_actions <= 16:
+            raise ValueError("Canary browser action limit is outside the safe range.")
+        if not 1 <= self.sandbox_canary_browser_navigation_timeout_seconds <= 30:
+            raise ValueError(
+                "Canary browser navigation timeout is outside the safe range."
+            )
+        if not 65_536 <= self.sandbox_canary_browser_max_dom_bytes <= 4_194_304:
+            raise ValueError("Canary browser DOM limit is outside the safe range.")
+        if not (
+            65_536
+            <= self.sandbox_canary_browser_max_screenshot_bytes
+            <= 4_194_304
+        ):
+            raise ValueError(
+                "Canary browser screenshot limit is outside the safe range."
+            )
+        if self.sandbox_canary_browser_enabled:
+            if (
+                not self.sandbox_execution_enabled
+                or self.sandbox_activation_mode != "canary"
+            ):
+                raise ValueError(
+                    "Browser execution requires the sandbox master gate and canary mode."
+                )
+            if not self.sandbox_canary_web_egress_enabled:
+                raise ValueError(
+                    "Browser execution requires the Phase 1J web-egress gate."
+                )
+            if not self.sandbox_canary_web_egress_allowed_hosts:
+                raise ValueError(
+                    "Browser execution requires an operator web-egress allowlist."
+                )
 
         if not 60 <= self.storage_upload_grant_seconds <= 3600:
             raise ValueError("Storage upload grants must expire between 60 and 3600 seconds.")

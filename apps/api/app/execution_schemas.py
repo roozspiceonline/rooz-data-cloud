@@ -67,8 +67,13 @@ class SandboxActivation(StrictModel):
     capability_profile: Literal[
         "offline-minimal",
         "brokered-web-egress",
+        "controlled-browser",
     ] = "offline-minimal"
     egress_policy_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    browser_policy_digest: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
@@ -84,12 +89,30 @@ class SandboxActivation(StrictModel):
                 "Brokered web egress requires an egress-policy digest."
             )
         if (
-            self.capability_profile == "offline-minimal"
-            and self.egress_policy_digest is not None
+            self.capability_profile == "brokered-web-egress"
+            and self.browser_policy_digest is not None
         ):
             raise ValueError(
-                "Offline-minimal activation cannot carry an egress-policy digest."
+                "Brokered web egress cannot carry a browser-policy digest."
             )
+        if self.capability_profile == "controlled-browser":
+            if self.egress_policy_digest is None:
+                raise ValueError(
+                    "Controlled browser requires an egress-policy digest."
+                )
+            if self.browser_policy_digest is None:
+                raise ValueError(
+                    "Controlled browser requires a browser-policy digest."
+                )
+        if self.capability_profile == "offline-minimal":
+            if self.egress_policy_digest is not None:
+                raise ValueError(
+                    "Offline-minimal activation cannot carry an egress-policy digest."
+                )
+            if self.browser_policy_digest is not None:
+                raise ValueError(
+                    "Offline-minimal activation cannot carry a browser-policy digest."
+                )
         return self
 
 
