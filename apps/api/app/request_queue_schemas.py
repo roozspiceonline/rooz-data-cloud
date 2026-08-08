@@ -63,3 +63,13 @@ class EnqueueReceiptSummary(StrictModel):
     request_digest: str
     replayed: bool
     created_at: datetime
+
+
+class QueueTransitionSummary(ORMModel):
+    id: UUID
+    request_id: UUID
+    from_status: str | None
+    to_status: Literal["PENDING", "CLAIMED", "HANDLED", "FAILED"]
+    reason: str
+    attempt_count: int
+    created_at: datetime

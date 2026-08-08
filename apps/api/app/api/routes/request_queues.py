@@ -14,7 +14,11 @@ from ...core.pagination import (
 )
 from ...models import RequestQueue
 from ...request_queue_protocol import RequestQueueProtocolError, validate_queue_enqueue
-from ...request_queue_schemas import CreateRequestQueueRequest, EnqueueRequest
+from ...request_queue_schemas import (
+    CreateRequestQueueRequest,
+    EnqueueRequest,
+    QueueTransitionSummary,
+)
 from ...services.request_queues import (
     create_request_queue,
     enqueue_request,
@@ -84,3 +88,10 @@ async def list_requests(request: Request, access: Annotated[RequestQueueAccess, 
     page, has_more = rows[:normalized], len(rows) > normalized
     next_cursor = None if not has_more else encode_queue_request_cursor(queue_id=access.queue.id, status=state, created_at=page[-1].created_at, resource_id=page[-1].id)
     return {"data": [request_summary(row).model_dump(mode="json") for row in page], "meta": {"request_id": request_id(request), "page": {"next_cursor": next_cursor, "has_more": has_more}}}
+
+
+@router.get("/request-queues/{queue_id}/transitions")
+async def list_transitions(request: Request, access: Annotated[RequestQueueAccess, Depends(require_request_queue_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)], limit: Annotated[int, Query()] = 50) -> dict[str, object]:
+    from ...models import RequestQueueTransition
+    rows = (await db.scalars(select(RequestQueueTransition).where(RequestQueueTransition.queue_id == access.queue.id).order_by(RequestQueueTransition.created_at.desc(), RequestQueueTransition.id.desc()).limit(normalize_limit(limit)))).all()
+    return {"data": [QueueTransitionSummary.model_validate(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request)}}
