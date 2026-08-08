@@ -12,7 +12,11 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 from browser_egress_policy import BrowserEgressPolicy, BrowserEgressPolicyError
-from egress_broker import ConnectionFactory, _default_connection, _request_once
+from egress_broker import (
+    ConnectionFactory,
+    _default_connection,
+    broker_validated_resource_once,
+)
 from egress_policy import EgressPolicyError, Resolver
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -219,7 +223,7 @@ class BrowserGatewayBroker:
 
         self.budget.requests_used += 1
         try:
-            status, headers, body, location = _request_once(
+            status, headers, body, location = broker_validated_resource_once(
                 target=validated.target,
                 method=validated.method,
                 policy=self.policy.base,

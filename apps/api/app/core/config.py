@@ -97,6 +97,7 @@ class Settings(BaseSettings):
     sandbox_canary_web_egress_request_timeout_seconds: int = 15
 
     sandbox_canary_browser_enabled: bool = False
+    sandbox_canary_browser_live_navigation_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -349,6 +350,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Canary browser screenshot limit is outside the safe range."
             )
+        if self.sandbox_canary_browser_live_navigation_enabled:
+            if not self.sandbox_canary_browser_enabled:
+                raise ValueError(
+                    "Live browser navigation requires the browser canary gate."
+                )
+            if self.sandbox_canary_max_memory_mb > 256:
+                raise ValueError("Live browser navigation memory cannot exceed 256 MiB.")
+            if self.sandbox_canary_max_cpu_millis > 500:
+                raise ValueError("Live browser navigation CPU cannot exceed 500m.")
+            if self.sandbox_canary_max_pids > 64:
+                raise ValueError("Live browser navigation PID limit cannot exceed 64.")
+            if self.sandbox_canary_max_ephemeral_disk_mb > 256:
+                raise ValueError("Live browser navigation disk cannot exceed 256 MiB.")
+            if self.sandbox_canary_max_run_seconds > 120:
+                raise ValueError("Live browser navigation timeout cannot exceed 120 seconds.")
+
         if self.sandbox_canary_browser_enabled:
             if (
                 not self.sandbox_execution_enabled

@@ -34,7 +34,7 @@
   ],
   "properties": {
     "schema_version": {"const": "rdc.browser-egress-policy/v1"},
-    "mode": {"const": "gateway-policy-only"},
+    "mode": {"const": "gateway-live-canary"},
     "allowed_schemes": {"const": ["https"]},
     "allowed_methods": {"const": ["GET", "HEAD"]},
     "allowed_resource_types": {
@@ -91,7 +91,7 @@
       "minimum": 1,
       "maximum": 30
     },
-    "transport_wired": {"const": false},
+    "transport_wired": {"const": true},
     "browser_network": {"const": "none"}
   }
 }

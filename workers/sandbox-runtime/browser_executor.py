@@ -5,7 +5,10 @@ import re
 import subprocess
 from pathlib import Path
 
+from browser_egress_policy import BrowserEgressPolicy
 from browser_gateway_transport import (
+    BrowserGatewayBroker,
+    BrowserGatewayLiveServer,
     BrowserGatewaySelfTestServer,
     BrowserGatewayTransportError,
 )
@@ -505,11 +508,11 @@ def browser_live_navigation_command(
         "--cap-drop",
         "ALL",
         "--pids-limit",
-        "128",
+        "64",
         "--memory",
-        "512m",
+        "256m",
         "--cpus",
-        "1.0",
+        "0.5",
         "--network",
         "none",
         "--tmpfs",
@@ -577,4 +580,128 @@ def validate_live_navigation_result_file(
         raise BrowserRuntimeError(
             "Browser navigation result failed independent validation."
         ) from exc
+
+def run_browser_live_navigation(
+    *,
+    config: SandboxWorkerConfig,
+    run_id: str,
+    workspace: Path,
+    navigation_plan: dict[str, object],
+    browser_policy_digest: str,
+    browser_egress_policy: BrowserEgressPolicy,
+    request_digest: str,
+    max_screenshot_bytes: int,
+    navigation_timeout_seconds: int,
+    runtime_timeout_seconds: int,
+) -> tuple[Path, Path]:
+    if not config.browser_live_navigation_enabled:
+        raise BrowserRuntimeError("Worker live browser navigation gate is disabled.")
+    if not 1 <= runtime_timeout_seconds <= 120:
+        raise BrowserRuntimeError("Live browser runtime timeout is outside the safe range.")
+    encoded_plan = json.dumps(
+        navigation_plan,
+        sort_keys=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if not encoded_plan or len(encoded_plan) > 65_536:
+        raise BrowserRuntimeError("Browser navigation plan is outside the safe size limit.")
+    import hashlib
+    if hashlib.sha256(encoded_plan).hexdigest() != request_digest:
+        raise BrowserRuntimeError("Browser navigation plan digest does not match the receipt.")
+
+    ipc_dir = workspace / "browser-ipc"
+    output_dir = workspace / "browser-output"
+    ipc_dir.mkdir(mode=0o755)
+    output_dir.mkdir(mode=0o700)
+    navigation_file = ipc_dir / "navigation.json"
+    navigation_file.write_bytes(encoded_plan)
+    navigation_file.chmod(0o444)
+    socket_path = ipc_dir / "gateway.sock"
+    result_path = output_dir / "result.json"
+    final_output = workspace / "browser-navigation-output.json"
+    log_path = workspace / "browser-navigation.log"
+
+    broker = BrowserGatewayBroker(
+        policy=browser_egress_policy,
+        gateway_policy_digest=browser_egress_policy.digest,
+        live_forwarding_enabled=True,
+    )
+    server = BrowserGatewayLiveServer(socket_path=socket_path, broker=broker)
+    name, command = browser_live_navigation_command(
+        config=config,
+        run_id=run_id,
+        ipc_dir=ipc_dir,
+        output_dir=output_dir,
+        gateway_policy_digest=browser_egress_policy.digest,
+        browser_policy_digest=browser_policy_digest,
+        request_digest=request_digest,
+        max_screenshot_bytes=max_screenshot_bytes,
+        navigation_timeout_seconds=navigation_timeout_seconds,
+    )
+    server.start()
+    try:
+        try:
+            completed = subprocess.run(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=runtime_timeout_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise BrowserRuntimeError("Live browser navigation exceeded its Run timeout.") from exc
+        except OSError as exc:
+            raise BrowserRuntimeError("Live browser runtime process could not start.") from exc
+        finally:
+            _cleanup_browser_container(config, name)
+    finally:
+        server.stop()
+    try:
+        server.raise_if_failed()
+    except BrowserGatewayTransportError as exc:
+        raise BrowserRuntimeError("Live browser gateway failed closed.") from exc
+
+    raw = completed.stdout.strip()
+    if completed.returncode != 0:
+        raise BrowserRuntimeError("Live browser navigation runtime failed.")
+    if not raw or len(raw.encode("utf-8")) > 4096:
+        raise BrowserRuntimeError("Live browser completion envelope is invalid.")
+    try:
+        completion = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BrowserRuntimeError("Live browser completion envelope is not JSON.") from exc
+    if completion != {
+        "schema_version": "rdc.browser-navigation-runtime-complete/v1",
+        "result_written": True,
+        "browser_network": "none",
+    }:
+        raise BrowserRuntimeError("Live browser completion envelope changed.")
+
+    validated = validate_live_navigation_result_file(
+        result_path=result_path,
+        request_digest=request_digest,
+        browser_policy_digest=browser_policy_digest,
+        browser_egress_policy_digest=browser_egress_policy.digest,
+        navigation_plan=navigation_plan,
+        max_screenshot_bytes=max_screenshot_bytes,
+    )
+    final_output.write_text(
+        json.dumps(validated, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    budget = validated.get("egress_budget")
+    if not isinstance(budget, dict):
+        raise BrowserRuntimeError("Validated browser result lacks egress budget.")
+    log_path.write_text(
+        "browser-navigation exit=0 requests="
+        + str(budget.get("requests_used", 0))
+        + " bytes=" + str(budget.get("bytes_received", 0))
+        + " redirects=" + str(budget.get("redirects_used", 0))
+        + "\n",
+        encoding="utf-8",
+    )
+    return final_output, log_path
 

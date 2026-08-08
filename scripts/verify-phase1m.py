@@ -123,7 +123,7 @@ def main() -> None:
         ("webrtc_enabled", False),
         ("proxy_override_enabled", False),
         ("persistent_cookies_enabled", False),
-        ("transport_wired", False),
+        ("transport_wired", True),
         ("browser_network", "none"),
     ]:
         require(
@@ -533,7 +533,7 @@ def main() -> None:
         '"rdc.browser-gateway-transport-self-test/v1"',
         '"browser_gateway_transport_mode": "unix-domain-socket"',
         '"browser_gateway_transport_self_test_available": True',
-        '"browser_gateway_live_forwarding_enabled": False',
+        '"browser_gateway_live_forwarding_enabled": _browser_live_navigation_canary_enabled()',
     ]:
         require(
             marker in main_source,
@@ -556,13 +556,14 @@ def main() -> None:
     for marker in [
         '"rdc.browser-navigation-receipt/v1"',
         '"request_digest": canonical_fingerprint(browser_navigation)',
-        '"execution_enabled": False',
-        '"dispatch_enabled": False',
+        '"execution_enabled": execution_enabled',
+        '"dispatch_enabled": execution_enabled',
         '"browser_network": "none"',
         '"browser_egress_gateway_required": True',
         '"rdc.browser-egress-policy/v1"',
         '"browser_egress_policy_digest": browser_egress_policy_digest',
-        '"browser_egress_transport_wired": False',
+        '"browser_egress_transport_wired": True',
+        "browser_navigation_live_canary",
         'initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"',
         "if not navigation_receipt_only:",
         '"run.browser_navigation_intent_recorded"',
@@ -574,8 +575,11 @@ def main() -> None:
 
     plane = read("apps/api/app/services/execution_plane.py")
     require(
-        plane.count('if "browser_navigation" in input_reference:') >= 2,
-        "control plane does not explicitly deny v2 activation",
+        "_browser_navigation_canary_receipt_allowed" in plane
+        and "sandbox_canary_browser_live_navigation_enabled" in plane
+        and '"execution_enabled": True' in plane
+        and '"dispatch_enabled": True' in plane,
+        "control plane live v2 receipt gate is missing",
     )
 
     worker_source = read("workers/sandbox-runtime/worker.py")
@@ -583,7 +587,10 @@ def main() -> None:
         "validate_browser_navigation_plan",
         '"rdc.browser-navigation-receipt/v1"',
         "BrowserEgressPolicy.create",
-        "Phase 1M browser navigation execution is not enabled.",
+        "_require_live_browser_navigation_receipt",
+        '"execution_enabled": True',
+        '"dispatch_enabled": True',
+        "browser_live_navigation_enabled",
     ]:
         require(
             marker in worker_source,
@@ -594,11 +601,11 @@ def main() -> None:
         '"browser_navigation_request_contract": "rdc.browser/v2"',
         '"rdc.browser-navigation-receipt/v1"',
         '"browser_navigation_intent_contract_available": True',
-        '"browser_navigation_dispatch_enabled": False',
+        '"browser_navigation_dispatch_enabled": _browser_live_navigation_canary_enabled()',
         '"browser_egress_policy_contract": "rdc.browser-egress-policy/v1"',
-        '"browser_egress_transport_wired": False',
+        '"browser_egress_transport_wired": True',
         '"browser_egress_subresource_revalidation": True',
-        '"browser_public_navigation_enabled": False',
+        '"browser_public_navigation_enabled": _browser_live_navigation_canary_enabled()',
     ]:
         require(
             marker in main_source,
@@ -911,55 +918,112 @@ def main() -> None:
             "browser live executor guard missing: " + marker,
         )
 
-    for forbidden in [
-        "BrowserGatewayLiveServer",
-        "browser_live_navigation_command",
+    for marker in [
         "run_browser_live_navigation",
+        "_require_live_browser_navigation_receipt",
+        "browser_live_navigation_enabled",
+        '"bounded-unix-gateway-navigation"',
+        '"browser_runtime_image_ref"',
+        '"browser_egress_policy_digest"',
+        '"direct_browser_internet": False',
     ]:
         require(
-            forbidden not in worker_source,
-            "normal v2 worker path became live too early: " + forbidden,
+            marker in worker_source,
+            "final v2 worker wiring guard missing: " + marker,
         )
 
     for marker in [
-        '"browser_gateway_live_forwarding_enabled": False',
+        '"browser_gateway_live_forwarding_enabled": _browser_live_navigation_canary_enabled()',
         '"browser_gateway_live_forwarding_contract_available": True',
         '"browser_gateway_request_contract": "rdc.browser-gateway-request/v1"',
         '"browser_gateway_response_contract": "rdc.browser-gateway-response/v1"',
         '"browser_navigation_result_contract": "rdc.browser-navigation-result/v1"',
         '"browser_navigation_live_code_available": True',
-        '"browser_navigation_live_worker_wired": False',
-        '"browser_navigation_dispatch_enabled": False',
-        '"browser_execution_enabled": False',
+        '"browser_navigation_live_worker_wired": True',
+        '"browser_live_navigation_gate_enabled"',
+        '"browser_live_navigation_canary_enabled"',
+        '"browser_navigation_dispatch_enabled": _browser_live_navigation_canary_enabled()',
+        '"browser_execution_enabled": _browser_live_navigation_canary_enabled()',
     ]:
         require(
             marker in main_source,
             "API increment-5 status guard missing: " + marker,
         )
 
+
+    env_example = read(".env.example")
+    require(
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false" in env_example,
+        "live-navigation gate is not false by default",
+    )
+    api_config = read("apps/api/app/core/config.py")
+    worker_config = read("workers/sandbox-runtime/config.py")
+    require(
+        "sandbox_canary_browser_live_navigation_enabled: bool = False" in api_config,
+        "API live-navigation default gate is missing",
+    )
+    require(
+        "browser_live_navigation_enabled: bool" in worker_config,
+        "worker live-navigation gate is missing",
+    )
+    require(
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED" in read("docker-compose.yml"),
+        "Compose does not pass the live-navigation gate",
+    )
+    require(
+        '"mode": "gateway-live-canary"' in runs_service
+        and '"transport_wired": True' in runs_service,
+        "API browser-egress policy is not live-canary wired",
+    )
+    require(
+        "broker_validated_resource_once" in read("workers/sandbox-runtime/egress_broker.py")
+        and "broker_validated_resource_once" in gateway_transport_source,
+        "browser gateway is not using the public pinned HTTPS primitive",
+    )
+    require(
+        "run_browser_live_navigation" in executor
+        and "BrowserGatewayLiveServer" in executor
+        and "validate_live_navigation_result_file" in executor,
+        "browser live executor wiring is incomplete",
+    )
+    live_executor = executor[
+        executor.index("def browser_live_navigation_command("):
+        executor.index("def validate_live_navigation_result_file(")
+    ]
+    for marker in [
+        '"--pids-limit",\n        "64"',
+        '"--memory",\n        "256m"',
+        '"--cpus",\n        "0.5"',
+        '"--network",\n        "none"',
+    ]:
+        require(marker in live_executor, "live browser hard limit changed: " + marker)
+    require("route.continue_" not in runtime, "browser runtime can bypass gateway interception")
+    print("  final controlled-browser canary wiring: PASS")
+    print("  live-navigation independent gate default: FALSE")
     print("  bounded Unix gateway forwarding contract: PASS")
     print("  Playwright request interception contract: PASS")
     print("  plan-bound browser navigation result contract: PASS")
-    print("  normal v2 live worker wiring: BLOCKED")
+    print("  normal v2 live worker wiring: CONTROLLED CANARY ONLY")
     print("  Unix browser->gateway transport self-test: PASS")
     print("  Chromium network: NONE")
     print("  gateway external request: FALSE")
     print("  gateway live forwarding: FALSE")
-    print("Phase 1M receipt-only Run intent verification: PASS")
+    print("Phase 1M controlled navigation verification: PASS")
     print("  rdc.browser/v1 compatibility: PASS")
     print("  rdc.browser/v2 strict protocol: PASS")
     print("  bounded goto/wait/extract/screenshot validation: PASS")
     print("  exact HTTPS allowlist policy: PASS")
     print("  v2 Run intent + immutable receipt: PASS")
-    print("  v2 initial status: DRAFT")
-    print("  v2 START dispatch: BLOCKED")
-    print("  control-plane v2 activation: BLOCKED")
+    print("  v2 default status: DRAFT")
+    print("  v2 live-canary status: QUEUED")
+    print("  v2 START dispatch: EXACT LIVE CANARY ONLY")
+    print("  control-plane v2 activation: EXACT LIVE CANARY ONLY")
     print("  worker independent v2 receipt validation: PASS")
     print("  browser egress gateway policy + digest: PASS")
     print("  global DNS/address pinning contract: PASS")
     print("  redirect/subresource revalidation contract: PASS")
-    print("  browser egress transport: NOT WIRED")
-    print("  browser runtime external navigation: NOT ENABLED")
+    print("  browser egress transport: WIRED")
+    print("  browser runtime external navigation: CANARY-GATED")
     print("  browser runtime network: NONE")
 
 

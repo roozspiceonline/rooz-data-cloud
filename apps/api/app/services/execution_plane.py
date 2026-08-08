@@ -62,6 +62,7 @@ from ..models import (
 )
 from .identity_tenancy import append_audit_event
 from .runs import (
+    _browser_egress_policy_payload,
     _browser_policy_payload,
     append_run_event,
     sanitize_event_payload,
@@ -113,6 +114,51 @@ def _egress_policy_payload() -> dict[str, object]:
             settings.sandbox_canary_web_egress_request_timeout_seconds
         ),
     }
+
+
+def _browser_navigation_canary_receipt_allowed(
+    input_reference: dict[str, object],
+) -> bool:
+    if not settings.sandbox_canary_browser_live_navigation_enabled:
+        return False
+    navigation = input_reference.get("browser_navigation")
+    receipt = input_reference.get("browser_navigation_receipt")
+    stored_browser_policy = input_reference.get("browser_policy")
+    stored_browser_digest = input_reference.get("browser_policy_digest")
+    stored_egress_policy = input_reference.get("browser_egress_policy")
+    stored_egress_digest = input_reference.get("browser_egress_policy_digest")
+    if (
+        not isinstance(navigation, dict)
+        or not isinstance(receipt, dict)
+        or not isinstance(stored_browser_policy, dict)
+        or not isinstance(stored_browser_digest, str)
+        or not isinstance(stored_egress_policy, dict)
+        or not isinstance(stored_egress_digest, str)
+    ):
+        return False
+    current_browser_policy = _browser_policy_payload()
+    current_browser_digest = canonical_fingerprint(current_browser_policy)
+    current_egress_policy = _browser_egress_policy_payload()
+    current_egress_digest = canonical_fingerprint(current_egress_policy)
+    if (
+        stored_browser_policy != current_browser_policy
+        or stored_browser_digest != current_browser_digest
+        or stored_egress_policy != current_egress_policy
+        or stored_egress_digest != current_egress_digest
+    ):
+        return False
+    expected_receipt = {
+        "schema_version": "rdc.browser-navigation-receipt/v1",
+        "request_schema_version": "rdc.browser/v2",
+        "request_digest": canonical_fingerprint(navigation),
+        "browser_policy_digest": current_browser_digest,
+        "browser_egress_policy_digest": current_egress_digest,
+        "execution_enabled": True,
+        "dispatch_enabled": True,
+        "browser_network": "none",
+        "browser_egress_gateway_required": True,
+    }
+    return receipt == expected_receipt
 
 
 def _canary_constraints(
@@ -211,24 +257,27 @@ def _canary_activation(
         if not isinstance(input_reference, dict):
             return None
         if "browser_navigation" in input_reference:
-            return None
-        browser_plan = input_reference.get("browser")
-        stored_policy = input_reference.get("browser_policy")
-        stored_digest = input_reference.get("browser_policy_digest")
-        if (
-            not isinstance(browser_plan, dict)
-            or not isinstance(stored_policy, dict)
-            or not isinstance(stored_digest, str)
-        ):
-            return None
-        current_policy = _browser_policy_payload()
-        current_digest = canonical_fingerprint(current_policy)
-        if (
-            canonical_fingerprint(stored_policy) != current_digest
-            or stored_digest != current_digest
-        ):
-            return None
-        browser_policy_digest = current_digest
+            if not _browser_navigation_canary_receipt_allowed(input_reference):
+                return None
+            browser_policy_digest = canonical_fingerprint(_browser_policy_payload())
+        else:
+            browser_plan = input_reference.get("browser")
+            stored_policy = input_reference.get("browser_policy")
+            stored_digest = input_reference.get("browser_policy_digest")
+            if (
+                not isinstance(browser_plan, dict)
+                or not isinstance(stored_policy, dict)
+                or not isinstance(stored_digest, str)
+            ):
+                return None
+            current_policy = _browser_policy_payload()
+            current_digest = canonical_fingerprint(current_policy)
+            if (
+                canonical_fingerprint(stored_policy) != current_digest
+                or stored_digest != current_digest
+            ):
+                return None
+            browser_policy_digest = current_digest
 
     try:
         memory_mb = int(resources["memoryMb"])
@@ -358,8 +407,9 @@ def _sandbox_claim_policy(
         if not isinstance(input_reference, dict):
             return None
         if "browser_navigation" in input_reference:
-            return None
-        if (
+            if not _browser_navigation_canary_receipt_allowed(input_reference):
+                return None
+        elif (
             not isinstance(input_reference.get("browser"), dict)
             or not isinstance(input_reference.get("browser_policy"), dict)
             or not isinstance(input_reference.get("browser_policy_digest"), str)

@@ -62,7 +62,7 @@ class BrowserEgressPolicy:
     def as_dict(self) -> dict[str, object]:
         return {
             "schema_version": "rdc.browser-egress-policy/v1",
-            "mode": "gateway-policy-only",
+            "mode": "gateway-live-canary",
             "allowed_schemes": ["https"],
             "allowed_methods": ["GET", "HEAD"],
             "allowed_resource_types": sorted(_ALLOWED_RESOURCE_TYPES),
@@ -89,7 +89,7 @@ class BrowserEgressPolicy:
             "max_redirects": self.base.max_redirects,
             "connect_timeout_seconds": self.base.connect_timeout_seconds,
             "request_timeout_seconds": self.base.request_timeout_seconds,
-            "transport_wired": False,
+            "transport_wired": True,
             "browser_network": "none",
         }
 

@@ -1,30 +1,20 @@
-# Rooz Data Cloud — Phase 1M in progress
+# Rooz Data Cloud — Phase 1M merge candidate
 
-Rooz Data Cloud has completed and merged Phase 1L: the controlled-browser
-execution foundation.
+Rooz Data Cloud Phase 1M implements controlled browser navigation and bounded
+extraction on top of the merged Phase 1L browser foundation.
 
-The authoritative merged browser baseline provides:
+Live navigation has its own false-by-default gate:
+`RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED=false`.
 
-- strict `rdc.browser/v1` intent
-- operator-owned browser policy receipts and SHA-256 binding
-- controlled-browser activation receipts
-- independent worker verification
-- immutable local browser-runtime image references
-- dedicated Chromium-compatible seccomp
-- isolated `about:blank` Playwright/Chromium self-test
-- forced browser-container cleanup
-- false-by-default browser gate
-- Agent and browser self-test runtime on `--network none`
+The capability includes strict `rdc.browser/v2`, exact HTTPS hostname allowlists,
+global-DNS validation, validated-address pinning, TLS hostname/SNI verification,
+redirect/subresource revalidation, per-Run Unix gateway transport, plan-bound
+results and bounded text/HTML/viewport screenshot extraction.
 
-Phase 1M is now building the controlled navigation and extraction protocol.
+Agent containers and Chromium remain `--network none`. Browser cookies,
+Authorization headers and request bodies never cross the gateway. General
+untrusted browser execution remains release-blocked.
 
-## Phase 1M safety boundary
-
-The first Phase 1M increment introduces `rdc.browser/v2` protocol validation
-only. Public Chromium navigation is still disabled.
-
-No Phase 1M change may grant unrestricted Internet access to Agent containers
-or Chromium. Live browser navigation requires a dedicated RDC-controlled
-browser-egress gateway with SSRF, redirect, DNS and subresource enforcement.
-
-General untrusted browser execution remains release-blocked.
+Without the full exact canary configuration, new v2 Runs remain DRAFT with no
+START command. PR #50 remains draft and unmerged until exact-head CI is green
+and the Product Owner explicitly approves the Phase 1M merge.

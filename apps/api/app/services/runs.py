@@ -191,7 +191,7 @@ def _browser_egress_policy_payload() -> dict[str, object]:
     settings = get_settings()
     return {
         "schema_version": "rdc.browser-egress-policy/v1",
-        "mode": "gateway-policy-only",
+        "mode": "gateway-live-canary",
         "allowed_schemes": ["https"],
         "allowed_methods": ["GET", "HEAD"],
         "allowed_resource_types": [
@@ -234,9 +234,36 @@ def _browser_egress_policy_payload() -> dict[str, object]:
         "request_timeout_seconds": (
             settings.sandbox_canary_web_egress_request_timeout_seconds
         ),
-        "transport_wired": False,
+        "transport_wired": True,
         "browser_network": "none",
     }
+
+
+def _browser_navigation_live_canary_enabled(
+    version: AgentVersion,
+) -> bool:
+    settings = get_settings()
+    if (
+        not settings.sandbox_execution_enabled
+        or settings.sandbox_activation_mode != "canary"
+        or not settings.sandbox_canary_web_egress_enabled
+        or not settings.sandbox_canary_browser_enabled
+        or not settings.sandbox_canary_browser_live_navigation_enabled
+        or not settings.sandbox_canary_web_egress_allowed_hosts
+        or not settings.sandbox_canary_worker_name.strip()
+        or str(version.id) != settings.sandbox_canary_agent_version_id.strip()
+    ):
+        return False
+    try:
+        return (
+            _manifest_resource(version, "memoryMb") <= settings.sandbox_canary_max_memory_mb
+            and _manifest_resource(version, "cpuUnits") <= settings.sandbox_canary_max_cpu_millis
+            and _manifest_resource(version, "maxProcesses") <= settings.sandbox_canary_max_pids
+            and _manifest_resource(version, "ephemeralDiskMb") <= settings.sandbox_canary_max_ephemeral_disk_mb
+            and _manifest_resource(version, "timeoutSeconds") <= settings.sandbox_canary_max_run_seconds
+        )
+    except ApiError:
+        return False
 
 
 def _normalize_browser_navigation_hostname(value: str) -> str:
@@ -297,6 +324,7 @@ def _browser_navigation_receipt(
     browser_policy: dict[str, object],
     browser_policy_digest: str,
     browser_egress_policy_digest: str,
+    execution_enabled: bool,
 ) -> dict[str, object]:
     allowed_hosts_raw = browser_policy.get("allowed_hosts")
     if not isinstance(allowed_hosts_raw, list) or not allowed_hosts_raw:
@@ -420,8 +448,8 @@ def _browser_navigation_receipt(
         "request_digest": canonical_fingerprint(browser_navigation),
         "browser_policy_digest": browser_policy_digest,
         "browser_egress_policy_digest": browser_egress_policy_digest,
-        "execution_enabled": False,
-        "dispatch_enabled": False,
+        "execution_enabled": execution_enabled,
+        "dispatch_enabled": execution_enabled,
         "browser_network": "none",
         "browser_egress_gateway_required": True,
     }
@@ -623,6 +651,7 @@ async def create_run(
     browser_egress_policy: dict[str, object] | None = None
     browser_egress_policy_digest: str | None = None
     browser_navigation_receipt: dict[str, object] | None = None
+    browser_navigation_live_canary = False
     if browser is not None or browser_navigation is not None:
         if _manifest_network(version) != "web-egress":
             raise ApiError(
@@ -639,6 +668,9 @@ async def create_run(
         browser_policy = _browser_policy_payload()
         browser_policy_digest = canonical_fingerprint(browser_policy)
         if browser_navigation is not None:
+            browser_navigation_live_canary = (
+                _browser_navigation_live_canary_enabled(version)
+            )
             browser_egress_policy = _browser_egress_policy_payload()
             browser_egress_policy_digest = canonical_fingerprint(
                 browser_egress_policy
@@ -650,6 +682,7 @@ async def create_run(
                 browser_egress_policy_digest=(
                     browser_egress_policy_digest
                 ),
+                execution_enabled=browser_navigation_live_canary,
             )
 
     fingerprint = canonical_fingerprint(
@@ -721,7 +754,10 @@ async def create_run(
             browser_egress_policy_digest
         )
 
-    navigation_receipt_only = browser_navigation is not None
+    navigation_receipt_only = (
+        browser_navigation is not None
+        and not browser_navigation_live_canary
+    )
     initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"
 
     record = Run(
@@ -816,9 +852,11 @@ async def create_run(
                 if browser_navigation_receipt is not None
                 else None
             ),
-            "browser_navigation_dispatch_enabled": False,
+            "browser_navigation_dispatch_enabled": (
+                browser_navigation_live_canary
+            ),
             "browser_egress_policy_digest": browser_egress_policy_digest,
-            "browser_egress_transport_wired": False,
+            "browser_egress_transport_wired": True,
         },
     )
     return snapshot
