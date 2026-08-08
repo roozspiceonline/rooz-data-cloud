@@ -615,7 +615,7 @@ def main() -> None:
     docs = read("docs/phase1m/README.md")
     for marker in [
         "rdc.browser/v2",
-        "Chromium remains offline",
+        "Chromium itself must remain network-none.",
         "browser-egress gateway",
         "Phase 1L remains authoritative",
     ]:
