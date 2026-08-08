@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+from urllib.parse import urlsplit
 from datetime import UTC, datetime, timedelta
 from typing import cast
 from uuid import UUID, uuid4
@@ -186,6 +187,179 @@ def _browser_policy_payload() -> dict[str, object]:
     }
 
 
+def _normalize_browser_navigation_hostname(value: str) -> str:
+    import ipaddress
+
+    candidate = value.strip().rstrip(".").casefold()
+    if not candidate or "*" in candidate:
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_HOST_REJECTED",
+            message="Browser navigation requires an exact hostname.",
+        )
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        pass
+    else:
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_HOST_REJECTED",
+            message="Browser navigation cannot target an IP literal.",
+        )
+    try:
+        normalized = candidate.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_HOST_REJECTED",
+            message="Browser navigation hostname is invalid.",
+        ) from exc
+    labels = normalized.split(".")
+    if (
+        len(labels) < 2
+        or normalized.endswith(".local")
+        or any(
+            not label
+            or len(label) > 63
+            or label.startswith("-")
+            or label.endswith("-")
+            or not all(
+                character.isalnum() or character == "-"
+                for character in label
+            )
+            for label in labels
+        )
+    ):
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_HOST_REJECTED",
+            message="Browser navigation hostname is unsafe.",
+        )
+    return normalized
+
+
+def _browser_navigation_receipt(
+    browser_navigation: dict[str, object],
+    *,
+    browser_policy: dict[str, object],
+    browser_policy_digest: str,
+) -> dict[str, object]:
+    allowed_hosts_raw = browser_policy.get("allowed_hosts")
+    if not isinstance(allowed_hosts_raw, list) or not allowed_hosts_raw:
+        raise ApiError(
+            status_code=409,
+            code="BROWSER_NAVIGATION_POLICY_UNAVAILABLE",
+            message=(
+                "Browser navigation intent requires an operator hostname "
+                "allowlist."
+            ),
+        )
+    allowed_hosts = {
+        _normalize_browser_navigation_hostname(str(host))
+        for host in allowed_hosts_raw
+    }
+    max_pages = int(browser_policy["max_pages"])
+    max_actions = int(browser_policy["max_actions"])
+    navigation_timeout_ms = (
+        int(browser_policy["navigation_timeout_seconds"]) * 1000
+    )
+    max_dom_bytes = int(browser_policy["max_dom_bytes"])
+
+    steps = browser_navigation.get("steps")
+    if not isinstance(steps, list) or not 1 <= len(steps) <= max_actions:
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_POLICY_REJECTED",
+            message="Browser navigation step count exceeds operator policy.",
+        )
+
+    goto_count = 0
+    for step in steps:
+        if not isinstance(step, dict):
+            raise ApiError(
+                status_code=422,
+                code="BROWSER_NAVIGATION_POLICY_REJECTED",
+                message="Browser navigation step is malformed.",
+            )
+        step_type = step.get("type")
+        if step_type == "goto":
+            goto_count += 1
+            url = step.get("url")
+            if not isinstance(url, str):
+                raise ApiError(
+                    status_code=422,
+                    code="BROWSER_NAVIGATION_POLICY_REJECTED",
+                    message="Browser goto URL is malformed.",
+                )
+            parsed = urlsplit(url)
+            if not parsed.hostname:
+                raise ApiError(
+                    status_code=422,
+                    code="BROWSER_NAVIGATION_POLICY_REJECTED",
+                    message="Browser goto URL requires a hostname.",
+                )
+            hostname = _normalize_browser_navigation_hostname(
+                parsed.hostname
+            )
+            if hostname not in allowed_hosts:
+                raise ApiError(
+                    status_code=422,
+                    code="BROWSER_NAVIGATION_HOST_NOT_ALLOWED",
+                    message=(
+                        "Browser navigation hostname is not "
+                        "operator-allowlisted."
+                    ),
+                )
+        elif step_type == "wait_for_selector":
+            timeout_ms = step.get("timeout_ms")
+            if (
+                isinstance(timeout_ms, bool)
+                or not isinstance(timeout_ms, int)
+                or timeout_ms > navigation_timeout_ms
+            ):
+                raise ApiError(
+                    status_code=422,
+                    code="BROWSER_NAVIGATION_POLICY_REJECTED",
+                    message=(
+                        "Browser selector wait exceeds operator policy."
+                    ),
+                )
+        elif step_type == "extract_html":
+            max_bytes = step.get("max_bytes")
+            if (
+                isinstance(max_bytes, bool)
+                or not isinstance(max_bytes, int)
+                or max_bytes > max_dom_bytes
+            ):
+                raise ApiError(
+                    status_code=422,
+                    code="BROWSER_NAVIGATION_POLICY_REJECTED",
+                    message=(
+                        "Browser HTML extraction exceeds operator policy."
+                    ),
+                )
+
+    if not 1 <= goto_count <= max_pages:
+        raise ApiError(
+            status_code=422,
+            code="BROWSER_NAVIGATION_POLICY_REJECTED",
+            message="Browser navigation page count exceeds operator policy.",
+        )
+
+    return {
+        "schema_version": "rdc.browser-navigation-receipt/v1",
+        "request_schema_version": "rdc.browser/v2",
+        "request_digest": canonical_fingerprint(browser_navigation),
+        "browser_policy_digest": browser_policy_digest,
+        "execution_enabled": False,
+        "dispatch_enabled": False,
+        "browser_network": "none",
+        "browser_egress_gateway_required": True,
+    }
+
+
+
 def _manifest_resource(version: AgentVersion, key: str) -> int:
     resources = version.manifest.get("resources")
     if not isinstance(resources, dict):
@@ -361,6 +535,11 @@ async def create_run(
         if payload.browser is not None
         else None
     )
+    browser_navigation = (
+        payload.browser_navigation.model_dump(mode="json")
+        if payload.browser_navigation is not None
+        else None
+    )
     if web_fetch is not None and _manifest_network(version) != "web-egress":
         raise ApiError(
             status_code=422,
@@ -373,7 +552,8 @@ async def create_run(
 
     browser_policy: dict[str, object] | None = None
     browser_policy_digest: str | None = None
-    if browser is not None:
+    browser_navigation_receipt: dict[str, object] | None = None
+    if browser is not None or browser_navigation is not None:
         if _manifest_network(version) != "web-egress":
             raise ApiError(
                 status_code=422,
@@ -388,6 +568,12 @@ async def create_run(
             )
         browser_policy = _browser_policy_payload()
         browser_policy_digest = canonical_fingerprint(browser_policy)
+        if browser_navigation is not None:
+            browser_navigation_receipt = _browser_navigation_receipt(
+                browser_navigation,
+                browser_policy=browser_policy,
+                browser_policy_digest=browser_policy_digest,
+            )
 
     fingerprint = canonical_fingerprint(
         {
@@ -396,6 +582,8 @@ async def create_run(
             "input": payload.input,
             "web_fetch": web_fetch,
             "browser": browser,
+            "browser_navigation": browser_navigation,
+            "browser_navigation_receipt": browser_navigation_receipt,
             "browser_policy_digest": browser_policy_digest,
             "runtime": runtime,
         }
@@ -443,6 +631,16 @@ async def create_run(
         input_reference["browser"] = browser
         input_reference["browser_policy"] = browser_policy
         input_reference["browser_policy_digest"] = browser_policy_digest
+    if browser_navigation is not None:
+        input_reference["browser_navigation"] = browser_navigation
+        input_reference["browser_navigation_receipt"] = (
+            browser_navigation_receipt
+        )
+        input_reference["browser_policy"] = browser_policy
+        input_reference["browser_policy_digest"] = browser_policy_digest
+
+    navigation_receipt_only = browser_navigation is not None
+    initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"
 
     record = Run(
         id=uuid4(),
@@ -451,7 +649,7 @@ async def create_run(
         agent_id=version.agent_id,
         agent_version_id=version.id,
         build_id=build.id,
-        status="QUEUED",
+        status=initial_status,
         input_reference=input_reference,
         runtime_configuration=runtime,
         memory_mb=runtime["memory_mb"],
@@ -465,33 +663,34 @@ async def create_run(
     )
     session.add(record)
     await session.flush()
-    session.add(
-        RunCommandOutbox(
-            organization_id=record.organization_id,
-            project_id=record.project_id,
-            run_id=record.id,
-            command="START",
-            topic="rdc.run.requested.v1",
-            payload={
-                "schema_version": "1",
-                "run_id": str(record.id),
-                "organization_id": str(record.organization_id),
-                "project_id": str(record.project_id),
-                "agent_id": str(record.agent_id),
-                "agent_version_id": str(record.agent_version_id),
-                "build_id": str(record.build_id),
-                "runtime": runtime,
-            },
-            status="PENDING",
-            attempts=0,
-            available_at=now,
+    if not navigation_receipt_only:
+        session.add(
+            RunCommandOutbox(
+                organization_id=record.organization_id,
+                project_id=record.project_id,
+                run_id=record.id,
+                command="START",
+                topic="rdc.run.requested.v1",
+                payload={
+                    "schema_version": "1",
+                    "run_id": str(record.id),
+                    "organization_id": str(record.organization_id),
+                    "project_id": str(record.project_id),
+                    "agent_id": str(record.agent_id),
+                    "agent_version_id": str(record.agent_version_id),
+                    "build_id": str(record.build_id),
+                    "runtime": runtime,
+                },
+                status="PENDING",
+                attempts=0,
+                available_at=now,
+            )
         )
-    )
     await append_run_event(
         session,
         run=record,
         event_type="run.status",
-        payload={"previous_status": None, "status": "QUEUED"},
+        payload={"previous_status": None, "status": initial_status},
     )
     snapshot = json_run_snapshot(record)
     session.add(
@@ -515,7 +714,11 @@ async def create_run(
         project_id=record.project_id,
         actor_type="user",
         actor_id=str(user_id),
-        action="run.queued",
+        action=(
+            "run.browser_navigation_intent_recorded"
+            if navigation_receipt_only
+            else "run.queued"
+        ),
         resource_type="run",
         resource_id=str(record.id),
         request_id=request_id,
@@ -526,6 +729,12 @@ async def create_run(
             "memory_mb": record.memory_mb,
             "cpu_millis": record.cpu_millis,
             "timeout_seconds": record.timeout_seconds,
+            "browser_navigation_request_digest": (
+                browser_navigation_receipt["request_digest"]
+                if browser_navigation_receipt is not None
+                else None
+            ),
+            "browser_navigation_dispatch_enabled": False,
         },
     )
     return snapshot
