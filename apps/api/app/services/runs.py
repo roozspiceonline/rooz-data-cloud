@@ -259,18 +259,8 @@ def _browser_navigation_receipt(
         _normalize_browser_navigation_hostname(str(host))
         for host in allowed_hosts_raw
     }
-    max_pages = browser_policy["max_pages"]
-    max_actions = browser_policy["max_actions"]
-    navigation_timeout_seconds = browser_policy[
-        "navigation_timeout_seconds"
-    ]
-    max_dom_bytes = browser_policy["max_dom_bytes"]
-    for name, value in (
-        ("max_pages", max_pages),
-        ("max_actions", max_actions),
-        ("navigation_timeout_seconds", navigation_timeout_seconds),
-        ("max_dom_bytes", max_dom_bytes),
-    ):
+    def require_policy_int(name: str) -> int:
+        value = browser_policy.get(name)
         if isinstance(value, bool) or not isinstance(value, int):
             raise ApiError(
                 status_code=409,
@@ -280,6 +270,14 @@ def _browser_navigation_receipt(
                     + name
                 ),
             )
+        return value
+
+    max_pages = require_policy_int("max_pages")
+    max_actions = require_policy_int("max_actions")
+    navigation_timeout_seconds = require_policy_int(
+        "navigation_timeout_seconds"
+    )
+    max_dom_bytes = require_policy_int("max_dom_bytes")
     navigation_timeout_ms = navigation_timeout_seconds * 1000
 
     steps = browser_navigation.get("steps")
