@@ -338,7 +338,7 @@ def main() -> None:
         "test_phase1n_dataset_export_has_explicit_scope",
         "test_phase1n_dataset_read_and_export_routes_are_bounded",
         "test_phase1n_dataset_service_enforces_export_bounds_and_audit",
-        "test_phase1n_final_foundation_status_is_explicit_and_fail_closed",
+        "test_phase1n_dataset_status_remains_explicit_and_fail_closed",
     ]:
         require(marker in final_tests, "final Phase 1N test missing: " + marker)
 
@@ -354,9 +354,6 @@ def main() -> None:
 
     main_source = read("apps/api/app/main.py")
     for marker in [
-        'version="0.14.0-phase1n"',
-        '"phase": "1N"',
-        '"status": "tenant-dataset-durable-results"',
         '"dataset_item_read_enabled": True',
         '"dataset_bounded_export_enabled": True',
         '"dataset_public_export_enabled": False',
@@ -364,6 +361,26 @@ def main() -> None:
         '"untrusted_agent_execution_enabled": False',
     ]:
         require(marker in main_source, "final API status guard missing: " + marker)
+
+    accepted_successors = [
+        (
+            'version="0.14.0-phase1n"',
+            '"phase": "1N"',
+            '"status": "tenant-dataset-durable-results"',
+        ),
+        (
+            'version="0.15.0-phase1o"',
+            '"phase": "1O"',
+            '"status": "tenant-key-value-store-versioned-state"',
+        ),
+    ]
+    require(
+        any(
+            all(marker in main_source for marker in status_markers)
+            for status_markers in accepted_successors
+        ),
+        "Phase 1N compatibility status is not an approved successor state",
+    )
 
     print("Phase 1N final Dataset verification: PASS")
     print("  protocol digest parity: PASS")
