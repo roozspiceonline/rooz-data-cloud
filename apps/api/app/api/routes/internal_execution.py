@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
@@ -33,6 +33,10 @@ from ...services.execution_plane import (
     worker_summary,
 )
 from ...services.storage_delivery import issue_build_source_download_grant
+from ...services.worker_key_value_store import (
+    mutate_worker_key_value_record,
+    read_worker_key_value_records,
+)
 from ..internal_dependencies import (
     LeaseAccess,
     WorkerContext,
@@ -207,6 +211,48 @@ async def append_worker_dataset_items_route(
     result = DatasetAppendResult(
         receipt=dataset_append_receipt_summary(outcome.receipt),
         replayed=outcome.replayed,
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
+
+@router.post("/leases/{lease_id}/kv-read")
+async def read_worker_key_value_records_route(
+    payload: Annotated[object, Body()],
+    request: Request,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await read_worker_key_value_records(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload,
+    )
+    return success_payload(request, result)
+
+
+@router.post(
+    "/leases/{lease_id}/kv-mutate",
+    status_code=status.HTTP_201_CREATED,
+)
+async def mutate_worker_key_value_record_route(
+    payload: Annotated[object, Body()],
+    request: Request,
+    response: Response,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await mutate_worker_key_value_record(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload,
+        request_id=request_id(request),
+    )
+    response.status_code = (
+        status.HTTP_200_OK
+        if result.replayed
+        else status.HTTP_201_CREATED
     )
     return success_payload(request, result.model_dump(mode="json"))
 

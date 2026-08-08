@@ -69,3 +69,30 @@ For every mutation:
 Do not add worker KV RLS, worker mutation routes, Agent/Chromium database
 credentials or Agent/Chromium object-storage credentials in Increment 3.
 Increment 4 owns the worker path.
+## Increment 4 worker state
+
+The worker KV path remains disabled unless the sandbox master gate is in
+canary mode, `RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED=true`, the
+immutable Agent manifest declares `keyValueStore=true`, the configured
+worker carries `KV_ACCESS`, and the request is bound to an ACTIVE,
+unexpired `RUN_START` lease.
+
+Increment 4 rejects Dataset+KV and controlled-browser+KV composition in
+one canary Run.
+
+Read handling:
+- only the RUN-scoped `default` store is visible;
+- `_rdc_kv_read` is removed before Agent execution;
+- at most 16 unique safe logical keys are accepted;
+- total returned decoded bytes are capped at 256 KiB;
+- the control plane verifies stored SHA-256 and size before returning data;
+- object keys and storage/database credentials are never returned.
+
+Mutation handling:
+- only successful Agent execution is eligible for mutation forwarding;
+- output must be `rdc.kv-worker-output/v1`;
+- at most four canonical `rdc.kv-write/v1` mutations are forwarded;
+- Increment 3 persistence is reused; there is no alternate SQL/storage path;
+- failures stop the Run closed;
+- multiple mutations are sequential/idempotent, not one exposed
+  multi-record transaction.

@@ -101,3 +101,36 @@ remains disabled until Increment 4. Agent and Chromium receive neither
 PostgreSQL nor object-storage credentials.
 
 General untrusted Agent execution remains release-blocked.
+## Increment 4 worker controls
+
+### Credential escape
+
+The Agent receives no PostgreSQL URL, worker token, lease token, S3
+access key, S3 secret, KV object key or presigned KV object URL. The
+trusted control plane performs storage access.
+
+### Lease replay / confused deputy
+
+Internal KV routes require the normal worker bearer credential and the
+exact ACTIVE, unexpired RUN_START lease token. Worker RLS independently
+binds visible/mutable KV rows to that worker's matching Run lease.
+
+### Read amplification
+
+Read intent is digest-bound to the immutable lease snapshot, limited to
+16 safe unique keys and capped at 256 KiB decoded data.
+
+### Mutation smuggling
+
+The worker accepts mutations only from strict
+`rdc.kv-worker-output/v1` after successful Agent execution. At most four
+canonical `rdc.kv-write/v1` mutations are forwarded, and every mutation
+still passes Increment 3 idempotency, expected-version, quota, tombstone
+and immutable-history controls.
+
+### Capability composition
+
+Increment 4 rejects Dataset+KV and controlled-browser+KV in the same
+canary Run, keeping the new persistence surface isolated.
+
+General untrusted Agent execution remains release-blocked.

@@ -114,3 +114,37 @@ never used as an object path. DELETE appends a tombstone version and preserves
 historical object-backed versions.
 
 Increment 4 remains responsible for the controlled worker KV path.
+## Increment 4 — controlled worker KV path
+
+Increment 4 enables a lease-scoped trusted-worker mediation path behind
+the independent `RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED=false` gate.
+
+```text
+Worker KV canary gate                 false by default
+Worker capability                     KV_ACCESS required
+Lease                                 ACTIVE + unexpired + RUN_START
+Store                                 RUN-scoped "default" only
+Pre-run reads                         <= 16 keys / <= 256 KiB total
+Post-run mutations                    <= 4 / rdc.kv-write/v1
+Dataset + KV in one canary Run        prohibited
+Controlled browser + KV               prohibited
+Agent direct PostgreSQL               prohibited
+Agent direct object-storage creds     prohibited
+Worker/lease token in Agent           prohibited
+Public KV reads/listing               deferred to Increment 5
+General untrusted Agent execution     release-blocked
+```
+
+A Run may reserve `_rdc_kv_read` in its immutable inline input. The
+trusted worker validates that intent, removes it before Agent execution,
+and injects only bounded `_rdc_kv` values. PostgreSQL credentials, S3
+credentials, object keys, worker tokens and lease tokens are never
+injected into the Agent.
+
+A KV-enabled Agent returns `rdc.kv-worker-output/v1`. After a successful
+Agent exit, the worker validates the envelope and forwards at most four
+canonical mutations through the hidden lease-scoped control-plane API.
+Each mutation reuses Increment 3 optimistic concurrency, idempotency,
+quota, immutable-history and server-generated object-key controls.
+Multi-mutation output is sequential and intentionally not exposed as a
+multi-record transaction.

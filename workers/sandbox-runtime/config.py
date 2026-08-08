@@ -55,6 +55,7 @@ class SandboxWorkerConfig:
     browser_enabled: bool
     browser_live_navigation_enabled: bool
     dataset_writes_enabled: bool
+    key_value_store_enabled: bool
     browser_max_pages: int
     browser_max_actions: int
     browser_navigation_timeout_seconds: int
@@ -174,6 +175,10 @@ class SandboxWorkerConfig:
             ),
             dataset_writes_enabled=_env_bool(
                 "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED",
+                False,
+            ),
+            key_value_store_enabled=_env_bool(
+                "RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED",
                 False,
             ),
             browser_max_pages=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_PAGES", "1")),

@@ -216,6 +216,42 @@ def verify_protocol() -> None:
             "worker protocol gained side effect: " + forbidden,
         )
 
+    control_read = load_module(
+        "apps/api/app/kv_worker_protocol.py",
+        "rdc_phase1o_control_kv_worker_protocol",
+    )
+    sys.modules["kv_protocol"] = worker
+    worker_read = load_module(
+        "workers/sandbox-runtime/kv_worker_protocol.py",
+        "rdc_phase1o_worker_kv_worker_protocol",
+    )
+    read_request = {
+        "schema_version": "rdc.kv-worker-read/v1",
+        "keys": ["crawler.state", "cursor.next"],
+    }
+    control_read_value = control_read.validate_kv_read_request(read_request)
+    worker_read_value = worker_read.validate_kv_read_request(read_request)
+    require(
+        control_read_value.request_digest
+        == worker_read_value["request_digest"],
+        "worker/control KV read digest drifted",
+    )
+    require(
+        control_read_value.keys == worker_read_value["keys"],
+        "worker/control KV read keys drifted",
+    )
+    worker_output = worker_read.validate_kv_worker_output(
+        {
+            "schema_version": "rdc.kv-worker-output/v1",
+            "result": {"ok": True},
+            "mutations": [json_a],
+        }
+    )
+    require(
+        worker_output["mutations"][0]["key"] == "crawler.state",
+        "worker KV output normalization changed",
+    )
+
     worker_original = read("workers/sandbox-runtime/kv_protocol.py")
     for marker in [
         "persisted: bool = False",
@@ -437,6 +473,132 @@ def verify_increment3() -> None:
         )
 
 
+
+def verify_increment4() -> None:
+    api_config = read("apps/api/app/core/config.py")
+    worker_config = read("workers/sandbox-runtime/config.py")
+    env = read(".env.example")
+    compose = read("docker-compose.yml")
+    for source, marker in [
+        (api_config, "sandbox_canary_key_value_store_enabled: bool = False"),
+        (worker_config, "key_value_store_enabled: bool"),
+        (env, "RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED=false"),
+        (compose, "RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED"),
+    ]:
+        require(marker in source, "Increment 4 KV gate missing: " + marker)
+
+    schemas = read("apps/api/app/execution_schemas.py")
+    for marker in [
+        '"KV_ACCESS"',
+        "key_value_store_enabled: bool = False",
+        "max_length=7",
+    ]:
+        require(marker in schemas, "Increment 4 schema missing: " + marker)
+
+    migration = read(
+        "apps/api/migrations/versions/20260808_0014_kv_worker_rls.py"
+    )
+    for marker in [
+        'revision: str = "20260808_0014"',
+        'down_revision: str | None = "20260808_0013"',
+        "key_value_stores_execution_worker_select",
+        "key_value_records_execution_worker_update",
+        "key_value_record_versions_execution_worker_insert",
+        "key_value_mutation_receipts_execution_worker_insert",
+        "security.rdc_worker_is_active()",
+        "security.rdc_current_worker_id()",
+        "lease.status = 'ACTIVE'",
+        "lease.expires_at > now()",
+        "lease.work_kind = 'RUN_START'",
+        "store.scope = 'RUN'",
+    ]:
+        require(marker in migration, "Increment 4 RLS missing: " + marker)
+    require("FOR DELETE" not in migration, "Worker KV DELETE RLS was enabled")
+
+    routes = read("apps/api/app/api/routes/internal_execution.py")
+    for marker in [
+        '"/leases/{lease_id}/kv-read"',
+        '"/leases/{lease_id}/kv-mutate"',
+        "Depends(require_lease_access)",
+    ]:
+        require(marker in routes, "Increment 4 route missing: " + marker)
+
+    execution = read("apps/api/app/services/execution_plane.py")
+    for marker in [
+        "key_value_store_capability(",
+        "key_value_store_enabled=kv_runtime_enabled",
+        "dataset and kv_runtime_enabled",
+        "browser and kv_runtime_enabled",
+    ]:
+        require(marker in execution, "Increment 4 claim control missing: " + marker)
+
+    service = read("apps/api/app/services/worker_key_value_store.py")
+    for marker in [
+        '"rdc.kv-worker-capability/v1"',
+        "async def read_worker_key_value_records(",
+        "async def mutate_worker_key_value_record(",
+        "create_run_key_value_store(",
+        "mutate_key_value_record(",
+        "object_storage.read_object(",
+    ]:
+        require(marker in service, "Increment 4 service missing: " + marker)
+
+    worker = read("workers/sandbox-runtime/worker.py")
+    for marker in [
+        "validate_kv_read_request(",
+        "validate_kv_read_result(",
+        "validate_kv_worker_output(",
+        "client.kv_read(",
+        "client.kv_mutate(",
+        "KV_READ_FAILED",
+        "KV_MUTATION_FAILED",
+        "dataset and kv_runtime_enabled",
+        "browser and kv_runtime_enabled",
+    ]:
+        require(marker in worker, "Increment 4 worker missing: " + marker)
+
+    run_call = worker.split("code, output_path, log_path = run_agent(", 1)[1]
+    run_call = run_call.split(")", 1)[0].casefold()
+    for forbidden in [
+        "lease_token",
+        "worker_token",
+        "database",
+        "s3_access",
+        "s3_secret",
+    ]:
+        require(
+            forbidden not in run_call,
+            "Agent execution gained credential material: " + forbidden,
+        )
+
+    protocol = read(
+        "workers/sandbox-runtime/kv_worker_protocol.py"
+    ).casefold()
+    for forbidden in [
+        "psycopg",
+        "asyncpg",
+        "postgresql://",
+        "boto3",
+        "requests",
+        "httpx",
+        "socket.",
+        "subprocess",
+        "docker.sock",
+    ]:
+        require(
+            forbidden not in protocol,
+            "worker KV boundary gained side effect: " + forbidden,
+        )
+
+    tests = read("apps/api/tests/test_phase1o_worker_kv_contracts.py")
+    for marker in [
+        "test_phase1o_increment4_worker_gate_defaults_off",
+        "test_phase1o_increment4_read_contract_is_bounded",
+        "test_phase1o_increment4_rls_is_active_run_lease_scoped",
+        "test_phase1o_increment4_worker_validates_before_forwarding",
+    ]:
+        require(marker in tests, "Increment 4 test missing: " + marker)
+
 def verify_docs_and_baseline() -> None:
     for path, markers in {
         "docs/phase1o/README.md": [
@@ -491,14 +653,18 @@ def main() -> None:
     verify_protocol()
     verify_increment2_baseline()
     verify_increment3()
+    verify_increment4()
     verify_docs_and_baseline()
-    print("Phase 1O Increment 3 KV record verification: PASS")
+    print("Phase 1O Increment 4 worker KV verification: PASS")
     print("  contract: rdc.kv-write/v1")
     print("  KV metadata + record persistence + RLS: ENABLED")
     print("  object-backed control-plane SET/DELETE: ENABLED")
     print("  optimistic concurrency + idempotency: ENABLED")
     print("  immutable version/tombstone lineage: ENABLED")
-    print("  worker KV path: DISABLED")
+    print("  worker KV path: CONTROLLED / FALSE-BY-DEFAULT CANARY")
+    print("  worker KV reads: <=16 keys / <=256 KiB")
+    print("  worker KV post-run mutations: <=4")
+    print("  Dataset+KV / browser+KV composition: PROHIBITED")
     print("  Agent/Chromium DB or object credentials: PROHIBITED")
 
 
