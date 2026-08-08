@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from browser_egress_policy import BrowserEgressPolicy
 from browser_executor import BrowserRuntimeError, run_browser_self_test
 from browser_navigation_contract import (
     BrowserNavigationContractError,
@@ -95,17 +96,24 @@ def _worker_browser_policy(
 def _require_blocked_browser_navigation_receipt(
     input_reference: dict[str, object],
     *,
+    egress_policy: EgressPolicy,
     browser_policy: BrowserPolicy,
 ) -> None:
     navigation = input_reference.get("browser_navigation")
     receipt = input_reference.get("browser_navigation_receipt")
     stored_policy = input_reference.get("browser_policy")
     stored_policy_digest = input_reference.get("browser_policy_digest")
+    stored_egress_policy = input_reference.get("browser_egress_policy")
+    stored_egress_digest = input_reference.get(
+        "browser_egress_policy_digest"
+    )
     if (
         not isinstance(navigation, dict)
         or not isinstance(receipt, dict)
         or not isinstance(stored_policy, dict)
         or not isinstance(stored_policy_digest, str)
+        or not isinstance(stored_egress_policy, dict)
+        or not isinstance(stored_egress_digest, str)
     ):
         raise SandboxPolicyError(
             "Phase 1M browser navigation claim lacks immutable receipts."
@@ -118,6 +126,18 @@ def _require_blocked_browser_navigation_receipt(
         raise SandboxPolicyError(
             "Phase 1M browser policy digest does not match worker policy."
         )
+    browser_egress_policy = BrowserEgressPolicy.create(
+        egress_policy
+    )
+    if stored_egress_policy != browser_egress_policy.as_dict():
+        raise SandboxPolicyError(
+            "Phase 1M stored browser egress policy does not match worker policy."
+        )
+    if stored_egress_digest != browser_egress_policy.digest:
+        raise SandboxPolicyError(
+            "Phase 1M browser egress policy digest does not match worker policy."
+        )
+
     try:
         normalized = validate_browser_navigation_plan(
             navigation,
@@ -133,6 +153,7 @@ def _require_blocked_browser_navigation_receipt(
         "request_schema_version": "rdc.browser/v2",
         "request_digest": normalized["request_digest"],
         "browser_policy_digest": browser_policy.digest,
+        "browser_egress_policy_digest": browser_egress_policy.digest,
         "execution_enabled": False,
         "dispatch_enabled": False,
         "browser_network": "none",
@@ -281,6 +302,7 @@ def _require_canary_activation(
         if "browser_navigation" in input_reference:
             _require_blocked_browser_navigation_receipt(
                 input_reference,
+                egress_policy=egress_policy,
                 browser_policy=browser_policy,
             )
         browser_plan = input_reference.get("browser")
