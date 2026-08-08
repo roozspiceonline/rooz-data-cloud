@@ -1,23 +1,47 @@
 # Phase 1N Operator Runbook
 
-## Increment 1 state
+## Increment 2 state
 
-The Dataset protocol exists for validation and contract development only.
-
-Do not enable or advertise Dataset persistence from this increment.
+Dataset metadata persistence and authenticated metadata APIs are available.
+Dataset item writes remain intentionally disabled.
 
 Expected state:
 
 ```text
 rdc.dataset-append/v1           available
-database Dataset tables         absent
-Dataset REST routes             absent
+control.datasets                present + RLS
+control.dataset_items           present + RLS
+Dataset metadata REST routes    available
+Dataset item append route       absent
 worker Dataset append           absent
 Agent database credentials      absent
 direct Agent Postgres access    absent
 ```
 
-## Safe request limits
+## Metadata routes
+
+- `POST /api/v1/runs/{run_id}/datasets`
+- `GET /api/v1/projects/{project_id}/datasets`
+- `GET /api/v1/datasets/{dataset_id}`
+
+Dataset creation derives organization/project/Run/Agent/AgentVersion lineage
+from the already-authorized Run. Ownership identifiers are not accepted in the
+request body.
+
+## RLS requirements
+
+Both `control.datasets` and `control.dataset_items` must have row-level
+security enabled and tenant policies tied to:
+
+- `security.rdc_current_org_id()`
+- `security.rdc_has_org_membership(organization_id)`
+
+The Dataset resolver is `security.rdc_dataset_org(uuid)`.
+
+There is no worker Dataset RLS policy in Increment 2 because worker writes are
+not yet activated.
+
+## Safe protocol limits reserved for Increment 3 append
 
 - items per append: 1–100
 - encoded item bytes: <= 65,536
@@ -29,16 +53,17 @@ direct Agent Postgres access    absent
 
 Stop Phase 1N work if an implementation:
 
-- accepts organization/project/Run ownership from the append payload
+- accepts organization/project/Run ownership from Dataset creation payloads
 - gives Agent or browser containers direct PostgreSQL credentials
+- adds a worker Dataset RLS policy before the controlled append protocol
 - permits cross-project Dataset access
-- permits arbitrary item mutation
-- accepts unbounded batches or items
-- permits retry duplication under the same Dataset/idempotency key
-- activates Dataset worker writes before RLS/idempotency/quota guarantees exist
+- permits arbitrary DatasetItem mutation
+- activates Dataset item writes before idempotency/quota/sequence guarantees
+- weakens the Phase 1M network isolation model
 
 ## Next increment
 
-Add the PostgreSQL Dataset/DatasetItem model, migration, mandatory RLS policies,
-authenticated control-plane API, and tests. Persistence must remain
-control-plane mediated.
+Add idempotent Dataset item append with a Dataset-scoped idempotency receipt,
+transactional sequence allocation, record/byte quotas, canonical request
+digest binding, and replay-safe behavior. Worker writes remain disabled until
+Increment 4.

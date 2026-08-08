@@ -9,6 +9,7 @@ from starlette.responses import Response
 
 from .api.routes.agents import router as agents_router
 from .api.routes.builds_secrets import router as builds_secrets_router
+from .api.routes.datasets import router as datasets_router
 from .api.routes.execution import router as execution_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
@@ -121,6 +122,7 @@ v1_router = APIRouter(prefix="/api/v1")
 v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
+v1_router.include_router(datasets_router)
 v1_router.include_router(runs_router)
 v1_router.include_router(execution_router)
 v1_router.include_router(storage_router)

@@ -7,10 +7,7 @@ The Phase 1N target is an append-only Dataset abstraction for Run results.
 
 ## Increment 1 — protocol foundation
 
-Increment 1 defines the request contract only. It does **not** enable Dataset
-persistence, Dataset APIs, or worker Dataset writes.
-
-Contract:
+Increment 1 established:
 
 - `rdc.dataset-append/v1`
 - strict top-level fields
@@ -19,25 +16,37 @@ Contract:
 - maximum encoded item size: 65,536 bytes
 - maximum encoded batch size: 262,144 bytes
 - maximum JSON nesting depth: 32
-- NaN and Infinity rejected
-- non-JSON values rejected
+- NaN and Infinity rejection
 - canonical JSON SHA-256 request digest
-- append-only semantics
 
-The request carries no organization, project, Run, Agent or user ownership
-fields. Ownership and lineage will be derived exclusively from authenticated
-server-side resources when persistence is introduced.
+## Increment 2 — Dataset metadata persistence + RLS
 
-Dataset item content is application data only. Keys inside an item never grant
-security authority, even if a record happens to contain names such as
-`organization_id`, `project_id`, or `run_id`.
+Increment 2 adds the persistence boundary without enabling item append:
+
+- `control.datasets`
+- `control.dataset_items`
+- Dataset lineage bound to organization, project, Run, Agent and AgentVersion
+- organization/project ownership derived from the authorized Run
+- unique Dataset name per Run
+- Dataset item sequence uniqueness per Dataset
+- server-side tenancy triggers
+- PostgreSQL RLS for both Dataset tables
+- `security.rdc_dataset_org(uuid)` hidden-resource resolver
+- authenticated Dataset metadata create/list/get API
+- `dataset.create` and `dataset.read` permission scopes
+- audit event on Dataset creation
+
+The client may provide only the Dataset name when creating metadata. It cannot
+provide organization, project, Run, Agent or AgentVersion ownership fields.
 
 ## Current capability boundary
 
 ```text
 Dataset request contract       available
-Dataset persistence            disabled
-Dataset API                     disabled
+Dataset metadata persistence   available
+Dataset metadata API           available
+DatasetItem persistence table  available + RLS protected
+Dataset item append API        disabled
 worker Dataset writes          disabled
 Agent direct Postgres access   prohibited
 Dataset item mutation          unsupported
@@ -45,14 +54,18 @@ KV Store                        out of scope (Phase 1O)
 Request Queue                   out of scope (Phase 1P)
 ```
 
+`DatasetItem` exists now so tenancy/RLS can be proven before writes are
+activated. No public or worker path inserts Dataset items in Increment 2.
+
 ## Planned increments
 
 1. Protocol foundation and CI/security verifier.
-2. PostgreSQL Dataset/DatasetItem model, migration, RLS and authenticated API.
+2. PostgreSQL Dataset/DatasetItem model, migration, RLS and authenticated
+   metadata API.
 3. Idempotent append transaction, quotas, monotonic item sequence numbers and
-   immutable Run lineage.
+   immutable request-digest lineage.
 4. Controlled worker append path with no Agent database credentials.
-5. Paginated reads, bounded export, audit events and final hardening.
+5. Paginated item reads, bounded export, audit expansion and final hardening.
 
-PR governance remains the same as previous RDC phases: the Phase 1N
-implementation PR remains DRAFT until the full phase is exact-head green.
+PR governance remains unchanged: the Phase 1N implementation PR remains DRAFT
+until the full phase is exact-head green.

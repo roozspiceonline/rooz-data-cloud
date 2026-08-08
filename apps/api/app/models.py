@@ -676,6 +676,128 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "datasets"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "name",
+            name="uq_datasets_run_name",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agent_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(
+        String(128),
+        nullable=False,
+        default="default",
+    )
+    item_count: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    total_bytes: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+    )
+    next_sequence: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+    )
+
+
+class DatasetItem(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "dataset_items"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id",
+            "sequence",
+            name="uq_dataset_items_dataset_sequence",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    dataset_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    item_json: Mapped[dict[str, object]] = mapped_column(
+        JSONB,
+        nullable=False,
+    )
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class RunEvent(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "run_events"
     __table_args__ = (

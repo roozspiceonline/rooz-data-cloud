@@ -18,28 +18,36 @@ hostile Agent-provided records must be assumed.
 
 ## Increment 1 mitigations
 
-- strict `rdc.dataset-append/v1` top-level contract
-- no caller-controlled ownership fields
-- idempotency key required
-- canonical request digest
-- 100-item batch ceiling
-- 65,536-byte item ceiling
-- 262,144-byte batch ceiling
-- JSON nesting depth ceiling
-- finite JSON numbers only
-- JSON-object items only
-- no persistence or worker write activation yet
+- strict `rdc.dataset-append/v1`
+- bounded JSON-object batches
+- canonical SHA-256 request digest
+- required idempotency key
+- finite JSON values only
 
-## Mandatory before persistence activation
+## Increment 2 mitigations
 
-- Dataset and DatasetItem tenant columns derived server-side
-- PostgreSQL RLS policies for organization/project scope
-- unique idempotency constraint scoped to the Dataset
-- monotonic append sequence allocated transactionally
-- record-count and total-byte quotas enforced before commit
-- immutable Run/AgentVersion lineage
-- authenticated read permissions
-- bounded cursor pagination
+- Dataset ownership is derived from the authenticated Run
+- Dataset request body carries no tenant or lineage identifiers
+- `control.datasets` and `control.dataset_items` use PostgreSQL RLS
+- Dataset tenancy trigger binds Run, Agent and AgentVersion lineage
+- DatasetItem tenancy trigger binds Dataset, Run, project and organization
+- hidden-resource lookup uses `security.rdc_dataset_org(uuid)`
+- Dataset metadata API requires `dataset.create` / `dataset.read`
+- Dataset creation writes an audit event
+- no DatasetItem append route exists
+- no worker Dataset RLS policy exists
+- Agent/Chromium containers receive no database credentials
+
+## Mandatory before DatasetItem append activation
+
+- Dataset-scoped unique idempotency receipt
+- request digest stored and replay-checked
+- monotonic sequence allocation in the same transaction as inserts
+- record-count quota enforced before commit
+- total-byte quota enforced before commit
+- batch/item protocol limits revalidated server-side
+- exact replay returns the original receipt without duplicate rows
+- mismatched replay under the same idempotency key fails closed
+- append audit event
 - no arbitrary UPDATE of Dataset items
-- audit event for Dataset creation and append
 - no direct Agent/Chromium database network path
