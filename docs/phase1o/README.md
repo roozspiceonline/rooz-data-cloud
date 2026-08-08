@@ -148,3 +148,21 @@ Each mutation reuses Increment 3 optimistic concurrency, idempotency,
 quota, immutable-history and server-generated object-key controls.
 Multi-mutation output is sequential and intentionally not exposed as a
 multi-record transaction.
+
+## Increment 5 — authenticated reads, listing and phase integration
+
+Current values can be read only through authenticated `kv.read` store routes.
+`GET /key-value-stores/{store_id}/records/{key}` returns the current live value
+and its version, digest, content type and decoded size. Deleted records are not
+readable through this surface and object-storage keys are never returned.
+
+`GET /key-value-stores/{store_id}/records` lists live records in bounded,
+lexicographic key order. It accepts a restricted-safe `prefix`, a limit of at
+most 200, and a signed cursor bound to that exact store. A cursor from another
+store, tampered cursor, or malformed prefix is rejected. Reads verify persisted
+object size and SHA-256 before decoding JSON, UTF-8 text, or canonical base64.
+
+The foundation status now advertises Phase 1O, versioned KV state, signed KV
+record cursors, RLS, and the false-by-default controlled worker gate. There is
+no anonymous/public KV access and general untrusted Agent execution remains
+release-blocked.

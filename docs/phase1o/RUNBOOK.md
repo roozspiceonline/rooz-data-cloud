@@ -96,3 +96,14 @@ Mutation handling:
 - failures stop the Run closed;
 - multiple mutations are sequential/idempotent, not one exposed
   multi-record transaction.
+
+## Increment 5 read/list state
+
+KV reads and record listing require `kv.read` on the exact store. Returned
+values include only the logical key, current version and content provenance;
+never return server object keys, worker tokens, lease tokens or credentials.
+
+Reject malformed, tampered, non-canonical or cross-store pagination cursors.
+Listing accepts only the protocol-safe key prefix grammar, limits pages to 200
+records, excludes tombstones, and verifies value size and SHA-256 before
+decoding a returned object. Public or anonymous KV reads remain prohibited.

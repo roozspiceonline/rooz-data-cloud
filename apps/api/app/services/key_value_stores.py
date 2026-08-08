@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import json
 from contextlib import suppress
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -16,6 +19,7 @@ from ..kv_mutation_protocol import (
 from ..kv_schemas import (
     CreateKeyValueStoreRequest,
     KeyValueMutationReceiptSummary,
+    KeyValueRecordSummary,
     KeyValueStoreSummary,
 )
 from ..models import (
@@ -64,6 +68,68 @@ def key_value_mutation_receipt_summary(
             "replayed": outcome.replayed,
             "created_at": record.created_at,
         }
+    )
+
+
+async def key_value_record_summary(
+    record: KeyValueRecord,
+    session: AsyncSession,
+) -> KeyValueRecordSummary:
+    version = await session.scalar(
+        select(KeyValueRecordVersion).where(
+            KeyValueRecordVersion.record_id == record.id,
+            KeyValueRecordVersion.version == record.current_version,
+            KeyValueRecordVersion.tombstone.is_(False),
+        )
+    )
+    if (
+        version is None
+        or version.object_key is None
+        or version.content_type is None
+        or version.encoding is None
+        or version.value_sha256 is None
+    ):
+        raise ApiError(
+            status_code=500,
+            code="KV_STORAGE_LINEAGE_INVALID",
+            message="The Key-Value record storage lineage is invalid.",
+        )
+    try:
+        raw = await object_storage.read_object(
+            object_key=version.object_key,
+            max_bytes=version.size_bytes,
+        )
+    except StorageBackendError as exc:
+        raise ApiError(status_code=503, code=exc.code, message=exc.message) from exc
+    if len(raw) != version.size_bytes or hashlib.sha256(raw).hexdigest() != version.value_sha256:
+        raise ApiError(
+            status_code=500,
+            code="KV_STORAGE_INTEGRITY_FAILED",
+            message="The Key-Value record failed storage integrity verification.",
+        )
+    try:
+        if version.encoding == "json":
+            value: object = json.loads(raw.decode("utf-8"))
+        elif version.encoding == "utf8":
+            value = raw.decode("utf-8")
+        elif version.encoding == "base64":
+            value = base64.b64encode(raw).decode("ascii")
+        else:
+            raise ValueError("unsupported encoding")
+    except (UnicodeError, ValueError) as exc:
+        raise ApiError(
+            status_code=500,
+            code="KV_STORAGE_DECODE_FAILED",
+            message="The Key-Value record could not be safely decoded.",
+        ) from exc
+    return KeyValueRecordSummary(
+        key=record.key,
+        version=record.current_version,
+        content_type=version.content_type,
+        encoding=version.encoding,
+        value_sha256=version.value_sha256,
+        size_bytes=version.size_bytes,
+        value=value,
     )
 
 
@@ -547,3 +613,44 @@ async def list_key_value_stores(
         ).all()
     )
     return rows[:limit], len(rows) > limit
+
+
+async def list_key_value_records(
+    session: AsyncSession,
+    *,
+    store_id: UUID,
+    prefix: str | None,
+    after_key: str | None,
+    limit: int,
+) -> tuple[list[KeyValueRecord], bool]:
+    statement = select(KeyValueRecord).where(
+        KeyValueRecord.store_id == store_id,
+        KeyValueRecord.deleted.is_(False),
+    )
+    if prefix is not None:
+        statement = statement.where(KeyValueRecord.key.startswith(prefix))
+    if after_key is not None:
+        statement = statement.where(KeyValueRecord.key > after_key)
+    rows = list(
+        (await session.scalars(statement.order_by(KeyValueRecord.key).limit(limit + 1))).all()
+    )
+    return rows[:limit], len(rows) > limit
+
+
+async def get_key_value_record(
+    session: AsyncSession, *, store_id: UUID, key: str
+) -> KeyValueRecord:
+    record = await session.scalar(
+        select(KeyValueRecord).where(
+            KeyValueRecord.store_id == store_id,
+            KeyValueRecord.key == key,
+            KeyValueRecord.deleted.is_(False),
+        )
+    )
+    if record is None:
+        raise ApiError(
+            status_code=404,
+            code="KV_RECORD_NOT_FOUND",
+            message="The Key-Value record does not exist.",
+        )
+    return record

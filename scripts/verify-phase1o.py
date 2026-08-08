@@ -604,6 +604,7 @@ def verify_docs_and_baseline() -> None:
         "docs/phase1o/README.md": [
             "rdc.kv-write/v1",
             "Increment 3 — versioned records + object-backed values",
+            "Increment 5 — authenticated reads, listing and phase integration",
             "Worker KV mutation                    disabled",
             "Agent direct PostgreSQL               prohibited",
         ],
@@ -612,6 +613,7 @@ def verify_docs_and_baseline() -> None:
             "Increment 3 mutation state",
             "same idempotency key + different digest",
             "weakens Phase 1N Dataset controls",
+            "Increment 5 read/list state",
         ],
         "docs/phase1o/THREAT_MODEL.md": [
             "Path traversal / object-key confusion",
@@ -635,17 +637,47 @@ def verify_docs_and_baseline() -> None:
         "Phase 1O verifier not chained",
     )
 
+    routes = read("apps/api/app/api/routes/key_value_stores.py")
+    for marker in [
+        '"/key-value-stores/{store_id}/records/{key}"',
+        '"/key-value-stores/{store_id}/records"',
+        'Depends(require_key_value_store_permission("kv.read"))',
+        "decode_key_value_record_cursor(",
+        "encode_key_value_record_cursor(",
+    ]:
+        require(marker in routes, "Increment 5 read route missing: " + marker)
+
+    pagination = read("apps/api/app/core/pagination.py")
+    for marker in [
+        "def encode_key_value_record_cursor(",
+        "def decode_key_value_record_cursor(",
+        '"kind": "key-value-records"',
+        'data.get("store_id") != str(store_id)',
+    ]:
+        require(marker in pagination, "Increment 5 cursor control missing: " + marker)
+
+    service = read("apps/api/app/services/key_value_stores.py")
+    for marker in [
+        "async def key_value_record_summary(",
+        "KV_STORAGE_INTEGRITY_FAILED",
+        "async def list_key_value_records(",
+        "KeyValueRecord.deleted.is_(False)",
+    ]:
+        require(marker in service, "Increment 5 read service missing: " + marker)
+
     main_source = read("apps/api/app/main.py")
     for marker in [
-        'version="0.14.0-phase1n"',
-        '"phase": "1N"',
-        '"status": "tenant-dataset-durable-results"',
-        '"dataset_public_export_enabled": False',
+        'version="0.15.0-phase1o"',
+        '"phase": "1O"',
+        '"status": "tenant-key-value-store-versioned-state"',
+        '"key_value_store_record_read_enabled": True',
+        '"key_value_store_record_cursor_signed": True',
+        '"key_value_store_public_access_enabled": False',
         '"untrusted_agent_execution_enabled": False',
     ]:
         require(
             marker in main_source,
-            "Phase 1N advertised baseline changed: " + marker,
+            "Phase 1O advertised status missing: " + marker,
         )
 
 
@@ -655,7 +687,7 @@ def main() -> None:
     verify_increment3()
     verify_increment4()
     verify_docs_and_baseline()
-    print("Phase 1O Increment 4 worker KV verification: PASS")
+    print("Phase 1O verification: PASS")
     print("  contract: rdc.kv-write/v1")
     print("  KV metadata + record persistence + RLS: ENABLED")
     print("  object-backed control-plane SET/DELETE: ENABLED")
@@ -664,6 +696,8 @@ def main() -> None:
     print("  worker KV path: CONTROLLED / FALSE-BY-DEFAULT CANARY")
     print("  worker KV reads: <=16 keys / <=256 KiB")
     print("  worker KV post-run mutations: <=4")
+    print("  authenticated current-value reads/listing: ENABLED")
+    print("  KV record pagination: SIGNED + STORE-BOUND")
     print("  Dataset+KV / browser+KV composition: PROHIBITED")
     print("  Agent/Chromium DB or object credentials: PROHIBITED")
 

@@ -1,17 +1,26 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
-from ...core.pagination import decode_cursor, encode_cursor, normalize_limit
+from ...core.pagination import (
+    decode_cursor,
+    decode_key_value_record_cursor,
+    encode_cursor,
+    encode_key_value_record_cursor,
+    normalize_limit,
+)
 from ...kv_schemas import CreateKeyValueStoreRequest
 from ...services.key_value_stores import (
     create_project_key_value_store,
     create_run_key_value_store,
+    get_key_value_record,
     key_value_mutation_receipt_summary,
+    key_value_record_summary,
     key_value_store_summary,
+    list_key_value_records,
     list_key_value_stores,
     mutate_key_value_record,
 )
@@ -149,6 +158,63 @@ async def get_key_value_store_route(
         request,
         key_value_store_summary(access.store).model_dump(mode="json"),
     )
+
+
+@router.get("/key-value-stores/{store_id}/records/{key}")
+async def get_key_value_record_route(
+    key: Annotated[
+        str,
+        Path(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"),
+    ],
+    request: Request,
+    access: Annotated[
+        KeyValueStoreAccess,
+        Depends(require_key_value_store_permission("kv.read")),
+    ],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    record = await get_key_value_record(db, store_id=access.store.id, key=key)
+    return success_payload(
+        request, (await key_value_record_summary(record, db)).model_dump(mode="json")
+    )
+
+
+@router.get("/key-value-stores/{store_id}/records")
+async def list_key_value_records_route(
+    request: Request,
+    access: Annotated[
+        KeyValueStoreAccess,
+        Depends(require_key_value_store_permission("kv.read")),
+    ],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    cursor: Annotated[str | None, Query()] = None,
+    prefix: Annotated[
+        str | None,
+        Query(max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$"),
+    ] = None,
+    limit: Annotated[int, Query()] = 100,
+) -> dict[str, object]:
+    position = decode_key_value_record_cursor(cursor, store_id=access.store.id)
+    records, has_more = await list_key_value_records(
+        db,
+        store_id=access.store.id,
+        prefix=prefix,
+        after_key=position.key if position is not None else None,
+        limit=normalize_limit(limit),
+    )
+    next_cursor = None
+    if has_more and records:
+        next_cursor = encode_key_value_record_cursor(store_id=access.store.id, key=records[-1].key)
+    return {
+        "data": [
+            (await key_value_record_summary(record, db)).model_dump(mode="json")
+            for record in records
+        ],
+        "meta": {
+            "request_id": request_id(request),
+            "page": {"next_cursor": next_cursor, "has_more": next_cursor is not None},
+        },
+    }
 
 
 @router.put("/key-value-stores/{store_id}/records")

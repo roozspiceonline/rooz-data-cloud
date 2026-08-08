@@ -36,6 +36,7 @@ class KeyValueStoreSummary(ORMModel):
     updated_at: datetime
     version: int
 
+
 class KeyValueMutationReceiptSummary(StrictModel):
     id: UUID
     store_id: UUID
@@ -52,3 +53,13 @@ class KeyValueMutationReceiptSummary(StrictModel):
     size_bytes: int
     replayed: bool
     created_at: datetime
+
+
+class KeyValueRecordSummary(StrictModel):
+    key: str
+    version: int
+    content_type: str
+    encoding: Literal["json", "utf8", "base64"]
+    value_sha256: str
+    size_bytes: int
+    value: object

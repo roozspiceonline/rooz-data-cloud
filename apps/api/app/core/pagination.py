@@ -23,6 +23,11 @@ class CursorPosition:
     resource_id: UUID
 
 
+@dataclass(frozen=True)
+class KeyValueRecordCursorPosition:
+    key: str
+
+
 def normalize_limit(limit: int) -> int:
     if not 1 <= limit <= 200:
         raise ApiError(
@@ -147,6 +152,56 @@ def decode_dataset_item_cursor(
         ):
             raise ValueError("Dataset item cursor binding is invalid")
         return DatasetItemCursorPosition(sequence=raw_sequence)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_key_value_record_cursor(*, store_id: UUID, key: str) -> str:
+    payload = json.dumps(
+        {
+            "kind": "key-value-records",
+            "key": key,
+            "store_id": str(store_id),
+            "v": 1,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    signature = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(payload + signature).decode().rstrip("=")
+
+
+def decode_key_value_record_cursor(
+    value: str | None, *, store_id: UUID
+) -> KeyValueRecordCursorPosition | None:
+    if value is None:
+        return None
+    if not value or len(value) > 512:
+        raise _invalid_cursor()
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode())
+        canonical = base64.urlsafe_b64encode(decoded).decode().rstrip("=")
+        if not hmac.compare_digest(canonical, value):
+            raise ValueError("cursor encoding is not canonical")
+        if len(decoded) <= hashlib.sha256().digest_size:
+            raise ValueError("cursor is too short")
+        payload = decoded[: -hashlib.sha256().digest_size]
+        supplied = decoded[-hashlib.sha256().digest_size :]
+        expected = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(supplied, expected):
+            raise ValueError("cursor signature mismatch")
+        data = json.loads(payload.decode())
+        key = data["key"]
+        if (
+            data.get("v") != 1
+            or data.get("kind") != "key-value-records"
+            or data.get("store_id") != str(store_id)
+            or not isinstance(key, str)
+            or not key
+        ):
+            raise ValueError("cursor binding is invalid")
+        return KeyValueRecordCursorPosition(key=key)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _invalid_cursor() from exc
 

@@ -156,3 +156,28 @@ def test_phase1o_increment3_worker_mutation_remains_disabled() -> None:
         "subprocess",
     ]:
         assert forbidden not in worker_lower
+
+
+def test_phase1o_increment5_authenticated_reads_are_store_bound() -> None:
+    paths = app.openapi()["paths"]
+    collection = "/api/v1/key-value-stores/{store_id}/records"
+    item = "/api/v1/key-value-stores/{store_id}/records/{key}"
+    assert "get" in paths[collection]
+    assert "get" in paths[item]
+
+    source = (
+        ROOT / "apps/api/app/api/routes/key_value_stores.py"
+    ).read_text(encoding="utf-8")
+    assert source.count('require_key_value_store_permission("kv.read")') >= 3
+    assert "decode_key_value_record_cursor(" in source
+    assert "encode_key_value_record_cursor(" in source
+
+    pagination = (ROOT / "apps/api/app/core/pagination.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"kind": "key-value-records"' in pagination
+    assert 'data.get("store_id") != str(store_id)' in pagination
+
+    status_source = (ROOT / "apps/api/app/main.py").read_text(encoding="utf-8")
+    assert '"phase": "1O"' in status_source
+    assert '"key_value_store_public_access_enabled": False' in status_source

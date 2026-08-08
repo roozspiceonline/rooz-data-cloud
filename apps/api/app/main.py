@@ -29,7 +29,7 @@ settings = get_settings()
 
 app = FastAPI(
     title="Rooz Data Cloud API",
-    version="0.14.0-phase1n",
+    version="0.15.0-phase1o",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
     redoc_url=None,
@@ -153,13 +153,23 @@ def _dataset_worker_canary_enabled() -> bool:
     )
 
 
+def _key_value_store_worker_canary_enabled() -> bool:
+    return (
+        settings.sandbox_execution_enabled
+        and settings.sandbox_activation_mode == "canary"
+        and settings.sandbox_canary_key_value_store_enabled
+        and bool(settings.sandbox_canary_agent_version_id.strip())
+        and bool(settings.sandbox_canary_worker_name.strip())
+    )
+
+
 @v1_router.get("/system/foundation", tags=["system"])
 async def foundation_status() -> dict[str, object]:
     return {
         "arbitrary_code_in_api": False,
-        "phase": "1N",
+        "phase": "1O",
         "service": "rdc-api",
-        "status": "tenant-dataset-durable-results",
+        "status": "tenant-key-value-store-versioned-state",
         "write_only_project_secrets": True,
         "write_only_secrets_required": True,
         "envelope_encryption_required": True,
@@ -270,6 +280,17 @@ async def foundation_status() -> dict[str, object]:
         "dataset_worker_append_canary_enabled": _dataset_worker_canary_enabled(),
         "dataset_rls_enabled": True,
         "dataset_items_immutable": True,
+        "key_value_store_contract": "rdc.kv-write/v1",
+        "key_value_store_metadata_persistence_enabled": True,
+        "key_value_store_record_mutation_enabled": True,
+        "key_value_store_record_read_enabled": True,
+        "key_value_store_record_listing_enabled": True,
+        "key_value_store_record_cursor_signed": True,
+        "key_value_store_worker_capability_contract": "rdc.kv-worker-capability/v1",
+        "key_value_store_worker_gate_enabled": settings.sandbox_canary_key_value_store_enabled,
+        "key_value_store_worker_canary_enabled": _key_value_store_worker_canary_enabled(),
+        "key_value_store_rls_enabled": True,
+        "key_value_store_public_access_enabled": False,
         "untrusted_agent_execution_enabled": False,
     }
 
