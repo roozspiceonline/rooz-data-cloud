@@ -263,9 +263,65 @@ def main() -> None:
         'Literal["rdc.browser/v1"]' in run_schemas,
         "Phase 1L API contract disappeared",
     )
+    for marker in [
+        'Literal["rdc.browser/v2"]',
+        "browser_navigation: BrowserNavigationInput | None = None",
+        "A Run may use only one external web/browser intent surface.",
+    ]:
+        require(marker in run_schemas, "v2 Run intent schema missing: " + marker)
+
+    runs_service = read("apps/api/app/services/runs.py")
+    for marker in [
+        '"rdc.browser-navigation-receipt/v1"',
+        '"request_digest": canonical_fingerprint(browser_navigation)',
+        '"execution_enabled": False',
+        '"dispatch_enabled": False',
+        '"browser_network": "none"',
+        '"browser_egress_gateway_required": True',
+        'initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"',
+        "if not navigation_receipt_only:",
+        '"run.browser_navigation_intent_recorded"',
+    ]:
+        require(
+            marker in runs_service,
+            "v2 Run receipt guard missing: " + marker,
+        )
+
+    plane = read("apps/api/app/services/execution_plane.py")
     require(
-        '"rdc.browser/v2"' not in run_schemas,
-        "v2 became API-executable during protocol foundation",
+        plane.count('if "browser_navigation" in input_reference:') >= 2,
+        "control plane does not explicitly deny v2 activation",
+    )
+
+    worker_source = read("workers/sandbox-runtime/worker.py")
+    for marker in [
+        "validate_browser_navigation_plan",
+        '"rdc.browser-navigation-receipt/v1"',
+        "Phase 1M browser navigation execution is not enabled.",
+    ]:
+        require(
+            marker in worker_source,
+            "worker v2 receipt guard missing: " + marker,
+        )
+
+    main_source = read("apps/api/app/main.py")
+    for marker in [
+        '"browser_navigation_request_contract": "rdc.browser/v2"',
+        '"rdc.browser-navigation-receipt/v1"',
+        '"browser_navigation_intent_contract_available": True',
+        '"browser_navigation_dispatch_enabled": False',
+        '"browser_public_navigation_enabled": False',
+    ]:
+        require(
+            marker in main_source,
+            "API v2 status guard missing: " + marker,
+        )
+
+    test_source = read("apps/api/tests/test_phase1m_contracts.py")
+    require(
+        "test_phase1m_run_request_allows_only_one_external_surface"
+        in test_source,
+        "Phase 1M API contract tests are missing",
     )
 
     root_readme = read("README.md")
@@ -283,12 +339,16 @@ def main() -> None:
     ]:
         require(marker in docs, "Phase 1M docs missing: " + marker)
 
-    print("Phase 1M protocol foundation verification: PASS")
+    print("Phase 1M receipt-only Run intent verification: PASS")
     print("  rdc.browser/v1 compatibility: PASS")
     print("  rdc.browser/v2 strict protocol: PASS")
     print("  bounded goto/wait/extract/screenshot validation: PASS")
     print("  exact HTTPS allowlist policy: PASS")
-    print("  v2 API execution: NOT ENABLED")
+    print("  v2 Run intent + immutable receipt: PASS")
+    print("  v2 initial status: DRAFT")
+    print("  v2 START dispatch: BLOCKED")
+    print("  control-plane v2 activation: BLOCKED")
+    print("  worker independent v2 receipt validation: PASS")
     print("  browser runtime external navigation: NOT ENABLED")
     print("  browser runtime network: NONE")
 
