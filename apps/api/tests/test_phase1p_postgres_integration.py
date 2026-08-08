@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -39,7 +40,7 @@ async def _database_available() -> bool:
 
 
 async def _seed(
-    *, with_request: bool = True, queue_created_at: str | None = None
+    *, with_request: bool = True, queue_created_at: datetime | None = None
 ) -> tuple[UUID, UUID, UUID, UUID, UUID]:
     user_id, org_id, project_id, queue_id, request_id = (uuid4() for _ in range(5))
     suffix = uuid4().hex
@@ -476,7 +477,7 @@ async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
 async def test_postgres_queue_pagination_is_stable_at_equal_timestamps() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
-    equal_created_at = "2026-08-09T06:00:00+00:00"
+    equal_created_at = datetime(2026, 8, 9, 6, tzinfo=UTC)
     user_id, org_id, project_id, first_queue_id, request_id = await _seed(
         queue_created_at=equal_created_at
     )

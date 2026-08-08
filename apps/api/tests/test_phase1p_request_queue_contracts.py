@@ -23,6 +23,7 @@ def test_phase1p_rls_separates_tenant_commands_and_scopes_workers_to_run_leases(
         "request_queue_requests_execution_worker_select",
         "request_queue_requests_execution_worker_update",
         "request_queue_transitions_execution_worker_insert",
+        "rdc_worker_has_active_run_lease",
         "lease.work_kind = 'RUN_START'",
         "lease.organization_id",
         "lease.project_id",

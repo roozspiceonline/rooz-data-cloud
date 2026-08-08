@@ -20,16 +20,9 @@ def _tenant_predicate() -> str:
 
 def _worker_lease_predicate(table_name: str) -> str:
     return f"""
-      security.rdc_worker_is_active()
-      AND EXISTS (
-        SELECT 1
-        FROM control.execution_leases lease
-        WHERE lease.worker_id = security.rdc_current_worker_id()
-          AND lease.status = 'ACTIVE'
-          AND lease.expires_at > now()
-          AND lease.work_kind = 'RUN_START'
-          AND lease.organization_id = {table_name}.organization_id
-          AND lease.project_id = {table_name}.project_id
+      security.rdc_worker_has_active_run_lease(
+        {table_name}.organization_id,
+        {table_name}.project_id
       )
     """
 
@@ -40,6 +33,7 @@ def upgrade() -> None:
     op.create_table("request_queue_transitions", sa.Column("id", UUID, server_default=sa.text("gen_random_uuid()"), primary_key=True), sa.Column("organization_id", UUID, nullable=False), sa.Column("project_id", UUID, nullable=False), sa.Column("queue_id", UUID, nullable=False), sa.Column("request_id", UUID, nullable=False), sa.Column("from_status", sa.String(16)), sa.Column("to_status", sa.String(16), nullable=False), sa.Column("reason", sa.String(80), nullable=False), sa.Column("attempt_count", sa.Integer(), nullable=False), sa.Column("details", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False), sa.ForeignKeyConstraint(["queue_id"], ["control.request_queues.id"], ondelete="RESTRICT"), sa.ForeignKeyConstraint(["request_id"], ["control.request_queue_requests.id"], ondelete="RESTRICT"), schema="control")
     op.create_table("request_queue_enqueue_receipts", sa.Column("id", UUID, server_default=sa.text("gen_random_uuid()"), primary_key=True), sa.Column("organization_id", UUID, nullable=False), sa.Column("project_id", UUID, nullable=False), sa.Column("queue_id", UUID, nullable=False), sa.Column("request_id", UUID, nullable=False), sa.Column("idempotency_key", sa.String(256), nullable=False), sa.Column("request_digest", sa.String(64), nullable=False), sa.Column("identity_digest", sa.String(64), nullable=False), sa.Column("created_by_user_id", UUID, nullable=False), sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP"), nullable=False), sa.UniqueConstraint("queue_id", "idempotency_key", name="uq_request_queue_enqueue_idempotency"), sa.ForeignKeyConstraint(["queue_id"], ["control.request_queues.id"], ondelete="CASCADE"), sa.ForeignKeyConstraint(["request_id"], ["control.request_queue_requests.id"], ondelete="CASCADE"), sa.ForeignKeyConstraint(["created_by_user_id"], ["identity.users.id"], ondelete="RESTRICT"), schema="control")
     op.create_check_constraint("ck_request_queues_nonnegative_counts", "request_queues", "pending_count >= 0 AND claimed_count >= 0 AND handled_count >= 0 AND failed_count >= 0", schema="control")
+    op.execute('''CREATE OR REPLACE FUNCTION security.rdc_worker_has_active_run_lease(target_organization uuid, target_project uuid) RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = control, identity, security, pg_temp AS $$ SELECT security.rdc_worker_is_active() AND EXISTS (SELECT 1 FROM control.execution_leases lease WHERE lease.worker_id = security.rdc_current_worker_id() AND lease.status = 'ACTIVE' AND lease.expires_at > now() AND lease.work_kind = 'RUN_START' AND lease.organization_id = target_organization AND lease.project_id = target_project) $$''')
     for table in ("request_queues", "request_queue_requests", "request_queue_transitions", "request_queue_enqueue_receipts"):
         op.create_index(f"ix_{table}_organization_id", table, ["organization_id"], schema="control")
         op.execute(f'ALTER TABLE control.{table} ENABLE ROW LEVEL SECURITY')
@@ -95,6 +89,7 @@ def downgrade() -> None:
         policies.extend(((f"{table}_tenant_insert", table), (f"{table}_tenant_select", table)))
     for policy, table in policies:
         op.execute(f'DROP POLICY IF EXISTS {policy} ON control.{table}')
+    op.execute('DROP FUNCTION IF EXISTS security.rdc_worker_has_active_run_lease(uuid, uuid)')
     op.execute('DROP FUNCTION IF EXISTS security.rdc_request_queue_org(uuid)')
     op.drop_table("request_queue_enqueue_receipts", schema="control")
     op.drop_table("request_queue_transitions", schema="control")
