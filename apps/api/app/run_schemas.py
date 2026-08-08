@@ -135,6 +135,139 @@ class BrowserSessionInput(StrictModel):
         return self
 
 
+def _validate_browser_navigation_selector(value: str) -> str:
+    if "\x00" in value or "\r" in value or "\n" in value:
+        raise ValueError(
+            "Browser navigation selector contains unsafe control characters."
+        )
+    return value
+
+
+class BrowserGotoStepInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["goto"] = "goto"
+    url: str = Field(min_length=9, max_length=8192)
+    wait_until: Literal["domcontentloaded", "load"] = "domcontentloaded"
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, value: str) -> str:
+        if not value.startswith("https://"):
+            raise ValueError(
+                "Browser navigation URLs must use lowercase https://."
+            )
+        try:
+            parsed = urlsplit(value)
+        except ValueError as exc:
+            raise ValueError("Browser navigation URL is malformed.") from exc
+        if not parsed.hostname:
+            raise ValueError("Browser navigation URL requires a hostname.")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError(
+                "Browser navigation URL credentials are not allowed."
+            )
+        return value
+
+
+class BrowserWaitForSelectorStepInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["wait_for_selector"] = "wait_for_selector"
+    selector: str = Field(min_length=1, max_length=512)
+    state: Literal["attached", "visible"]
+    timeout_ms: int = Field(strict=True, ge=100, le=15_000)
+
+    @field_validator("selector")
+    @classmethod
+    def validate_selector(cls, value: str) -> str:
+        return _validate_browser_navigation_selector(value)
+
+
+class BrowserExtractTextStepInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["extract_text"] = "extract_text"
+    selector: str = Field(min_length=1, max_length=512)
+    max_chars: int = Field(strict=True, ge=1, le=131_072)
+
+    @field_validator("selector")
+    @classmethod
+    def validate_selector(cls, value: str) -> str:
+        return _validate_browser_navigation_selector(value)
+
+
+class BrowserExtractHtmlStepInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["extract_html"] = "extract_html"
+    selector: str = Field(min_length=1, max_length=512)
+    max_bytes: int = Field(strict=True, ge=1, le=4_194_304)
+
+    @field_validator("selector")
+    @classmethod
+    def validate_selector(cls, value: str) -> str:
+        return _validate_browser_navigation_selector(value)
+
+
+class BrowserScreenshotStepInput(StrictModel):
+    id: str = Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+    )
+    type: Literal["screenshot"] = "screenshot"
+    full_page: Literal[False] = False
+
+
+BrowserNavigationStepInput = (
+    BrowserGotoStepInput
+    | BrowserWaitForSelectorStepInput
+    | BrowserExtractTextStepInput
+    | BrowserExtractHtmlStepInput
+    | BrowserScreenshotStepInput
+)
+
+
+class BrowserNavigationInput(StrictModel):
+    schema_version: Literal["rdc.browser/v2"] = "rdc.browser/v2"
+    steps: list[BrowserNavigationStepInput] = Field(
+        min_length=1,
+        max_length=16,
+    )
+
+    @model_validator(mode="after")
+    def validate_navigation(self) -> "BrowserNavigationInput":
+        if self.steps[0].type != "goto":
+            raise ValueError("The first browser navigation step must be goto.")
+        step_ids = [step.id for step in self.steps]
+        if len(step_ids) != len(set(step_ids)):
+            raise ValueError("Browser navigation step ids must be unique.")
+        encoded = json.dumps(
+            self.model_dump(mode="json"),
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+        if len(encoded) > 65_536:
+            raise ValueError(
+                "Browser navigation envelope cannot exceed 64 KiB."
+            )
+        return self
+
+
+
 class RuntimeConfigurationInput(StrictModel):
     memory_mb: int | None = Field(default=None, ge=128, le=32768)
     cpu_millis: int | None = Field(default=None, ge=100, le=16000)
@@ -146,6 +279,7 @@ class CreateRunRequest(StrictModel):
     input: dict[str, object] = Field(default_factory=dict)
     web_fetch: WebFetchEnvelopeInput | None = None
     browser: BrowserSessionInput | None = None
+    browser_navigation: BrowserNavigationInput | None = None
     runtime: RuntimeConfigurationInput = Field(
         default_factory=RuntimeConfigurationInput
     )
@@ -162,9 +296,17 @@ class CreateRunRequest(StrictModel):
             raise ValueError("Run input must contain valid JSON values.") from exc
         if len(encoded) > 65_536:
             raise ValueError("Inline Run input cannot exceed 64 KiB.")
-        if self.web_fetch is not None and self.browser is not None:
+        external_surfaces = sum(
+            value is not None
+            for value in (
+                self.web_fetch,
+                self.browser,
+                self.browser_navigation,
+            )
+        )
+        if external_surfaces > 1:
             raise ValueError(
-                "Phase 1L does not allow web_fetch and browser in one Run."
+                "A Run may use only one external web/browser intent surface."
             )
         return self
 
