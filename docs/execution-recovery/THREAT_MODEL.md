@@ -12,7 +12,14 @@ lineage records the attempt, retry decision, and next eligible time without
 including lease tokens, secrets, Run input, or failure details beyond existing
 bounded codes.
 
-This increment does not yet claim full production recovery. A process that can
-renew leases must still be bounded by the workload deadline; cancellation must
+The server derives the immutable lease deadline from persisted Build or Run
+configuration, never from a worker renewal request. PostgreSQL rejects deadline
+mutation and any expiry beyond the deadline. Worker credential resolution
+rejects overdue leases, and deadline-aware RLS prevents overdue Run leases from
+retaining Request Queue access. Row locking and `SKIP LOCKED` make concurrent
+reapers single-winner; a deadline path is terminal and cannot be converted into
+a retry by a worker-supplied `retryable` flag.
+
+This increment does not yet claim full production recovery. Cancellation must
 converge after worker loss; recovery sweeps must run without relying on worker
 traffic; and concurrency admission must be enforced across workers and projects.

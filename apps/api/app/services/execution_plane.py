@@ -26,7 +26,12 @@ from ..core.worker_crypto import (
     worker_secret_aad,
 )
 from ..dataset_schemas import CreateDatasetRequest
-from ..execution_recovery import execution_retry_allowed, retry_available_at
+from ..execution_recovery import (
+    clamp_lease_expiry,
+    execution_deadline_at,
+    execution_retry_allowed,
+    retry_available_at,
+)
 from ..execution_schemas import (
     AppendWorkerEventsRequest,
     ArtifactDownloadGrant,
@@ -644,6 +649,7 @@ def lease_summary(record: ExecutionLease) -> ExecutionLeaseSummary:
         attempt=record.attempt,
         claimed_at=record.claimed_at,
         expires_at=record.expires_at,
+        deadline_at=record.deadline_at,
         completed_at=record.completed_at,
         failure_code=record.failure_code,
         failure_summary=record.failure_summary,
@@ -765,6 +771,7 @@ async def _reset_expired_source(
     *,
     lease: ExecutionLease,
     now: datetime,
+    deadline_exceeded: bool,
 ) -> datetime | None:
     if lease.work_kind == "BUILD":
         source = await session.scalar(
@@ -775,8 +782,13 @@ async def _reset_expired_source(
         build = await session.scalar(
             select(Build).where(Build.id == lease.build_id)
         )
+        failure_code = (
+            "WORKLOAD_DEADLINE_EXCEEDED"
+            if deadline_exceeded
+            else "LEASE_EXPIRED"
+        )
         retry = execution_retry_allowed(
-            requested=True,
+            requested=not deadline_exceeded,
             outcome="FAILED",
             attempt=lease.attempt,
             max_attempts=settings.worker_max_attempts,
@@ -795,12 +807,24 @@ async def _reset_expired_source(
         if source is not None:
             source.status = "PENDING" if retry else "FAILED"
             source.available_at = next_attempt_at or now
-            source.last_error_code = "LEASE_EXPIRED"
+            source.last_error_code = failure_code
             source.updated_at = now
         if build is not None:
-            build.status = "QUEUED" if retry else "FAILED"
-            build.error_code = None if retry else "LEASE_EXPIRED"
-            build.error_message = None if retry else "The execution lease expired."
+            build.status = (
+                "QUEUED"
+                if retry
+                else "TIMED_OUT" if deadline_exceeded else "FAILED"
+            )
+            build.error_code = None if retry else failure_code
+            build.error_message = (
+                None
+                if retry
+                else (
+                    "The Build execution deadline was exceeded."
+                    if deadline_exceeded
+                    else "The execution lease expired."
+                )
+            )
             build.completed_at = None if retry else now
             build.updated_at = now
             build.version += 1
@@ -812,8 +836,13 @@ async def _reset_expired_source(
         )
     )
     run = await session.scalar(select(Run).where(Run.id == lease.run_id))
+    failure_code = (
+        "WORKLOAD_DEADLINE_EXCEEDED"
+        if deadline_exceeded
+        else "LEASE_EXPIRED"
+    )
     retry = execution_retry_allowed(
-        requested=True,
+        requested=not deadline_exceeded,
         outcome="FAILED",
         attempt=lease.attempt,
         max_attempts=settings.worker_max_attempts,
@@ -832,20 +861,40 @@ async def _reset_expired_source(
     if source is not None:
         source.status = "PENDING" if retry else "FAILED"
         source.available_at = next_attempt_at or now
-        source.last_error_code = "LEASE_EXPIRED"
+        source.last_error_code = failure_code
         source.updated_at = now
     if run is None:
         return next_attempt_at
     previous = run.status
     if lease.work_kind == "RUN_START":
-        run.status = "QUEUED" if retry else "FAILED"
-        run.failure_code = None if retry else "LEASE_EXPIRED"
-        run.failure_summary = None if retry else "The execution lease expired."
+        run.status = (
+            "QUEUED"
+            if retry
+            else "TIMED_OUT" if deadline_exceeded else "FAILED"
+        )
+        run.failure_code = None if retry else failure_code
+        run.failure_summary = (
+            None
+            if retry
+            else (
+                "The Run execution deadline was exceeded."
+                if deadline_exceeded
+                else "The execution lease expired."
+            )
+        )
         run.finished_at = None if retry else now
     elif not retry:
         run.status = "FAILED"
-        run.failure_code = "CANCEL_LEASE_EXPIRED"
-        run.failure_summary = "The cancellation lease expired."
+        run.failure_code = (
+            "CANCEL_DEADLINE_EXCEEDED"
+            if deadline_exceeded
+            else "CANCEL_LEASE_EXPIRED"
+        )
+        run.failure_summary = (
+            "The cancellation deadline was exceeded."
+            if deadline_exceeded
+            else "The cancellation lease expired."
+        )
         run.finished_at = now
     run.updated_at = now
     run.version += 1
@@ -872,7 +921,10 @@ async def reap_expired_leases(
                 select(ExecutionLease)
                 .where(
                     ExecutionLease.status == "ACTIVE",
-                    ExecutionLease.expires_at <= current,
+                    or_(
+                        ExecutionLease.expires_at <= current,
+                        ExecutionLease.deadline_at <= current,
+                    ),
                 )
                 .order_by(ExecutionLease.expires_at.asc())
                 .with_for_update(skip_locked=True)
@@ -881,8 +933,12 @@ async def reap_expired_leases(
         ).all()
     )
     for lease in records:
+        deadline_exceeded = lease.deadline_at <= current
         next_attempt_at = await _reset_expired_source(
-            session, lease=lease, now=current
+            session,
+            lease=lease,
+            now=current,
+            deadline_exceeded=deadline_exceeded,
         )
         grants = list(
             (
@@ -896,10 +952,18 @@ async def reap_expired_leases(
         )
         for grant in grants:
             grant.status = "EXPIRED"
-        lease.status = "EXPIRED"
+        lease.status = "FAILED" if deadline_exceeded else "EXPIRED"
         lease.completed_at = current
-        lease.failure_code = "LEASE_EXPIRED"
-        lease.failure_summary = "The worker did not renew the lease."
+        lease.failure_code = (
+            "WORKLOAD_DEADLINE_EXCEEDED"
+            if deadline_exceeded
+            else "LEASE_EXPIRED"
+        )
+        lease.failure_summary = (
+            "The workload execution deadline was exceeded."
+            if deadline_exceeded
+            else "The worker did not renew the lease."
+        )
         lease.updated_at = current
         await append_audit_event(
             session,
@@ -907,7 +971,11 @@ async def reap_expired_leases(
             project_id=lease.project_id,
             actor_type="system",
             actor_id="lease-reaper",
-            action="execution.lease.expired",
+            action=(
+                "execution.lease.deadline_exceeded"
+                if deadline_exceeded
+                else "execution.lease.expired"
+            ),
             resource_type="execution_lease",
             resource_id=str(lease.id),
             request_id=request_id,
@@ -915,6 +983,8 @@ async def reap_expired_leases(
                 "work_kind": lease.work_kind,
                 "attempt": lease.attempt,
                 "worker_id": str(lease.worker_id),
+                "deadline_at": lease.deadline_at.isoformat(),
+                "deadline_exceeded": deadline_exceeded,
                 "retry_scheduled": next_attempt_at is not None,
                 "next_attempt_at": (
                     next_attempt_at.isoformat()
@@ -1098,6 +1168,41 @@ async def _select_source(
     return cast(RunCommandOutbox | None, source)
 
 
+def _execution_timeout_seconds(
+    source: BuildDispatchOutbox | RunCommandOutbox,
+    *,
+    work_kind: str,
+) -> int:
+    if work_kind == "BUILD":
+        raw_timeout = source.payload.get(
+            "timeout_seconds",
+            settings.sandbox_max_build_seconds,
+        )
+        ceiling = settings.sandbox_max_build_seconds
+    elif work_kind == "RUN_START":
+        runtime = source.payload.get("runtime")
+        raw_timeout = (
+            runtime.get("timeout_seconds")
+            if isinstance(runtime, dict)
+            else None
+        )
+        ceiling = settings.sandbox_max_run_seconds
+    else:
+        raw_timeout = settings.worker_lease_max_seconds
+        ceiling = settings.worker_lease_max_seconds
+    if (
+        isinstance(raw_timeout, bool)
+        or not isinstance(raw_timeout, int)
+        or raw_timeout < 1
+    ):
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_DEADLINE_INVALID",
+            message="The persisted work item has an invalid execution timeout.",
+        )
+    return min(raw_timeout, ceiling)
+
+
 async def _lock_worker_claims(
     session: AsyncSession,
     *,
@@ -1171,7 +1276,17 @@ async def claim_work(
         source.claimed_at = now
         source.updated_at = now
         issued = issue_lease_token(pepper=settings.lease_token_pepper)
-        expires_at = now + timedelta(seconds=settings.worker_lease_seconds)
+        timeout_seconds = _execution_timeout_seconds(source, work_kind=kind)
+        deadline_at = execution_deadline_at(
+            claimed_at=now,
+            timeout_seconds=timeout_seconds,
+        )
+        expires_at = clamp_lease_expiry(
+            proposed=now + timedelta(seconds=settings.worker_lease_seconds),
+            claimed_at=now,
+            max_lifetime_seconds=settings.worker_lease_max_seconds,
+            deadline_at=deadline_at,
+        )
         lease = ExecutionLease(
             worker_id=worker.id,
             organization_id=organization_id,
@@ -1188,6 +1303,7 @@ async def claim_work(
             attempt=source.attempts,
             claimed_at=now,
             expires_at=expires_at,
+            deadline_at=deadline_at,
         )
         session.add(lease)
         await session.flush()
@@ -1245,6 +1361,7 @@ async def claim_work(
         claim_payload["execution_enabled"] = execution_enabled
         claim_payload["sandbox"] = sandbox_policy if execution_enabled else None
         claim_payload["activation"] = _activation_payload(activation)
+        claim_payload["deadline_at"] = deadline_at.isoformat()
         claim_payload["dataset_append_capability"] = (
             _dataset_append_capability(
                 worker,
@@ -1281,6 +1398,7 @@ async def claim_work(
                 "work_kind": kind,
                 "attempt": lease.attempt,
                 "source_topic": lease.source_topic,
+                "deadline_at": deadline_at.isoformat(),
                 "execution_enabled": execution_enabled,
                 "sandbox_attestation_digest": worker.sandbox_attestation_digest,
                 "activation_mode": (
@@ -1303,6 +1421,7 @@ async def claim_work(
             attempt=lease.attempt,
             claimed_at=now,
             expires_at=expires_at,
+            deadline_at=deadline_at,
             lease_token=issued.raw_token,
             payload=claim_payload,
         )
@@ -1418,18 +1537,28 @@ async def renew_lease(
     request_id: str,
 ) -> ExecutionLeaseSummary:
     now = datetime.now(UTC)
-    hard_limit = lease.claimed_at + timedelta(
-        seconds=settings.worker_lease_max_seconds
-    )
     requested = max(now, lease.expires_at) + timedelta(
         seconds=payload.extend_seconds
     )
-    extended_until = min(requested, hard_limit)
+    extended_until = clamp_lease_expiry(
+        proposed=requested,
+        claimed_at=lease.claimed_at,
+        max_lifetime_seconds=settings.worker_lease_max_seconds,
+        deadline_at=lease.deadline_at,
+    )
     if extended_until <= now:
         raise ApiError(
             status_code=409,
-            code="LEASE_MAXIMUM_REACHED",
-            message="The lease reached its maximum lifetime.",
+            code=(
+                "WORKLOAD_DEADLINE_EXCEEDED"
+                if lease.deadline_at <= now
+                else "LEASE_MAXIMUM_REACHED"
+            ),
+            message=(
+                "The workload execution deadline was exceeded."
+                if lease.deadline_at <= now
+                else "The lease reached its maximum lifetime."
+            ),
         )
     lease.expires_at = extended_until
     lease.last_renewed_at = now
@@ -1444,7 +1573,10 @@ async def renew_lease(
         resource_type="execution_lease",
         resource_id=str(lease.id),
         request_id=request_id,
-        details={"expires_at": lease.expires_at.isoformat()},
+        details={
+            "expires_at": lease.expires_at.isoformat(),
+            "deadline_at": lease.deadline_at.isoformat(),
+        },
     )
     return lease_summary(lease)
 

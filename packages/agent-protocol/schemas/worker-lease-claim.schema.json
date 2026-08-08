@@ -12,6 +12,7 @@
     "attempt",
     "claimed_at",
     "expires_at",
+    "deadline_at",
     "lease_token",
     "payload"
   ],
@@ -59,6 +60,10 @@
       "format": "date-time"
     },
     "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "deadline_at": {
       "type": "string",
       "format": "date-time"
     },

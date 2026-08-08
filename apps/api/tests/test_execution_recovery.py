@@ -4,10 +4,43 @@ from pathlib import Path
 import pytest
 
 from app.execution_recovery import (
+    clamp_lease_expiry,
+    execution_deadline_at,
     execution_retry_allowed,
     retry_available_at,
     retry_delay_seconds,
 )
+
+
+def test_execution_deadline_is_server_derived() -> None:
+    claimed_at = datetime(2026, 8, 9, tzinfo=UTC)
+    assert execution_deadline_at(
+        claimed_at=claimed_at,
+        timeout_seconds=90,
+    ) == claimed_at + timedelta(seconds=90)
+    with pytest.raises(ValueError):
+        execution_deadline_at(claimed_at=claimed_at, timeout_seconds=0)
+
+
+def test_lease_expiry_is_clamped_to_execution_deadline() -> None:
+    claimed_at = datetime(2026, 8, 9, tzinfo=UTC)
+    deadline_at = claimed_at + timedelta(seconds=45)
+    assert clamp_lease_expiry(
+        proposed=claimed_at + timedelta(seconds=60),
+        claimed_at=claimed_at,
+        max_lifetime_seconds=300,
+        deadline_at=deadline_at,
+    ) == deadline_at
+
+
+def test_lease_expiry_is_clamped_to_maximum_lifetime() -> None:
+    claimed_at = datetime(2026, 8, 9, tzinfo=UTC)
+    assert clamp_lease_expiry(
+        proposed=claimed_at + timedelta(seconds=600),
+        claimed_at=claimed_at,
+        max_lifetime_seconds=300,
+        deadline_at=claimed_at + timedelta(seconds=900),
+    ) == claimed_at + timedelta(seconds=300)
 
 
 def test_retry_backoff_is_exponential_and_bounded() -> None:

@@ -230,6 +230,7 @@ class LeaseClaim(BaseModel):
     attempt: int
     claimed_at: datetime
     expires_at: datetime
+    deadline_at: datetime
     lease_token: str
     payload: dict[str, object]
 
@@ -365,6 +366,7 @@ class ExecutionLeaseSummary(BaseModel):
     attempt: int
     claimed_at: datetime
     expires_at: datetime
+    deadline_at: datetime
     completed_at: datetime | None
     failure_code: str | None
     failure_summary: str | None

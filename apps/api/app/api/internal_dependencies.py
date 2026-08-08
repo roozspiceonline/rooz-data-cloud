@@ -141,6 +141,7 @@ async def require_lease_access(
         lease is None
         or lease.status != "ACTIVE"
         or lease.expires_at <= now
+        or lease.deadline_at <= now
         or not hmac.compare_digest(lease.lease_token_digest, supplied)
     ):
         raise ApiError(

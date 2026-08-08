@@ -3,6 +3,27 @@
 from datetime import datetime, timedelta
 
 
+def execution_deadline_at(*, claimed_at: datetime, timeout_seconds: int) -> datetime:
+    if timeout_seconds < 1:
+        raise ValueError("Execution timeout must be positive.")
+    return claimed_at + timedelta(seconds=timeout_seconds)
+
+
+def clamp_lease_expiry(
+    *,
+    proposed: datetime,
+    claimed_at: datetime,
+    max_lifetime_seconds: int,
+    deadline_at: datetime,
+) -> datetime:
+    if max_lifetime_seconds < 1:
+        raise ValueError("Lease maximum lifetime must be positive.")
+    if deadline_at <= claimed_at:
+        raise ValueError("Execution deadline must follow lease claim time.")
+    hard_limit = claimed_at + timedelta(seconds=max_lifetime_seconds)
+    return min(proposed, hard_limit, deadline_at)
+
+
 def retry_delay_seconds(
     *,
     attempt: int,

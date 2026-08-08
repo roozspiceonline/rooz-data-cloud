@@ -21,13 +21,15 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Production Execution Lifecycle / Recovery | Active — bounded retry foundation | Request Queue, Runs and worker leases |
+| Production Execution Lifecycle / Recovery | Active — bounded retry and immutable deadline enforcement | Request Queue, Runs and worker leases |
 
 The first recovery increment centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
 missing, and records the scheduled retry time in immutable execution audit
-lineage. Timeout enforcement, cancellation convergence, periodic stale-lease
-sweeps, and project/worker concurrency admission remain in this workstream.
+lineage. The second increment persists server-derived immutable Build/Run
+deadlines, clamps renewals, and terminally times out overdue workloads under
+race-safe recovery. Cancellation convergence, periodic stale-lease sweeps, and
+project/worker concurrency admission remain in this workstream.
 
 ## Remaining RDC v1 workstreams
 

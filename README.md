@@ -17,5 +17,5 @@ and tenant/lease-scoped PostgreSQL RLS without weakening existing tenancy,
 egress, Dataset, or KV protections. See [the Phase 1P documentation](docs/phase1p/README.md)
 and [the RDC v1 roadmap](docs/roadmap/RDC_V1_ROADMAP.md) for security controls,
 remaining work, and release gates. Production Execution Lifecycle / Recovery is
-now active, beginning with server-owned bounded retry and stale-lease recovery
-lineage.
+now active with server-owned bounded retry, immutable workload deadlines,
+deadline-clamped leases, and stale-lease recovery lineage.

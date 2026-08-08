@@ -1545,6 +1545,9 @@ class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
+    deadline_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     last_renewed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
