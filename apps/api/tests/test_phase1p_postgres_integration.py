@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,7 +10,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.core.database import engine, session_factory
-from app.services.request_queues import claim_next_request
+from app.core.errors import ApiError
+from app.services.request_queues import claim_next_request, reclaim_expired_requests
+from app.services.worker_request_queue import complete_worker_queue_request
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -38,6 +41,12 @@ async def _seed() -> tuple[UUID, UUID, UUID, UUID, UUID]:
                 "INSERT INTO identity.organizations (id,name,slug,status,created_by_user_id) VALUES (:o,'Phase1P',:s,'ACTIVE',:u)"
             ),
             {"o": org_id, "s": f"phase1p-{suffix}", "u": user_id},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO identity.organization_memberships (organization_id,user_id,role,status,joined_at,updated_at,created_by_user_id) VALUES (:o,:u,'owner','ACTIVE',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,:u)"
+            ),
+            {"o": org_id, "u": user_id},
         )
         await connection.execute(
             text(
@@ -101,3 +110,150 @@ async def test_postgres_tenancy_trigger_rejects_cross_project_queue_request() ->
                 ),
                 {"o": org_id, "wrong": uuid4(), "q": queue_id, "u": user_id},
             )
+
+
+async def test_postgres_expired_claim_requeues_and_reconciles_counters() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    _, _, _, queue_id, request_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.request_queue_requests SET status='CLAIMED',attempt_count=1,claimed_by='worker',claim_token=gen_random_uuid(),claim_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=:r"
+            ),
+            {"r": request_id},
+        )
+        await connection.execute(
+            text("UPDATE control.request_queues SET pending_count=0,claimed_count=1 WHERE id=:q"),
+            {"q": queue_id},
+        )
+    async with session_factory() as session:
+        assert await reclaim_expired_requests(session, queue_id=queue_id) == 1
+        await session.commit()
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text("SELECT status,attempt_count FROM control.request_queue_requests WHERE id=:r"),
+                {"r": request_id},
+            )
+        ).one()
+        counts = (
+            await connection.execute(
+                text(
+                    "SELECT pending_count,claimed_count,failed_count FROM control.request_queues WHERE id=:q"
+                ),
+                {"q": queue_id},
+            )
+        ).one()
+        assert row == ("PENDING", 1)
+        assert counts == (1, 0, 0)
+
+
+async def test_postgres_retry_exhaustion_fails_and_reconciles_counters() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    _, _, _, queue_id, request_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.request_queue_requests SET status='CLAIMED',attempt_count=3,max_attempts=3,claimed_by='worker',claim_token=gen_random_uuid(),claim_expires_at=CURRENT_TIMESTAMP-INTERVAL '1 second' WHERE id=:r"
+            ),
+            {"r": request_id},
+        )
+        await connection.execute(
+            text("UPDATE control.request_queues SET pending_count=0,claimed_count=1 WHERE id=:q"),
+            {"q": queue_id},
+        )
+    async with session_factory() as session:
+        assert await reclaim_expired_requests(session, queue_id=queue_id) == 1
+        await session.commit()
+    async with engine.connect() as connection:
+        row = (
+            await connection.execute(
+                text("SELECT status,failure_code FROM control.request_queue_requests WHERE id=:r"),
+                {"r": request_id},
+            )
+        ).one()
+        counts = (
+            await connection.execute(
+                text(
+                    "SELECT pending_count,claimed_count,failed_count FROM control.request_queues WHERE id=:q"
+                ),
+                {"q": queue_id},
+            )
+        ).one()
+        assert row == ("FAILED", "LEASE_EXPIRED")
+        assert counts == (0, 0, 1)
+
+
+async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_a, org_a, _, _, _ = await _seed()
+    _, _, _, queue_b, _ = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("SELECT set_config('rdc.current_user_id',:u,true)"), {"u": str(user_a)}
+        )
+        await connection.execute(
+            text("SELECT set_config('rdc.current_organization_id',:o,true)"), {"o": str(org_a)}
+        )
+        assert (
+            await connection.scalar(
+                text("SELECT security.rdc_request_queue_org(:q)"), {"q": queue_b}
+            )
+            is None
+        )
+
+
+async def test_postgres_stale_claim_token_cannot_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    _, org_id, project_id, queue_id, request_id = await _seed()
+    worker_id, real_token = uuid4(), uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.request_queue_requests SET status='CLAIMED',attempt_count=1,claimed_by=:w,claim_token=:t,claim_expires_at=CURRENT_TIMESTAMP+INTERVAL '1 minute' WHERE id=:r"
+            ),
+            {"w": str(worker_id), "t": real_token, "r": request_id},
+        )
+        await connection.execute(
+            text("UPDATE control.request_queues SET pending_count=0,claimed_count=1 WHERE id=:q"),
+            {"q": queue_id},
+        )
+    from app.services import worker_request_queue as worker_service
+
+    monkeypatch.setattr(worker_service.settings, "sandbox_execution_enabled", True)
+    monkeypatch.setattr(worker_service.settings, "sandbox_activation_mode", "canary")
+    monkeypatch.setattr(worker_service.settings, "sandbox_canary_request_queue_enabled", True)
+    monkeypatch.setattr(worker_service.settings, "sandbox_canary_worker_name", "phase1p-worker")
+    monkeypatch.setattr(
+        worker_service.settings, "sandbox_canary_agent_version_id", "phase1p-version"
+    )
+    lease = SimpleNamespace(
+        id=uuid4(),
+        organization_id=org_id,
+        project_id=project_id,
+        work_kind="RUN",
+        payload_snapshot={
+            "agent_version_id": "phase1p-version",
+            "manifest": {"capabilities": {"requestQueue": True}},
+        },
+    )
+    worker = SimpleNamespace(
+        id=worker_id, name="phase1p-worker", capabilities=["REQUEST_QUEUE_ACCESS"]
+    )
+    payload = {
+        "queue_id": str(queue_id),
+        "request_id": str(request_id),
+        "claim_token": str(uuid4()),
+        "status": "HANDLED",
+        "failure_code": None,
+        "failure_summary": None,
+    }
+    async with session_factory() as session:
+        with pytest.raises(ApiError, match="stale or invalid"):
+            await complete_worker_queue_request(
+                session, lease=lease, worker=worker, payload=payload
+            )  # type: ignore[arg-type]

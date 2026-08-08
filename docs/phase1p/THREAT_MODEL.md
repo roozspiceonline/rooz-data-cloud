@@ -14,3 +14,6 @@ fails closed. Equivalent request identities are unique per queue.
 Worker claim and completion require an ACTIVE unexpired lease plus a dedicated
 false-by-default canary gate. Queue tenancy is derived from the lease, and each
 completion is bound to both the claiming worker and an unguessable claim token.
+The gate additionally pins the configured canary worker, immutable Agent
+version, worker capability, and manifest `requestQueue` declaration. Expired
+claims cannot complete even if reclaim has not yet run.

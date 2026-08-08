@@ -19,13 +19,15 @@ from .request_queues import claim_next_request, reclaim_expired_requests
 settings = get_settings()
 
 
-def _enabled(lease: ExecutionLease) -> None:
-    if not settings.sandbox_execution_enabled or settings.sandbox_activation_mode != "canary" or not settings.sandbox_canary_request_queue_enabled or lease.work_kind != "RUN":
+def _enabled(lease: ExecutionLease, worker: WorkerIdentity) -> None:
+    manifest = lease.payload_snapshot.get("manifest")
+    capabilities = manifest.get("capabilities") if isinstance(manifest, dict) else None
+    if not settings.sandbox_execution_enabled or settings.sandbox_activation_mode != "canary" or not settings.sandbox_canary_request_queue_enabled or lease.work_kind != "RUN" or worker.name != settings.sandbox_canary_worker_name.strip() or "REQUEST_QUEUE_ACCESS" not in worker.capabilities or str(lease.payload_snapshot.get("agent_version_id", "")) != settings.sandbox_canary_agent_version_id.strip() or not isinstance(capabilities, dict) or capabilities.get("requestQueue") is not True:
         raise ApiError(status_code=403, code="WORKER_REQUEST_QUEUE_DISABLED", message="Worker Request Queue access is disabled.")
 
 
 async def claim_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object) -> RequestQueueRequest | None:
-    _enabled(lease)
+    _enabled(lease, worker)
     if not isinstance(payload, dict) or set(payload) != {"queue_id"}:
         raise ApiError(status_code=422, code="REQUEST_QUEUE_WORKER_PROTOCOL_INVALID", message="Queue claim payload is invalid.")
     try:
@@ -40,7 +42,7 @@ async def claim_worker_queue_request(session: AsyncSession, *, lease: ExecutionL
 
 
 async def complete_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object) -> RequestQueueRequest:
-    _enabled(lease)
+    _enabled(lease, worker)
     if not isinstance(payload, dict) or set(payload) != {"queue_id", "request_id", "claim_token", "status", "failure_code", "failure_summary"} or payload["status"] not in {"HANDLED", "FAILED"}:
         raise ApiError(status_code=422, code="REQUEST_QUEUE_WORKER_PROTOCOL_INVALID", message="Queue completion payload is invalid.")
     try:
@@ -53,7 +55,7 @@ async def complete_worker_queue_request(session: AsyncSession, *, lease: Executi
     row = await session.scalar(select(RequestQueueRequest).where(RequestQueueRequest.id == request_id, RequestQueueRequest.queue_id == queue_id, RequestQueueRequest.organization_id == lease.organization_id, RequestQueueRequest.project_id == lease.project_id).with_for_update())
     if row is None:
         raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
-    if row.status != "CLAIMED" or row.claimed_by != str(worker.id) or row.claim_token != claim_token:
+    if row.status != "CLAIMED" or row.claimed_by != str(worker.id) or row.claim_token != claim_token or row.claim_expires_at is None or row.claim_expires_at <= datetime.now(UTC):
         raise ApiError(status_code=409, code="REQUEST_QUEUE_CLAIM_STALE", message="The Queue request claim is stale or invalid.")
     target = str(payload["status"])
     row.status, row.claimed_by, row.claim_token, row.claim_expires_at = target, None, None, None
