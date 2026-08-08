@@ -14,6 +14,7 @@ from .api.routes.execution import router as execution_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
 from .api.routes.internal_execution import router as internal_execution_router
+from .api.routes.key_value_stores import router as key_value_stores_router
 from .api.routes.runs import router as runs_router
 from .api.routes.storage import router as storage_router
 from .core.config import get_settings
@@ -123,6 +124,7 @@ v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
 v1_router.include_router(datasets_router)
+v1_router.include_router(key_value_stores_router)
 v1_router.include_router(runs_router)
 v1_router.include_router(execution_router)
 v1_router.include_router(storage_router)

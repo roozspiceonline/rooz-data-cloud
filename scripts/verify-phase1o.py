@@ -127,9 +127,102 @@ def main() -> None:
     for marker in ['version="0.14.0-phase1n"', '"phase": "1N"', '"status": "tenant-dataset-durable-results"', '"dataset_public_export_enabled": False', '"untrusted_agent_execution_enabled": False']:
         require(marker in main_source, "Phase 1N baseline changed: " + marker)
 
-    print("Phase 1O Increment 1 KV protocol verification: PASS")
+
+migration12 = read(
+    "apps/api/migrations/versions/20260808_0012_key_value_stores.py"
+)
+for marker in [
+    'revision: str = "20260808_0012"',
+    'down_revision: str | None = "20260808_0011"',
+    "uq_key_value_stores_project_name",
+    "uq_key_value_stores_run_name",
+    "ck_key_value_stores_scope_lineage",
+    "key_value_stores_tenancy_guard",
+    "security.rdc_key_value_store_org",
+    "ENABLE ROW LEVEL SECURITY",
+    "CREATE POLICY key_value_stores_tenant",
+    "KV store identity fields are immutable",
+]:
+    require(
+        marker in migration12,
+        "Increment 2 migration missing: " + marker,
+    )
+for forbidden in [
+    "key_value_records",
+    "key_value_record_versions",
+    "kv_mutation_receipts",
+    "execution_worker",
+    "FOR DELETE",
+]:
+    require(
+        forbidden not in migration12,
+        "Increment 2 activated forbidden persistence: " + forbidden,
+    )
+
+deps_source = read("apps/api/app/api/agent_dependencies.py")
+for marker in [
+    "class KeyValueStoreAccess:",
+    '"rdc_key_value_store_org"',
+    "def require_key_value_store_permission(",
+]:
+    require(marker in deps_source, "KV auth dependency missing: " + marker)
+
+permissions_source = read("apps/api/app/core/permissions.py")
+require(
+    '"kv.create"' in permissions_source and '"kv.read"' in permissions_source,
+    "KV metadata permissions missing",
+)
+for forbidden in ['"kv.write"', '"kv.delete"', '"kv.export"']:
+    require(
+        forbidden not in permissions_source,
+        "KV mutation permission enabled too early: " + forbidden,
+    )
+
+routes_source = read("apps/api/app/api/routes/key_value_stores.py")
+for marker in [
+    '"/projects/{project_id}/key-value-stores"',
+    '"/runs/{run_id}/key-value-stores"',
+    '"/key-value-stores/{store_id}"',
+    'Depends(require_project_permission("kv.create"))',
+    'Depends(require_run_permission("kv.create"))',
+    'Depends(require_key_value_store_permission("kv.read"))',
+]:
+    require(marker in routes_source, "KV metadata route missing: " + marker)
+require("/records" not in routes_source, "KV record route enabled too early")
+
+service_source = read("apps/api/app/services/key_value_stores.py")
+for marker in [
+    'scope="PROJECT"',
+    "organization_id=project.organization_id",
+    "project_id=project.id",
+    'scope="RUN"',
+    "organization_id=run.organization_id",
+    "project_id=run.project_id",
+    "run_id=run.id",
+    "agent_id=run.agent_id",
+    "agent_version_id=run.agent_version_id",
+    'action="kv_store.created"',
+]:
+    require(
+        marker in service_source,
+        "KV ownership derivation missing: " + marker,
+    )
+
+tests_source = read(
+    "apps/api/tests/test_phase1o_kv_store_persistence_contracts.py"
+)
+for marker in [
+    "test_phase1o_increment2_migration_is_chained_and_tenant_scoped",
+    "test_phase1o_increment2_metadata_routes_exist_without_record_mutation",
+    "test_phase1o_increment2_permissions_are_metadata_only",
+    "test_phase1o_increment2_service_derives_ownership_server_side",
+    "test_phase1o_increment2_record_storage_remains_disabled",
+]:
+    require(marker in tests_source, "Increment 2 test missing: " + marker)
+    print("Phase 1O Increment 2 KV metadata verification: PASS")
     print("  contract: rdc.kv-write/v1")
-    print("  KV persistence/public API/worker/object writes: DISABLED")
+    print("  KV metadata persistence + RLS: ENABLED")
+    print("  KV record/object/worker writes: DISABLED")
     print("  Agent direct Postgres/object-storage credentials: PROHIBITED")
 
 

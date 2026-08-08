@@ -33,3 +33,18 @@ Stop if implementation:
 - weakens Phase 1N Dataset controls;
 - weakens Phase 1M browser/network isolation;
 - enables general untrusted Agent execution.
+
+## Increment 2 metadata state
+
+KeyValueStore metadata is persisted under PostgreSQL RLS.
+
+PROJECT stores are reusable across Runs in one Project. RUN stores inherit the
+exact authenticated Run/Agent/AgentVersion lineage. Only `name` is supplied by
+the caller.
+
+Store scope, name, ownership IDs and creator are immutable after creation.
+There is no record value mutation route in Increment 2. Do not add object
+uploads, `kv.write`, worker KV policies or record tables until Increment 3
+implements immutable version history, optimistic concurrency, idempotency and
+quotas.
+

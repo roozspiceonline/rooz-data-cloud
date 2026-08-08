@@ -44,3 +44,31 @@ Request Queue                         out of scope / Phase 1P
 ```
 
 The API continues to advertise Phase 1N until durable KV persistence and the rest of Phase 1O are complete.
+
+## Increment 2 — metadata persistence + RLS
+
+Increment 2 enables KeyValueStore **metadata only**.
+
+Two store scopes are supported:
+
+```text
+PROJECT  reusable across Runs inside one Project
+RUN      bound to one exact Run/Agent/AgentVersion lineage
+```
+
+Ownership IDs are never accepted in the request body.
+
+Database controls include `control.key_value_stores`, PostgreSQL RLS,
+`security.rdc_key_value_store_org(uuid)`, project/run lineage checks, immutable
+store identity fields, scope-specific unique names and `kv_store.created` audit
+events.
+
+Record mutation remains disabled:
+
+```text
+KV record persistence                 disabled
+KV object-storage writes              disabled
+KV worker writes                      disabled
+KV set/delete API                     absent
+```
+

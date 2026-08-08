@@ -676,6 +676,55 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "key_value_stores"
+    __table_args__ = {"schema": "control"}
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    scope: Mapped[str] = mapped_column(String(16), nullable=False)
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    agent_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agents.id", ondelete="CASCADE"),
+        index=True,
+    )
+    agent_version_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agent_versions.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    record_count: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    total_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=1
+    )
+
+
 class Dataset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "datasets"
     __table_args__ = (

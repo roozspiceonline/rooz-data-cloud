@@ -43,3 +43,22 @@ Increment 1 provides no persistence or storage credentials. Agent and Chromium r
 - audit events and authenticated API authorization
 
 General untrusted Agent execution remains release-blocked.
+
+## Increment 2 metadata threats
+
+### Cross-scope lineage confusion
+
+PROJECT stores carry no Run/Agent lineage. RUN stores must match one exact Run,
+Project, organization, Agent and AgentVersion. The database trigger checks this
+independently of the API service.
+
+### Store identity rewriting
+
+Scope, name, ownership lineage and creator are immutable at the database
+trigger boundary.
+
+### Premature mutation activation
+
+Increment 2 intentionally contains no record tables, mutation receipts,
+object-storage write path, worker RLS policy or set/delete API endpoint.
+
