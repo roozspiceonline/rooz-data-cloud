@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 import base64
 import hashlib
 import hmac
@@ -26,6 +27,12 @@ class CursorPosition:
 @dataclass(frozen=True)
 class KeyValueRecordCursorPosition:
     key: str
+
+
+@dataclass(frozen=True)
+class QueueRequestCursorPosition:
+    created_at: datetime
+    resource_id: UUID
 
 
 def normalize_limit(limit: int) -> int:
@@ -202,6 +209,29 @@ def decode_key_value_record_cursor(
         ):
             raise ValueError("cursor binding is invalid")
         return KeyValueRecordCursorPosition(key=key)
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_queue_request_cursor(*, queue_id: UUID, status: str | None, created_at: datetime, resource_id: UUID) -> str:
+    payload = json.dumps({"created_at": created_at.isoformat(), "id": str(resource_id), "kind": "queue-requests", "queue_id": str(queue_id), "status": status, "v": 1}, sort_keys=True, separators=(",", ":")).encode()
+    signature = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(payload + signature).decode().rstrip("=")
+
+
+def decode_queue_request_cursor(value: str | None, *, queue_id: UUID, status: str | None) -> QueueRequestCursorPosition | None:
+    if value is None:
+        return None
+    if not value or len(value) > 512:
+        raise _invalid_cursor()
+    try:
+        decoded = base64.urlsafe_b64decode((value + "=" * (-len(value) % 4)).encode())
+        payload, supplied = decoded[:-32], decoded[-32:]
+        expected = hmac.new(settings.cursor_signing_key.encode(), payload, hashlib.sha256).digest()
+        data = json.loads(payload.decode())
+        if not hmac.compare_digest(supplied, expected) or data.get("v") != 1 or data.get("kind") != "queue-requests" or data.get("queue_id") != str(queue_id) or data.get("status") != status:
+            raise ValueError("cursor binding is invalid")
+        return QueueRequestCursorPosition(created_at=datetime.fromisoformat(str(data["created_at"])), resource_id=UUID(str(data["id"])))
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise _invalid_cursor() from exc
 

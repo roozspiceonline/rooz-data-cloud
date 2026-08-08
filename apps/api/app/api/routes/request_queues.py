@@ -1,12 +1,17 @@
 # ruff: noqa: E501
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
+from ...core.pagination import (
+    decode_queue_request_cursor,
+    encode_queue_request_cursor,
+    normalize_limit,
+)
 from ...models import RequestQueue
 from ...request_queue_protocol import RequestQueueProtocolError, validate_queue_enqueue
 from ...request_queue_schemas import CreateRequestQueueRequest, EnqueueRequest
@@ -66,7 +71,16 @@ async def enqueue(payload: EnqueueRequest, request: Request, access: Annotated[R
 
 
 @router.get("/request-queues/{queue_id}/requests")
-async def list_requests(request: Request, access: Annotated[RequestQueueAccess, Depends(require_request_queue_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object]:
+async def list_requests(request: Request, access: Annotated[RequestQueueAccess, Depends(require_request_queue_permission("queue.read"))], db: Annotated[AsyncSession, Depends(get_db)], cursor: Annotated[str | None, Query()] = None, limit: Annotated[int, Query()] = 50, state: Annotated[str | None, Query(pattern="^(PENDING|CLAIMED|HANDLED|FAILED)$")] = None) -> dict[str, object]:
     from ...models import RequestQueueRequest
-    rows = (await db.scalars(select(RequestQueueRequest).where(RequestQueueRequest.queue_id == access.queue.id).order_by(RequestQueueRequest.created_at.desc()))).all()
-    return {"data": [request_summary(row).model_dump(mode="json") for row in rows], "meta": {"request_id": request_id(request)}}
+    position = decode_queue_request_cursor(cursor, queue_id=access.queue.id, status=state)
+    statement = select(RequestQueueRequest).where(RequestQueueRequest.queue_id == access.queue.id)
+    if state is not None:
+        statement = statement.where(RequestQueueRequest.status == state)
+    if position is not None:
+        statement = statement.where(or_(RequestQueueRequest.created_at < position.created_at, (RequestQueueRequest.created_at == position.created_at) & (RequestQueueRequest.id < position.resource_id)))
+    normalized = normalize_limit(limit)
+    rows = (await db.scalars(statement.order_by(RequestQueueRequest.created_at.desc(), RequestQueueRequest.id.desc()).limit(normalized + 1))).all()
+    page, has_more = rows[:normalized], len(rows) > normalized
+    next_cursor = None if not has_more else encode_queue_request_cursor(queue_id=access.queue.id, status=state, created_at=page[-1].created_at, resource_id=page[-1].id)
+    return {"data": [request_summary(row).model_dump(mode="json") for row in page], "meta": {"request_id": request_id(request), "page": {"next_cursor": next_cursor, "has_more": has_more}}}

@@ -13,6 +13,7 @@ def need(path: str, *markers: str) -> None:
 
 need("apps/api/migrations/versions/20260809_0015_request_queues.py", "ENABLE ROW LEVEL SECURITY", "rdc_request_queue_org", "request_queue_transition_immutable")
 need("apps/api/app/services/request_queues.py", "with_for_update()", "skip_locked=True", "reclaim_expired_requests", "IDEMPOTENCY_KEY_REUSED", "RequestQueueTransition")
+need("apps/api/app/core/pagination.py", "encode_queue_request_cursor", "decode_queue_request_cursor", '"queue-requests"')
 need("docs/phase1p/THREAT_MODEL.md", "RLS", "Idempotency")
 need("docs/phase1p/RUNBOOK.md", "20260809_0015", "Do not expose claim")
 print("Phase 1P verification passed")
