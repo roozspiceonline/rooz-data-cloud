@@ -49,6 +49,161 @@ def main() -> None:
         "rdc_phase1m_navigation",
     )
 
+    egress_module = load_module(
+        "workers/sandbox-runtime/egress_policy.py",
+        "rdc_phase1m_egress_policy",
+    )
+    sys.modules["egress_policy"] = egress_module
+    browser_egress_module = load_module(
+        "workers/sandbox-runtime/browser_egress_policy.py",
+        "rdc_phase1m_browser_egress_policy",
+    )
+    base_egress = egress_module.EgressPolicy.create(
+        ("example.com", "www.example.com"),
+        max_requests=8,
+        max_response_bytes=1_048_576,
+        max_total_bytes=4_194_304,
+        max_redirects=3,
+        connect_timeout_seconds=5,
+        request_timeout_seconds=15,
+    )
+    browser_egress = browser_egress_module.BrowserEgressPolicy.create(
+        base_egress
+    )
+
+    def public_resolver(*args, **kwargs):
+        return [
+            (
+                None,
+                None,
+                None,
+                None,
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    def private_resolver(*args, **kwargs):
+        return [
+            (
+                None,
+                None,
+                None,
+                None,
+                ("127.0.0.1", 443),
+            )
+        ]
+
+    validated_resource = browser_egress.validate_resource(
+        resource_type="document",
+        method="GET",
+        url="https://example.com/",
+        resolver=public_resolver,
+    )
+    require(
+        validated_resource.target.hostname == "example.com",
+        "browser gateway hostname validation changed",
+    )
+    require(
+        validated_resource.target.addresses == ("93.184.216.34",),
+        "browser gateway address pin set changed",
+    )
+    require(
+        len(browser_egress.digest) == 64,
+        "browser gateway digest is not SHA-256 sized",
+    )
+    gateway_payload = browser_egress.as_dict()
+    for marker, expected in [
+        ("deny_ip_literals", True),
+        ("require_global_dns", True),
+        ("pin_validated_address", True),
+        ("revalidate_redirects", True),
+        ("revalidate_subresources", True),
+        ("service_workers_enabled", False),
+        ("websockets_enabled", False),
+        ("webrtc_enabled", False),
+        ("proxy_override_enabled", False),
+        ("persistent_cookies_enabled", False),
+        ("transport_wired", False),
+        ("browser_network", "none"),
+    ]:
+        require(
+            gateway_payload.get(marker) == expected,
+            "browser gateway invariant changed: " + marker,
+        )
+
+    gateway_rejections = [
+        (
+            lambda: browser_egress.validate_resource(
+                resource_type="websocket",
+                method="GET",
+                url="https://example.com/",
+                resolver=public_resolver,
+            ),
+            "WebSocket resource type was accepted",
+        ),
+        (
+            lambda: browser_egress.validate_resource(
+                resource_type="document",
+                method="POST",
+                url="https://example.com/",
+                resolver=public_resolver,
+            ),
+            "POST browser gateway request was accepted",
+        ),
+        (
+            lambda: browser_egress.validate_resource(
+                resource_type="document",
+                method="GET",
+                url="http://example.com/",
+                resolver=public_resolver,
+            ),
+            "HTTP browser gateway target was accepted",
+        ),
+        (
+            lambda: browser_egress.validate_resource(
+                resource_type="image",
+                method="GET",
+                url="https://not-allowed.example/image.png",
+                resolver=public_resolver,
+            ),
+            "non-allowlisted browser subresource was accepted",
+        ),
+        (
+            lambda: browser_egress.validate_resource(
+                resource_type="fetch",
+                method="GET",
+                url="https://example.com/api",
+                resolver=private_resolver,
+            ),
+            "private DNS result was accepted",
+        ),
+    ]
+    for call, message in gateway_rejections:
+        try:
+            call()
+        except browser_egress_module.BrowserEgressPolicyError:
+            pass
+        else:
+            raise SystemExit(
+                "Phase 1M verification failed: " + message
+            )
+
+    gateway_schema = json.loads(
+        read(
+            "packages/agent-protocol/schemas/"
+            "browser-egress-policy.schema.json"
+        )
+    )
+    require(
+        gateway_schema.get("additionalProperties") is False,
+        "browser gateway schema is not strict",
+    )
+    require(
+        gateway_schema["properties"]["schema_version"]["const"]
+        == "rdc.browser-egress-policy/v1",
+        "browser gateway schema version changed",
+    )
+
     policy = policy_module.BrowserPolicy.create(
         enabled=True,
         allowed_hosts=("example.com", "www.example.com"),
@@ -278,6 +433,9 @@ def main() -> None:
         '"dispatch_enabled": False',
         '"browser_network": "none"',
         '"browser_egress_gateway_required": True',
+        '"rdc.browser-egress-policy/v1"',
+        '"browser_egress_policy_digest": browser_egress_policy_digest',
+        '"browser_egress_transport_wired": False',
         'initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"',
         "if not navigation_receipt_only:",
         '"run.browser_navigation_intent_recorded"',
@@ -297,6 +455,7 @@ def main() -> None:
     for marker in [
         "validate_browser_navigation_plan",
         '"rdc.browser-navigation-receipt/v1"',
+        "BrowserEgressPolicy.create",
         "Phase 1M browser navigation execution is not enabled.",
     ]:
         require(
@@ -310,6 +469,9 @@ def main() -> None:
         '"rdc.browser-navigation-receipt/v1"',
         '"browser_navigation_intent_contract_available": True',
         '"browser_navigation_dispatch_enabled": False',
+        '"browser_egress_policy_contract": "rdc.browser-egress-policy/v1"',
+        '"browser_egress_transport_wired": False',
+        '"browser_egress_subresource_revalidation": True',
         '"browser_public_navigation_enabled": False',
     ]:
         require(
@@ -349,6 +511,10 @@ def main() -> None:
     print("  v2 START dispatch: BLOCKED")
     print("  control-plane v2 activation: BLOCKED")
     print("  worker independent v2 receipt validation: PASS")
+    print("  browser egress gateway policy + digest: PASS")
+    print("  global DNS/address pinning contract: PASS")
+    print("  redirect/subresource revalidation contract: PASS")
+    print("  browser egress transport: NOT WIRED")
     print("  browser runtime external navigation: NOT ENABLED")
     print("  browser runtime network: NONE")
 
