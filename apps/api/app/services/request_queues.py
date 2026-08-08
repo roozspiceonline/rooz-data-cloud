@@ -2,7 +2,7 @@
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.errors import ApiError
@@ -76,12 +76,41 @@ async def enqueue_request(session: AsyncSession, *, queue: RequestQueue, user_id
 
 async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id: str, lease_seconds: int = 60) -> RequestQueueRequest | None:
     """Worker-only lifecycle primitive; route exposure is deliberately deferred."""
-    from sqlalchemy import func
+    if not 1 <= lease_seconds <= 300:
+        raise ValueError("lease_seconds must be between 1 and 300")
     row = await session.scalar(select(RequestQueueRequest).where(RequestQueueRequest.queue_id == queue_id, RequestQueueRequest.status == "PENDING", RequestQueueRequest.available_at <= func.now()).order_by(RequestQueueRequest.created_at, RequestQueueRequest.id).with_for_update(skip_locked=True).limit(1))
     if row is None:
         return None
     row.status, row.claimed_by, row.claim_token = "CLAIMED", worker_id, uuid4()
     row.attempt_count += 1
-    row.claim_expires_at = await session.scalar(select(func.now() + f"{lease_seconds} seconds"))
+    row.claim_expires_at = await session.scalar(
+        select(func.now() + text(f"INTERVAL '{lease_seconds} seconds'"))
+    )
     session.add(RequestQueueTransition(organization_id=row.organization_id, project_id=row.project_id, queue_id=row.queue_id, request_id=row.id, from_status="PENDING", to_status="CLAIMED", reason="CLAIMED", attempt_count=row.attempt_count, details={"worker_id": worker_id}))
     return row
+
+
+async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> int:
+    """Lock-safe reclaim primitive; public routes intentionally cannot call it."""
+    rows = (
+        await session.scalars(
+            select(RequestQueueRequest)
+            .where(
+                RequestQueueRequest.queue_id == queue_id,
+                RequestQueueRequest.status == "CLAIMED",
+                RequestQueueRequest.claim_expires_at < func.now(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+    ).all()
+    for row in rows:
+        target = "FAILED" if row.attempt_count >= row.max_attempts else "PENDING"
+        row.status = target
+        row.claimed_by = None
+        row.claim_token = None
+        row.claim_expires_at = None
+        if target == "FAILED":
+            row.failure_code = "LEASE_EXPIRED"
+            row.failure_summary = "Worker lease expired before completion."
+        session.add(RequestQueueTransition(organization_id=row.organization_id, project_id=row.project_id, queue_id=row.queue_id, request_id=row.id, from_status="CLAIMED", to_status=target, reason="LEASE_EXPIRED", attempt_count=row.attempt_count, details={}))
+    return len(rows)
