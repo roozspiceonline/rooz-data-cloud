@@ -264,7 +264,7 @@ async def mutate_worker_key_value_record_route(
 
 @router.post("/leases/{lease_id}/queue-claim")
 async def claim_queue_request_route(payload: Annotated[object, Body()], request: Request, response: Response, access: Annotated[LeaseAccess, Depends(require_lease_access)], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object] | None:
-    result = await claim_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload)
+    result = await claim_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload, request_id=request_id(request))
     if result is None:
         response.status_code = status.HTTP_204_NO_CONTENT
         return None
@@ -273,7 +273,7 @@ async def claim_queue_request_route(payload: Annotated[object, Body()], request:
 
 @router.post("/leases/{lease_id}/queue-complete")
 async def complete_queue_request_route(payload: Annotated[object, Body()], request: Request, access: Annotated[LeaseAccess, Depends(require_lease_access)], db: Annotated[AsyncSession, Depends(get_db)]) -> dict[str, object]:
-    result = await complete_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload)
+    result = await complete_worker_queue_request(db, lease=access.lease, worker=access.context.worker, payload=payload, request_id=request_id(request))
     return success_payload(request, {"id": str(result.id), "status": result.status, "attempt_count": result.attempt_count})
 
 

@@ -6,12 +6,18 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.core.database import engine, session_factory
 from app.core.errors import ApiError
-from app.services.request_queues import claim_next_request, reclaim_expired_requests
+from app.models import RequestQueue
+from app.request_queue_protocol import validate_queue_enqueue
+from app.services.request_queues import (
+    claim_next_request,
+    enqueue_request,
+    reclaim_expired_requests,
+)
 from app.services.worker_request_queue import complete_worker_queue_request
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -26,7 +32,7 @@ async def _database_available() -> bool:
         return False
 
 
-async def _seed() -> tuple[UUID, UUID, UUID, UUID, UUID]:
+async def _seed(*, with_request: bool = True) -> tuple[UUID, UUID, UUID, UUID, UUID]:
     user_id, org_id, project_id, queue_id, request_id = (uuid4() for _ in range(5))
     suffix = uuid4().hex
     async with engine.begin() as connection:
@@ -60,15 +66,16 @@ async def _seed() -> tuple[UUID, UUID, UUID, UUID, UUID]:
             ),
             {"q": queue_id, "o": org_id, "p": project_id, "u": user_id},
         )
-        await connection.execute(
-            text(
-                "INSERT INTO control.request_queue_requests (id,organization_id,project_id,queue_id,request_url,identity_digest,user_data,created_by_user_id) VALUES (:r,:o,:p,:q,'https://example.com/','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}',:u)"
-            ),
-            {"r": request_id, "o": org_id, "p": project_id, "q": queue_id, "u": user_id},
-        )
-        await connection.execute(
-            text("UPDATE control.request_queues SET pending_count=1 WHERE id=:q"), {"q": queue_id}
-        )
+        if with_request:
+            await connection.execute(
+                text(
+                    "INSERT INTO control.request_queue_requests (id,organization_id,project_id,queue_id,request_url,identity_digest,user_data,created_by_user_id) VALUES (:r,:o,:p,:q,'https://example.com/','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}',:u)"
+                ),
+                {"r": request_id, "o": org_id, "p": project_id, "q": queue_id, "u": user_id},
+            )
+            await connection.execute(
+                text("UPDATE control.request_queues SET pending_count=1 WHERE id=:q"), {"q": queue_id}
+            )
     return user_id, org_id, project_id, queue_id, request_id
 
 
@@ -80,7 +87,12 @@ async def test_postgres_simultaneous_claim_is_single_winner_and_counters_hold() 
 
     async def claim(worker: str) -> UUID | None:
         async with session_factory() as session:
-            result = await claim_next_request(session, queue_id=queue_id, worker_id=worker)
+            result = await claim_next_request(
+                session,
+                queue_id=queue_id,
+                worker_id=worker,
+                request_id=f"claim-{worker}",
+            )
             await session.commit()
             return result.id if result else None
 
@@ -95,6 +107,68 @@ async def test_postgres_simultaneous_claim_is_single_winner_and_counters_hold() 
             )
         ).one()
         assert counts == (0, 1)
+        audit = (
+            await connection.execute(
+                text(
+                    "SELECT action,resource_id,details->>'queue_id' FROM security.audit_events WHERE resource_id=:r AND action='request_queue.request_claimed'"
+                ),
+                {"r": str(request_id)},
+            )
+        ).one()
+        assert audit == (
+            "request_queue.request_claimed",
+            str(request_id),
+            str(queue_id),
+        )
+
+
+async def test_postgres_idempotent_enqueue_emits_one_tenant_bound_audit_event() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_id, org_id, project_id, queue_id, _ = await _seed(with_request=False)
+    validated = validate_queue_enqueue(
+        {
+            "schema_version": "rdc.queue-enqueue/v1",
+            "idempotency_key": f"phase1p-{uuid4().hex}",
+            "url": "https://example.com/audit",
+            "unique_key": None,
+            "user_data": {"safe": True},
+        }
+    )
+    async with session_factory() as session:
+        queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id))
+        assert queue is not None
+        first = await enqueue_request(
+            session,
+            queue=queue,
+            user_id=user_id,
+            actor_type="user",
+            actor_id=str(user_id),
+            request_id="enqueue-original",
+            validated=validated,
+        )
+        replay = await enqueue_request(
+            session,
+            queue=queue,
+            user_id=user_id,
+            actor_type="user",
+            actor_id=str(user_id),
+            request_id="enqueue-replay",
+            validated=validated,
+        )
+        assert replay.replayed is True
+        assert replay.receipt.id == first.receipt.id
+        await session.commit()
+    async with engine.connect() as connection:
+        audit_rows = (
+            await connection.execute(
+                text(
+                    "SELECT organization_id,project_id,request_id,details->>'queue_id' FROM security.audit_events WHERE resource_id=:r AND action='request_queue.request_enqueued'"
+                ),
+                {"r": str(first.receipt.request_id)},
+            )
+        ).all()
+        assert audit_rows == [(org_id, project_id, "enqueue-original", str(queue_id))]
 
 
 async def test_postgres_tenancy_trigger_rejects_cross_project_queue_request() -> None:
@@ -128,7 +202,12 @@ async def test_postgres_expired_claim_requeues_and_reconciles_counters() -> None
             {"q": queue_id},
         )
     async with session_factory() as session:
-        assert await reclaim_expired_requests(session, queue_id=queue_id) == 1
+        assert await reclaim_expired_requests(
+            session,
+            queue_id=queue_id,
+            worker_id="reclaimer",
+            request_id="reclaim-request",
+        ) == 1
         await session.commit()
     async with engine.connect() as connection:
         row = (
@@ -147,6 +226,15 @@ async def test_postgres_expired_claim_requeues_and_reconciles_counters() -> None
         ).one()
         assert row == ("PENDING", 1)
         assert counts == (1, 0, 0)
+        audit = (
+            await connection.execute(
+                text(
+                    "SELECT action,actor_id,details->>'reason' FROM security.audit_events WHERE resource_id=:r AND action='request_queue.request_reclaimed'"
+                ),
+                {"r": str(request_id)},
+            )
+        ).one()
+        assert audit == ("request_queue.request_reclaimed", "reclaimer", "LEASE_EXPIRED")
 
 
 async def test_postgres_retry_exhaustion_fails_and_reconciles_counters() -> None:
@@ -165,7 +253,12 @@ async def test_postgres_retry_exhaustion_fails_and_reconciles_counters() -> None
             {"q": queue_id},
         )
     async with session_factory() as session:
-        assert await reclaim_expired_requests(session, queue_id=queue_id) == 1
+        assert await reclaim_expired_requests(
+            session,
+            queue_id=queue_id,
+            worker_id="reclaimer",
+            request_id="retry-exhausted",
+        ) == 1
         await session.commit()
     async with engine.connect() as connection:
         row = (
@@ -184,6 +277,112 @@ async def test_postgres_retry_exhaustion_fails_and_reconciles_counters() -> None
         ).one()
         assert row == ("FAILED", "LEASE_EXPIRED")
         assert counts == (0, 0, 1)
+        audit = (
+            await connection.execute(
+                text(
+                    "SELECT action,details->>'reason' FROM security.audit_events WHERE resource_id=:r AND action='request_queue.request_failed'"
+                ),
+                {"r": str(request_id)},
+            )
+        ).one()
+        assert audit == ("request_queue.request_failed", "LEASE_EXPIRED")
+
+
+async def test_postgres_audit_events_reject_cross_tenant_projects_and_mutation() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    user_a, org_a, project_a, _, request_a = await _seed()
+    user_b, org_b, project_b, _, request_b = await _seed()
+    with pytest.raises(DBAPIError, match="tenancy mismatch"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "INSERT INTO security.audit_events (organization_id,project_id,actor_type,actor_id,action,resource_type,resource_id,request_id,details,created_at) VALUES (:o,:p,'user',:actor,'request_queue.request_enqueued','request_queue_request',:r,'cross-tenant','{}',CURRENT_TIMESTAMP)"
+                ),
+                {
+                    "o": org_a,
+                    "p": project_b,
+                    "actor": str(user_a),
+                    "r": str(request_a),
+                },
+            )
+    audit_id = uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO security.audit_events (id,organization_id,project_id,actor_type,actor_id,action,resource_type,resource_id,request_id,details,created_at) VALUES (:id,:o,:p,'user',:actor,'request_queue.request_enqueued','request_queue_request',:r,'immutable','{}',CURRENT_TIMESTAMP)"
+            ),
+            {
+                "id": audit_id,
+                "o": org_a,
+                "p": project_a,
+                "actor": str(user_a),
+                "r": str(request_a),
+            },
+        )
+    with pytest.raises(DBAPIError, match="immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE security.audit_events SET details='{}' WHERE id=:id"),
+                {"id": audit_id},
+            )
+    with pytest.raises(DBAPIError, match="immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DELETE FROM security.audit_events WHERE id=:id"),
+                {"id": audit_id},
+            )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO security.audit_events (organization_id,project_id,actor_type,actor_id,action,resource_type,resource_id,request_id,details,created_at) VALUES (:o,:p,'user',:actor,'request_queue.request_enqueued','request_queue_request',:r,'tenant-b','{}',CURRENT_TIMESTAMP)"
+            ),
+            {
+                "o": org_b,
+                "p": project_b,
+                "actor": str(user_b),
+                "r": str(request_b),
+            },
+        )
+        await connection.execute(
+            text(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='rdc_phase1p_audit_rls_test') THEN CREATE ROLE rdc_phase1p_audit_rls_test NOLOGIN; END IF; END $$"
+            )
+        )
+        await connection.execute(
+            text("GRANT USAGE ON SCHEMA security TO rdc_phase1p_audit_rls_test")
+        )
+        await connection.execute(
+            text(
+                "GRANT SELECT ON security.audit_events TO rdc_phase1p_audit_rls_test"
+            )
+        )
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SET LOCAL ROLE rdc_phase1p_audit_rls_test"))
+            await connection.execute(
+                text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                {"u": str(user_a)},
+            )
+            await connection.execute(
+                text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                {"o": str(org_a)},
+            )
+            visible = (
+                await connection.execute(
+                    text(
+                        "SELECT resource_id FROM security.audit_events WHERE resource_id IN (:a,:b) ORDER BY resource_id"
+                    ),
+                    {"a": str(request_a), "b": str(request_b)},
+                )
+            ).scalars().all()
+            assert visible == [str(request_a)]
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("DROP OWNED BY rdc_phase1p_audit_rls_test")
+            )
+            await connection.execute(text("DROP ROLE rdc_phase1p_audit_rls_test"))
 
 
 async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
@@ -203,6 +402,92 @@ async def test_postgres_cross_tenant_resolver_denies_queue_discovery() -> None:
                 text("SELECT security.rdc_request_queue_org(:q)"), {"q": queue_b}
             )
             is None
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "action"),
+    [
+        ("HANDLED", "request_queue.request_handled"),
+        ("FAILED", "request_queue.request_failed"),
+    ],
+)
+async def test_postgres_worker_completion_emits_tenant_bound_audit_event(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    action: str,
+) -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    _, org_id, project_id, queue_id, request_id = await _seed()
+    worker_id, claim_token = uuid4(), uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.request_queue_requests SET status='CLAIMED',attempt_count=1,claimed_by=:w,claim_token=:t,claim_expires_at=CURRENT_TIMESTAMP+INTERVAL '1 minute' WHERE id=:r"
+            ),
+            {"w": str(worker_id), "t": claim_token, "r": request_id},
+        )
+        await connection.execute(
+            text("UPDATE control.request_queues SET pending_count=0,claimed_count=1 WHERE id=:q"),
+            {"q": queue_id},
+        )
+    from app.services import worker_request_queue as worker_service
+
+    monkeypatch.setattr(worker_service.settings, "sandbox_execution_enabled", True)
+    monkeypatch.setattr(worker_service.settings, "sandbox_activation_mode", "canary")
+    monkeypatch.setattr(worker_service.settings, "sandbox_canary_request_queue_enabled", True)
+    monkeypatch.setattr(worker_service.settings, "sandbox_canary_worker_name", "phase1p-worker")
+    monkeypatch.setattr(
+        worker_service.settings, "sandbox_canary_agent_version_id", "phase1p-version"
+    )
+    lease = SimpleNamespace(
+        id=uuid4(),
+        organization_id=org_id,
+        project_id=project_id,
+        work_kind="RUN",
+        payload_snapshot={
+            "agent_version_id": "phase1p-version",
+            "manifest": {"capabilities": {"requestQueue": True}},
+        },
+    )
+    worker = SimpleNamespace(
+        id=worker_id, name="phase1p-worker", capabilities=["REQUEST_QUEUE_ACCESS"]
+    )
+    payload = {
+        "queue_id": str(queue_id),
+        "request_id": str(request_id),
+        "claim_token": str(claim_token),
+        "status": target,
+        "failure_code": "FETCH_FAILED" if target == "FAILED" else None,
+        "failure_summary": "private failure detail" if target == "FAILED" else None,
+    }
+    async with session_factory() as session:
+        result = await complete_worker_queue_request(
+            session,
+            lease=lease,
+            worker=worker,
+            payload=payload,
+            request_id=f"complete-{target.casefold()}",
+        )  # type: ignore[arg-type]
+        assert result.status == target
+        await session.commit()
+    async with engine.connect() as connection:
+        audit = (
+            await connection.execute(
+                text(
+                    "SELECT organization_id,project_id,action,actor_id,details->>'queue_id',details ? 'failure_summary' FROM security.audit_events WHERE resource_id=:r AND action=:action"
+                ),
+                {"r": str(request_id), "action": action},
+            )
+        ).one()
+        assert audit == (
+            org_id,
+            project_id,
+            action,
+            str(worker_id),
+            str(queue_id),
+            False,
         )
 
 
@@ -255,5 +540,9 @@ async def test_postgres_stale_claim_token_cannot_complete(monkeypatch: pytest.Mo
     async with session_factory() as session:
         with pytest.raises(ApiError, match="stale or invalid"):
             await complete_worker_queue_request(
-                session, lease=lease, worker=worker, payload=payload
+                session,
+                lease=lease,
+                worker=worker,
+                payload=payload,
+                request_id="stale-completion",
             )  # type: ignore[arg-type]

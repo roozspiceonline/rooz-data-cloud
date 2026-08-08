@@ -11,10 +11,20 @@ incident and retain immutable transition history for investigation.
 Authenticated queue readers can retrieve bounded transition history. Treat it
 as forensic data: it is immutable and should not be edited or deleted.
 
+Monitor the immutable audit stream for `request_queue.request_enqueued`,
+`request_queue.request_claimed`, `request_queue.request_reclaimed`,
+`request_queue.request_handled`, and `request_queue.request_failed`. Correlate
+an event through its request ID, request resource ID, Queue ID, actor, and
+transition history. Audit payloads intentionally omit URLs, user data, claim
+tokens, and failure summaries. A rejected audit tenancy trigger or attempted
+audit mutation is a security incident.
+
 Worker Queue access remains off unless sandbox execution, canary activation,
 and `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` are all enabled. Enable it only
 for the pinned canary and monitor stale-claim, retry, and tenancy failures.
 
-CI runs the migration against PostgreSQL and exercises simultaneous claims and
-cross-project trigger rejection. Rollback removes receipts and transition rows
-before requests and queues so foreign-key dependencies remain valid.
+CI runs the migration against PostgreSQL and exercises simultaneous claims,
+cross-project trigger rejection, lifecycle audit lineage, audit tenancy guards,
+and audit immutability. Rollback removes the Phase 1P audit triggers before
+receipts and transition rows, then removes requests and queues so foreign-key
+dependencies remain valid.

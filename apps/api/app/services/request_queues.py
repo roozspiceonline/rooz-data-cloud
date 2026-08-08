@@ -52,7 +52,7 @@ async def create_request_queue(session: AsyncSession, *, project: Project, user_
     return queue
 
 
-async def enqueue_request(session: AsyncSession, *, queue: RequestQueue, user_id: UUID, validated: ValidatedQueueEnqueue) -> EnqueueOutcome:
+async def enqueue_request(session: AsyncSession, *, queue: RequestQueue, user_id: UUID, actor_type: str, actor_id: str, request_id: str, validated: ValidatedQueueEnqueue) -> EnqueueOutcome:
     # Serialize per queue: the receipt lookup and insert are one idempotent transaction.
     await session.execute(select(RequestQueue.id).where(RequestQueue.id == queue.id).with_for_update())
     existing = await session.scalar(select(RequestQueueEnqueueReceipt).where(RequestQueueEnqueueReceipt.queue_id == queue.id, RequestQueueEnqueueReceipt.idempotency_key == validated.request["idempotency_key"]))
@@ -71,10 +71,27 @@ async def enqueue_request(session: AsyncSession, *, queue: RequestQueue, user_id
     session.add(RequestQueueTransition(organization_id=queue.organization_id, project_id=queue.project_id, queue_id=queue.id, request_id=request.id, from_status=None, to_status="PENDING", reason="ENQUEUED", attempt_count=0, details={}))
     queue.pending_count += 1
     await session.flush()
+    await append_audit_event(
+        session,
+        organization_id=queue.organization_id,
+        project_id=queue.project_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="request_queue.request_enqueued",
+        resource_type="request_queue_request",
+        resource_id=str(request.id),
+        request_id=request_id,
+        details={
+            "queue_id": str(queue.id),
+            "receipt_id": str(receipt.id),
+            "request_digest": validated.request_digest,
+            "identity_digest": validated.identity_digest,
+        },
+    )
     return EnqueueOutcome(receipt=receipt, replayed=False)
 
 
-async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id: str, lease_seconds: int = 60) -> RequestQueueRequest | None:
+async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id: str, request_id: str, lease_seconds: int = 60) -> RequestQueueRequest | None:
     """Worker-only lifecycle primitive; route exposure is deliberately deferred."""
     if not 1 <= lease_seconds <= 300:
         raise ValueError("lease_seconds must be between 1 and 300")
@@ -88,14 +105,33 @@ async def claim_next_request(session: AsyncSession, *, queue_id: UUID, worker_id
     row.attempt_count += 1
     queue.pending_count -= 1
     queue.claimed_count += 1
-    row.claim_expires_at = await session.scalar(
+    claim_expires_at = await session.scalar(
         select(func.now() + text(f"INTERVAL '{lease_seconds} seconds'"))
     )
+    if claim_expires_at is None:
+        raise RuntimeError("PostgreSQL did not return a Queue claim expiration")
+    row.claim_expires_at = claim_expires_at
     session.add(RequestQueueTransition(organization_id=row.organization_id, project_id=row.project_id, queue_id=row.queue_id, request_id=row.id, from_status="PENDING", to_status="CLAIMED", reason="CLAIMED", attempt_count=row.attempt_count, details={"worker_id": worker_id}))
+    await append_audit_event(
+        session,
+        organization_id=row.organization_id,
+        project_id=row.project_id,
+        actor_type="worker",
+        actor_id=worker_id,
+        action="request_queue.request_claimed",
+        resource_type="request_queue_request",
+        resource_id=str(row.id),
+        request_id=request_id,
+        details={
+            "queue_id": str(row.queue_id),
+            "attempt_count": row.attempt_count,
+            "claim_expires_at": claim_expires_at.isoformat(),
+        },
+    )
     return row
 
 
-async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> int:
+async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID, worker_id: str, request_id: str) -> int:
     """Lock-safe reclaim primitive; public routes intentionally cannot call it."""
     queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id).with_for_update())
     if queue is None:
@@ -112,6 +148,7 @@ async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> 
         )
     ).all()
     for row in rows:
+        expired_worker_id = row.claimed_by
         target = "FAILED" if row.attempt_count >= row.max_attempts else "PENDING"
         row.status = target
         row.claimed_by = None
@@ -126,4 +163,25 @@ async def reclaim_expired_requests(session: AsyncSession, *, queue_id: UUID) -> 
             row.failure_code = "LEASE_EXPIRED"
             row.failure_summary = "Worker lease expired before completion."
         session.add(RequestQueueTransition(organization_id=row.organization_id, project_id=row.project_id, queue_id=row.queue_id, request_id=row.id, from_status="CLAIMED", to_status=target, reason="LEASE_EXPIRED", attempt_count=row.attempt_count, details={}))
+        await append_audit_event(
+            session,
+            organization_id=row.organization_id,
+            project_id=row.project_id,
+            actor_type="worker",
+            actor_id=worker_id,
+            action=(
+                "request_queue.request_failed"
+                if target == "FAILED"
+                else "request_queue.request_reclaimed"
+            ),
+            resource_type="request_queue_request",
+            resource_id=str(row.id),
+            request_id=request_id,
+            details={
+                "queue_id": str(row.queue_id),
+                "attempt_count": row.attempt_count,
+                "reason": "LEASE_EXPIRED",
+                "expired_worker_id": expired_worker_id,
+            },
+        )
     return len(rows)

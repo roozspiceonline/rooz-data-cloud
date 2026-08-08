@@ -32,10 +32,18 @@ def upgrade() -> None:
         op.execute(f'CREATE TRIGGER {table}_tenancy_guard BEFORE INSERT OR UPDATE ON control.{table} FOR EACH ROW EXECUTE FUNCTION control.enforce_request_queue_tenancy()')
     op.execute('''CREATE OR REPLACE FUNCTION control.request_queue_transition_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Request Queue transitions are immutable' USING ERRCODE = '23514'; END; $$''')
     op.execute('CREATE TRIGGER request_queue_transitions_immutable BEFORE UPDATE OR DELETE ON control.request_queue_transitions FOR EACH ROW EXECUTE FUNCTION control.request_queue_transition_immutable()')
+    op.execute('''CREATE OR REPLACE FUNCTION security.enforce_audit_event_tenancy() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = control, identity, security, pg_temp AS $$ BEGIN IF NEW.project_id IS NOT NULL AND (NEW.organization_id IS NULL OR NOT EXISTS (SELECT 1 FROM control.projects p WHERE p.id = NEW.project_id AND p.organization_id = NEW.organization_id)) THEN RAISE EXCEPTION 'Audit event project tenancy mismatch' USING ERRCODE = '23514'; END IF; RETURN NEW; END; $$''')
+    op.execute('CREATE TRIGGER audit_events_tenancy_guard BEFORE INSERT ON security.audit_events FOR EACH ROW EXECUTE FUNCTION security.enforce_audit_event_tenancy()')
+    op.execute('''CREATE OR REPLACE FUNCTION security.audit_event_immutable() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Audit events are immutable' USING ERRCODE = '23514'; END; $$''')
+    op.execute('CREATE TRIGGER audit_events_immutable BEFORE UPDATE OR DELETE ON security.audit_events FOR EACH ROW EXECUTE FUNCTION security.audit_event_immutable()')
     op.execute('''CREATE OR REPLACE FUNCTION security.rdc_request_queue_org(target_queue uuid) RETURNS uuid LANGUAGE sql STABLE SECURITY DEFINER SET search_path = control, identity, security, pg_temp AS $$ SELECT q.organization_id FROM control.request_queues q WHERE q.id = target_queue AND security.rdc_has_org_membership(q.organization_id) $$''')
 
 
 def downgrade() -> None:
+    op.execute('DROP TRIGGER IF EXISTS audit_events_immutable ON security.audit_events')
+    op.execute('DROP TRIGGER IF EXISTS audit_events_tenancy_guard ON security.audit_events')
+    op.execute('DROP FUNCTION IF EXISTS security.audit_event_immutable()')
+    op.execute('DROP FUNCTION IF EXISTS security.enforce_audit_event_tenancy()')
     for table in ("request_queue_enqueue_receipts", "request_queue_transitions", "request_queue_requests", "request_queues"):
         op.execute(f'DROP POLICY IF EXISTS {table}_tenant ON control.{table}')
     op.execute('DROP FUNCTION IF EXISTS security.rdc_request_queue_org(uuid)')

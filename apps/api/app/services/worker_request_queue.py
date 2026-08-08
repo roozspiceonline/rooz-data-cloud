@@ -14,6 +14,7 @@ from ..models import (
     RequestQueueTransition,
     WorkerIdentity,
 )
+from .identity_tenancy import append_audit_event
 from .request_queues import claim_next_request, reclaim_expired_requests
 
 settings = get_settings()
@@ -26,7 +27,7 @@ def _enabled(lease: ExecutionLease, worker: WorkerIdentity) -> None:
         raise ApiError(status_code=403, code="WORKER_REQUEST_QUEUE_DISABLED", message="Worker Request Queue access is disabled.")
 
 
-async def claim_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object) -> RequestQueueRequest | None:
+async def claim_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object, request_id: str) -> RequestQueueRequest | None:
     _enabled(lease, worker)
     if not isinstance(payload, dict) or set(payload) != {"queue_id"}:
         raise ApiError(status_code=422, code="REQUEST_QUEUE_WORKER_PROTOCOL_INVALID", message="Queue claim payload is invalid.")
@@ -37,22 +38,33 @@ async def claim_worker_queue_request(session: AsyncSession, *, lease: ExecutionL
     queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id, RequestQueue.organization_id == lease.organization_id, RequestQueue.project_id == lease.project_id))
     if queue is None:
         raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
-    await reclaim_expired_requests(session, queue_id=queue.id)
-    return await claim_next_request(session, queue_id=queue.id, worker_id=str(worker.id), lease_seconds=settings.worker_lease_seconds)
+    await reclaim_expired_requests(
+        session,
+        queue_id=queue.id,
+        worker_id=str(worker.id),
+        request_id=request_id,
+    )
+    return await claim_next_request(
+        session,
+        queue_id=queue.id,
+        worker_id=str(worker.id),
+        request_id=request_id,
+        lease_seconds=settings.worker_lease_seconds,
+    )
 
 
-async def complete_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object) -> RequestQueueRequest:
+async def complete_worker_queue_request(session: AsyncSession, *, lease: ExecutionLease, worker: WorkerIdentity, payload: object, request_id: str) -> RequestQueueRequest:
     _enabled(lease, worker)
     if not isinstance(payload, dict) or set(payload) != {"queue_id", "request_id", "claim_token", "status", "failure_code", "failure_summary"} or payload["status"] not in {"HANDLED", "FAILED"}:
         raise ApiError(status_code=422, code="REQUEST_QUEUE_WORKER_PROTOCOL_INVALID", message="Queue completion payload is invalid.")
     try:
-        queue_id, request_id, claim_token = UUID(str(payload["queue_id"])), UUID(str(payload["request_id"])), UUID(str(payload["claim_token"]))
+        queue_id, queue_request_id, claim_token = UUID(str(payload["queue_id"])), UUID(str(payload["request_id"])), UUID(str(payload["claim_token"]))
     except ValueError as exc:
         raise ApiError(status_code=422, code="REQUEST_QUEUE_WORKER_PROTOCOL_INVALID", message="Queue completion payload is invalid.") from exc
     queue = await session.scalar(select(RequestQueue).where(RequestQueue.id == queue_id, RequestQueue.organization_id == lease.organization_id, RequestQueue.project_id == lease.project_id).with_for_update())
     if queue is None:
         raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
-    row = await session.scalar(select(RequestQueueRequest).where(RequestQueueRequest.id == request_id, RequestQueueRequest.queue_id == queue_id, RequestQueueRequest.organization_id == lease.organization_id, RequestQueueRequest.project_id == lease.project_id).with_for_update())
+    row = await session.scalar(select(RequestQueueRequest).where(RequestQueueRequest.id == queue_request_id, RequestQueueRequest.queue_id == queue_id, RequestQueueRequest.organization_id == lease.organization_id, RequestQueueRequest.project_id == lease.project_id).with_for_update())
     if row is None:
         raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
     if row.status != "CLAIMED" or row.claimed_by != str(worker.id) or row.claim_token != claim_token or row.claim_expires_at is None or row.claim_expires_at <= datetime.now(UTC):
@@ -68,4 +80,26 @@ async def complete_worker_queue_request(session: AsyncSession, *, lease: Executi
     row.failure_code = str(payload["failure_code"])[:80] if target == "FAILED" and payload["failure_code"] else None
     row.failure_summary = str(payload["failure_summary"])[:2000] if target == "FAILED" and payload["failure_summary"] else None
     session.add(RequestQueueTransition(organization_id=row.organization_id, project_id=row.project_id, queue_id=row.queue_id, request_id=row.id, from_status="CLAIMED", to_status=target, reason="WORKER_COMPLETED", attempt_count=row.attempt_count, details={"worker_id": str(worker.id), "lease_id": str(lease.id)}))
+    await append_audit_event(
+        session,
+        organization_id=row.organization_id,
+        project_id=row.project_id,
+        actor_type="worker",
+        actor_id=str(worker.id),
+        action=(
+            "request_queue.request_handled"
+            if target == "HANDLED"
+            else "request_queue.request_failed"
+        ),
+        resource_type="request_queue_request",
+        resource_id=str(row.id),
+        request_id=request_id,
+        details={
+            "queue_id": str(row.queue_id),
+            "lease_id": str(lease.id),
+            "attempt_count": row.attempt_count,
+            "reason": "WORKER_COMPLETED",
+            "failure_code": row.failure_code,
+        },
+    )
     return row

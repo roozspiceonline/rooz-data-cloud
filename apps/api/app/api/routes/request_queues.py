@@ -70,7 +70,8 @@ async def enqueue(payload: EnqueueRequest, request: Request, access: Annotated[R
     except RequestQueueProtocolError as exc:
         from ...core.errors import ApiError
         raise ApiError(status_code=422, code="REQUEST_QUEUE_PROTOCOL_INVALID", message=str(exc)) from exc
-    outcome = await enqueue_request(db, queue=access.queue, user_id=access.context.user.id, validated=validated)
+    actor_type, actor_id = actor(access.context)
+    outcome = await enqueue_request(db, queue=access.queue, user_id=access.context.user.id, actor_type=actor_type, actor_id=actor_id, request_id=request_id(request), validated=validated)
     return success_payload(request, receipt_summary(outcome).model_dump(mode="json"))
 
 

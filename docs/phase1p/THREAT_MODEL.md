@@ -11,6 +11,14 @@ remain a worker responsibility.
 Idempotency is serialized by a queue-row lock. A reused key with different bytes
 fails closed. Equivalent request identities are unique per queue.
 
+Each new enqueue and every successful claim, reclaim, handled, or failed state
+transition appends an organization- and project-bound immutable audit event in
+the same database transaction. Audit records contain lineage identifiers,
+digests, attempts, and bounded failure codes; they never contain request URLs,
+user data, claim tokens, or failure summaries. PostgreSQL rejects audit events
+whose project does not belong to the recorded organization, and rejects audit
+event updates and deletes.
+
 Worker claim and completion require an ACTIVE unexpired lease plus a dedicated
 false-by-default canary gate. Queue tenancy is derived from the lease, and each
 completion is bound to both the claiming worker and an unguessable claim token.
