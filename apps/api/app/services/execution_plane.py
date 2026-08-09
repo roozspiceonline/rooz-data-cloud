@@ -766,13 +766,175 @@ async def heartbeat_worker(
     return worker_summary(worker)
 
 
+async def _fence_cancelled_run_leases(
+    session: AsyncSession,
+    *,
+    run_id: UUID,
+    now: datetime,
+    preserve_lease_id: UUID | None = None,
+    preserve_source_id: UUID | None = None,
+) -> int:
+    leases = list(
+        (
+            await session.scalars(
+                select(ExecutionLease)
+                .where(
+                    ExecutionLease.run_id == run_id,
+                    ExecutionLease.status == "ACTIVE",
+                )
+                .order_by(ExecutionLease.id.asc())
+                .with_for_update(skip_locked=True)
+            )
+        ).all()
+    )
+    cancelled_ids: list[UUID] = []
+    for active_lease in leases:
+        if active_lease.id == preserve_lease_id:
+            continue
+        active_lease.status = "CANCELLED"
+        active_lease.completed_at = now
+        active_lease.failure_code = "RUN_CANCELLED"
+        active_lease.failure_summary = "The Run cancellation was converged."
+        active_lease.updated_at = now
+        cancelled_ids.append(active_lease.id)
+    if cancelled_ids:
+        grants = list(
+            (
+                await session.scalars(
+                    select(SecretInjectionGrant).where(
+                        SecretInjectionGrant.lease_id.in_(cancelled_ids),
+                        SecretInjectionGrant.status == "ISSUED",
+                    )
+                )
+            ).all()
+        )
+        for grant in grants:
+            grant.status = "REVOKED"
+    commands = list(
+        (
+            await session.scalars(
+                select(RunCommandOutbox)
+                .where(
+                    RunCommandOutbox.run_id == run_id,
+                    RunCommandOutbox.status.in_({"PENDING", "CLAIMED"}),
+                )
+                .order_by(RunCommandOutbox.id.asc())
+                .with_for_update()
+            )
+        ).all()
+    )
+    for command in commands:
+        if command.id == preserve_source_id:
+            continue
+        command.status = "CANCELLED"
+        command.last_error_code = "RUN_CANCELLATION_CONVERGED"
+        command.updated_at = now
+    return len(cancelled_ids)
+
+
+async def _converge_cancelled_run(
+    session: AsyncSession,
+    *,
+    run_id: UUID,
+    now: datetime,
+    request_id: str,
+    reason: str,
+) -> bool:
+    fenced_lease_count = await _fence_cancelled_run_leases(
+        session,
+        run_id=run_id,
+        now=now,
+    )
+    run = await session.scalar(
+        select(Run).where(Run.id == run_id).with_for_update()
+    )
+    if run is None or run.cancel_requested_at is None:
+        return False
+    previous = run.status
+    run.status = "ABORTED"
+    run.finished_at = run.finished_at or now
+    run.failure_code = None
+    run.failure_summary = None
+    run.updated_at = now
+    if previous != "ABORTED":
+        run.version += 1
+        await append_run_event(
+            session,
+            run=run,
+            event_type="run.status",
+            payload={"previous_status": previous, "status": "ABORTED"},
+        )
+        await append_run_event(
+            session,
+            run=run,
+            event_type="run.completed",
+            payload={"status": "ABORTED", "reason": reason},
+        )
+        await append_audit_event(
+            session,
+            organization_id=run.organization_id,
+            project_id=run.project_id,
+            actor_type="system",
+            actor_id="cancellation-reaper",
+            action="run.cancellation_converged",
+            resource_type="run",
+            resource_id=str(run.id),
+            request_id=request_id,
+            details={
+                "previous_status": previous,
+                "reason": reason,
+                "fenced_lease_count": fenced_lease_count,
+                "cancel_deadline_at": (
+                    run.cancel_deadline_at.isoformat()
+                    if run.cancel_deadline_at is not None
+                    else None
+                ),
+            },
+        )
+    return True
+
+
+async def reap_overdue_cancellations(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    request_id: str,
+) -> int:
+    run_ids = list(
+        (
+            await session.scalars(
+                select(Run.id)
+                .where(
+                    Run.status == "ABORTING",
+                    Run.cancel_requested_at.is_not(None),
+                    Run.cancel_deadline_at <= now,
+                )
+                .order_by(Run.cancel_deadline_at.asc(), Run.id.asc())
+                .limit(100)
+            )
+        ).all()
+    )
+    converged = 0
+    for run_id in run_ids:
+        if await _converge_cancelled_run(
+            session,
+            run_id=run_id,
+            now=now,
+            request_id=request_id,
+            reason="CANCEL_DEADLINE_EXCEEDED",
+        ):
+            converged += 1
+    return converged
+
+
 async def _reset_expired_source(
     session: AsyncSession,
     *,
     lease: ExecutionLease,
     now: datetime,
     deadline_exceeded: bool,
-) -> datetime | None:
+    request_id: str,
+) -> tuple[datetime | None, bool]:
     if lease.work_kind == "BUILD":
         source = await session.scalar(
             select(BuildDispatchOutbox).where(
@@ -828,7 +990,7 @@ async def _reset_expired_source(
             build.completed_at = None if retry else now
             build.updated_at = now
             build.version += 1
-        return next_attempt_at
+        return next_attempt_at, False
 
     source = await session.scalar(
         select(RunCommandOutbox).where(
@@ -836,6 +998,23 @@ async def _reset_expired_source(
         )
     )
     run = await session.scalar(select(Run).where(Run.id == lease.run_id))
+    if (
+        run is not None
+        and run.cancel_requested_at is not None
+        and lease.work_kind in {"RUN_START", "RUN_CANCEL"}
+        and await _converge_cancelled_run(
+            session,
+            run_id=run.id,
+            now=now,
+            request_id=request_id,
+            reason=(
+                "RUN_START_LEASE_LOST"
+                if lease.work_kind == "RUN_START"
+                else "RUN_CANCEL_LEASE_LOST"
+            ),
+        )
+    ):
+        return None, True
     failure_code = (
         "WORKLOAD_DEADLINE_EXCEEDED"
         if deadline_exceeded
@@ -864,7 +1043,7 @@ async def _reset_expired_source(
         source.last_error_code = failure_code
         source.updated_at = now
     if run is None:
-        return next_attempt_at
+        return next_attempt_at, False
     previous = run.status
     if lease.work_kind == "RUN_START":
         run.status = (
@@ -905,7 +1084,7 @@ async def _reset_expired_source(
             event_type="run.status",
             payload={"previous_status": previous, "status": run.status},
         )
-    return next_attempt_at
+    return next_attempt_at, False
 
 
 async def reap_expired_leases(
@@ -934,12 +1113,32 @@ async def reap_expired_leases(
     )
     for lease in records:
         deadline_exceeded = lease.deadline_at <= current
-        next_attempt_at = await _reset_expired_source(
+        next_attempt_at, cancellation_converged = await _reset_expired_source(
             session,
             lease=lease,
             now=current,
             deadline_exceeded=deadline_exceeded,
+            request_id=request_id,
         )
+        if cancellation_converged:
+            await append_audit_event(
+                session,
+                organization_id=lease.organization_id,
+                project_id=lease.project_id,
+                actor_type="system",
+                actor_id="cancellation-reaper",
+                action="execution.lease.cancellation_converged",
+                resource_type="execution_lease",
+                resource_id=str(lease.id),
+                request_id=request_id,
+                details={
+                    "work_kind": lease.work_kind,
+                    "attempt": lease.attempt,
+                    "worker_id": str(lease.worker_id),
+                    "retry_scheduled": False,
+                },
+            )
+            continue
         grants = list(
             (
                 await session.scalars(
@@ -993,6 +1192,11 @@ async def reap_expired_leases(
                 ),
             },
         )
+    await reap_overdue_cancellations(
+        session,
+        now=current,
+        request_id=request_id,
+    )
     return len(records)
 
 
@@ -1109,6 +1313,16 @@ async def _run_claim_payload(
         "manifest": dict(version.manifest),
         "input_reference": dict(run.input_reference),
         "runtime": dict(run.runtime_configuration),
+        "cancel_requested_at": (
+            run.cancel_requested_at.isoformat()
+            if run.cancel_requested_at is not None
+            else None
+        ),
+        "cancel_deadline_at": (
+            run.cancel_deadline_at.isoformat()
+            if run.cancel_deadline_at is not None
+            else None
+        ),
         "artifact": (
             {
                 "id": str(artifact.id),
@@ -1203,6 +1417,31 @@ def _execution_timeout_seconds(
     return min(raw_timeout, ceiling)
 
 
+def _cancellation_deadline_from_source(source: RunCommandOutbox) -> datetime:
+    raw_deadline = source.payload.get("cancel_deadline_at")
+    if not isinstance(raw_deadline, str):
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_DEADLINE_INVALID",
+            message="The persisted cancellation has no convergence deadline.",
+        )
+    try:
+        deadline = datetime.fromisoformat(raw_deadline)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_DEADLINE_INVALID",
+            message="The persisted cancellation deadline is invalid.",
+        ) from exc
+    if deadline.tzinfo is None:
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_DEADLINE_INVALID",
+            message="The persisted cancellation deadline is invalid.",
+        )
+    return deadline
+
+
 async def _lock_worker_claims(
     session: AsyncSession,
     *,
@@ -1281,6 +1520,17 @@ async def claim_work(
             claimed_at=now,
             timeout_seconds=timeout_seconds,
         )
+        if kind == "RUN_CANCEL" and isinstance(source, RunCommandOutbox):
+            deadline_at = min(
+                deadline_at,
+                _cancellation_deadline_from_source(source),
+            )
+        if deadline_at <= now:
+            raise ApiError(
+                status_code=409,
+                code="WORK_ITEM_DEADLINE_EXPIRED",
+                message="The persisted work item deadline has expired.",
+            )
         expires_at = clamp_lease_expiry(
             proposed=now + timedelta(seconds=settings.worker_lease_seconds),
             claimed_at=now,
@@ -1615,6 +1865,12 @@ async def update_lease_status(
                 status_code=404,
                 code="RESOURCE_NOT_FOUND",
                 message="The Run was not found.",
+            )
+        if lease.work_kind == "RUN_START" and run.cancel_requested_at is not None:
+            raise ApiError(
+                status_code=409,
+                code="RUN_CANCELLATION_PENDING",
+                message="The Run is awaiting cancellation convergence.",
             )
         allowed = (
             {"STARTING", "RUNNING"}
@@ -2065,6 +2321,39 @@ async def complete_lease(
     request_id: str,
 ) -> ExecutionLeaseSummary:
     now = datetime.now(UTC)
+    if lease.work_kind == "RUN_START" and lease.run_id is not None:
+        cancelling_run = await session.scalar(
+            select(Run).where(Run.id == lease.run_id)
+        )
+        if (
+            cancelling_run is not None
+            and cancelling_run.cancel_requested_at is not None
+            and await _converge_cancelled_run(
+                session,
+                run_id=cancelling_run.id,
+                now=now,
+                request_id=request_id,
+                reason="LATE_RUN_START_COMPLETION",
+            )
+        ):
+            await append_audit_event(
+                session,
+                organization_id=lease.organization_id,
+                project_id=lease.project_id,
+                actor_type="worker",
+                actor_id=str(worker.id),
+                action="execution.lease.cancellation_converged",
+                resource_type="execution_lease",
+                resource_id=str(lease.id),
+                request_id=request_id,
+                details={
+                    "work_kind": lease.work_kind,
+                    "attempt": lease.attempt,
+                    "reported_outcome": payload.outcome,
+                    "retry_scheduled": False,
+                },
+            )
+            return lease_summary(lease)
     source = await _source_for_lease(session, lease)
     retry = execution_retry_allowed(
         requested=payload.retryable,
@@ -2182,9 +2471,37 @@ async def complete_lease(
                 run.failure_code = payload.error_code or "CANCEL_FAILED"
                 run.failure_summary = payload.error_summary
             else:
+                fenced_lease_count = await _fence_cancelled_run_leases(
+                    session,
+                    run_id=run.id,
+                    now=now,
+                    preserve_lease_id=lease.id,
+                    preserve_source_id=(source.id if source is not None else None),
+                )
                 run.status = "ABORTED"
                 run.failure_code = None
                 run.failure_summary = None
+                await append_audit_event(
+                    session,
+                    organization_id=run.organization_id,
+                    project_id=run.project_id,
+                    actor_type="worker",
+                    actor_id=str(worker.id),
+                    action="run.cancellation_converged",
+                    resource_type="run",
+                    resource_id=str(run.id),
+                    request_id=request_id,
+                    details={
+                        "previous_status": previous,
+                        "reason": "WORKER_CONFIRMED",
+                        "fenced_lease_count": fenced_lease_count,
+                        "cancel_deadline_at": (
+                            run.cancel_deadline_at.isoformat()
+                            if run.cancel_deadline_at is not None
+                            else None
+                        ),
+                    },
+                )
         elif payload.outcome == "SUCCEEDED":
             run.status = "SUCCEEDED"
             run.failure_code = None

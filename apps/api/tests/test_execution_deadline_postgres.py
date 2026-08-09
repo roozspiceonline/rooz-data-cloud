@@ -8,11 +8,18 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.core.database import engine, session_factory
-from app.services.execution_plane import reap_expired_leases
+from app.execution_schemas import CompleteLeaseRequest
+from app.models import ExecutionLease, Run, WorkerIdentity
+from app.services.execution_plane import (
+    complete_lease,
+    reap_expired_leases,
+    reap_overdue_cancellations,
+)
+from app.services.runs import cancel_run
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -37,7 +44,7 @@ async def _seed_deadline_lease(
     work_kind: str,
     now: datetime,
     overdue: bool,
-) -> tuple[UUID, UUID, UUID]:
+) -> tuple[UUID, UUID, UUID, UUID, UUID, UUID, UUID]:
     user_id, org_id, project_id, agent_id, version_id = (
         uuid4() for _ in range(5)
     )
@@ -109,14 +116,22 @@ async def _seed_deadline_lease(
             text("INSERT INTO control.execution_leases (id,worker_id,organization_id,project_id,work_kind,source_outbox_id,source_topic,build_id,run_id,lease_token_digest,payload_digest,payload_snapshot,status,attempt,claimed_at,expires_at,deadline_at) VALUES (:l,:w,:o,:p,:kind,:source,'test',:build_id,:run_id,:token,:payload_digest,'{}','ACTIVE',1,:claimed,:expires,:deadline)"),
             {"l": lease_id, "w": worker_id, "o": org_id, "p": project_id, "kind": work_kind, "source": source_id, "token": uuid4().bytes + uuid4().bytes, "payload_digest": "b" * 64, "claimed": claimed_at, "expires": expires_at, "deadline": deadline_at, **target_values},
         )
-    return lease_id, source_id, build_id if work_kind == "BUILD" else run_id
+    return (
+        lease_id,
+        source_id,
+        build_id if work_kind == "BUILD" else run_id,
+        user_id,
+        org_id,
+        project_id,
+        worker_id,
+    )
 
 
 async def test_postgres_execution_deadline_is_immutable() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
     now = datetime.now(UTC)
-    lease_id, _, _ = await _seed_deadline_lease(
+    lease_id, *_ = await _seed_deadline_lease(
         work_kind="BUILD",
         now=now,
         overdue=False,
@@ -136,7 +151,7 @@ async def test_postgres_overdue_workload_is_terminally_timed_out(
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
     now = datetime.now(UTC)
-    lease_id, source_id, target_id = await _seed_deadline_lease(
+    lease_id, source_id, target_id, *_ = await _seed_deadline_lease(
         work_kind=work_kind,
         now=now,
         overdue=True,
@@ -209,3 +224,246 @@ async def test_postgres_concurrent_deadline_reapers_are_single_winner() -> None:
 
     results = await asyncio.gather(reap("deadline-race-a"), reap("deadline-race-b"))
     assert sorted(results) == [0, 1]
+
+
+async def test_postgres_concurrent_cancel_dispatch_is_idempotent() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, run_id, user_id, _, _, _ = await _seed_deadline_lease(
+        work_kind="RUN_START",
+        now=now,
+        overdue=False,
+    )
+
+    async def cancel(key: str) -> str:
+        async with session_factory() as session:
+            run = await session.scalar(select(Run).where(Run.id == run_id))
+            assert run is not None
+            result = await cancel_run(
+                session,
+                record=run,
+                user_id=user_id,
+                idempotency_key=key,
+                request_id=f"cancel-{key}",
+            )
+            await session.commit()
+            return str(result["status"])
+
+    statuses = await asyncio.gather(
+        cancel(f"cancel-a-{uuid4().hex}"),
+        cancel(f"cancel-b-{uuid4().hex}"),
+    )
+    assert statuses == ["ABORTING", "ABORTING"]
+    async with engine.connect() as connection:
+        count = await connection.scalar(
+            text("SELECT count(*) FROM control.run_command_outbox WHERE run_id=:run AND command='CANCEL'"),
+            {"run": run_id},
+        )
+        run = (
+            await connection.execute(
+                text("SELECT status,cancel_requested_at IS NOT NULL,cancel_deadline_at > cancel_requested_at FROM control.runs WHERE id=:run"),
+                {"run": run_id},
+            )
+        ).one()
+    assert count == 1
+    assert run == ("ABORTING", True, True)
+    with pytest.raises(DBAPIError, match="Run cancellation deadline is immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("UPDATE control.runs SET cancel_deadline_at=cancel_deadline_at+INTERVAL '1 minute' WHERE id=:run"),
+                {"run": run_id},
+            )
+
+
+async def test_postgres_cancellation_revokes_worker_run_lease_authority() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, run_id, _, org_id, project_id, worker_id = (
+        await _seed_deadline_lease(
+            work_kind="RUN_START",
+            now=now,
+            overdue=False,
+        )
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("SELECT set_config('rdc.current_worker_id',:worker,true)"),
+            {"worker": str(worker_id)},
+        )
+        before = await connection.scalar(
+            text(
+                "SELECT security.rdc_worker_has_active_run_lease(:org,:project)"
+            ),
+            {"org": org_id, "project": project_id},
+        )
+        await connection.execute(
+            text("UPDATE control.runs SET status='ABORTING',cancel_requested_at=:requested,cancel_deadline_at=:deadline WHERE id=:run"),
+            {
+                "run": run_id,
+                "requested": now,
+                "deadline": now + timedelta(minutes=5),
+            },
+        )
+        after = await connection.scalar(
+            text(
+                "SELECT security.rdc_worker_has_active_run_lease(:org,:project)"
+            ),
+            {"org": org_id, "project": project_id},
+        )
+    assert before is True
+    assert after is False
+
+
+async def test_postgres_overdue_cancellation_fences_and_aborts_run() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    lease_id, start_source_id, run_id, _, org_id, project_id, _ = (
+        await _seed_deadline_lease(
+            work_kind="RUN_START",
+            now=now,
+            overdue=False,
+        )
+    )
+    cancel_source_id = uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE control.runs SET status='ABORTING',cancel_requested_at=:requested,cancel_deadline_at=:deadline WHERE id=:run"),
+            {"run": run_id, "requested": now - timedelta(minutes=10), "deadline": now - timedelta(minutes=5)},
+        )
+        await connection.execute(
+            text("INSERT INTO control.run_command_outbox (id,organization_id,project_id,run_id,command,topic,payload,status,attempts,available_at) VALUES (:id,:org,:project,:run,'CANCEL','rdc.run.cancel.requested.v1','{}','PENDING',0,:now)"),
+            {"id": cancel_source_id, "org": org_id, "project": project_id, "run": run_id, "now": now},
+        )
+    async with session_factory() as session:
+        assert await reap_overdue_cancellations(
+            session,
+            now=now,
+            request_id="overdue-cancellation",
+        ) == 1
+        await session.commit()
+    async with engine.connect() as connection:
+        run = (
+            await connection.execute(
+                text("SELECT status,failure_code,finished_at IS NOT NULL FROM control.runs WHERE id=:id"),
+                {"id": run_id},
+            )
+        ).one()
+        lease = (
+            await connection.execute(
+                text("SELECT status,failure_code FROM control.execution_leases WHERE id=:id"),
+                {"id": lease_id},
+            )
+        ).one()
+        commands = (
+            await connection.execute(
+                text("SELECT id,status,last_error_code FROM control.run_command_outbox WHERE id IN (:start,:cancel) ORDER BY id"),
+                {"start": start_source_id, "cancel": cancel_source_id},
+            )
+        ).all()
+        audit = await connection.scalar(
+            text("SELECT count(*) FROM security.audit_events WHERE resource_id=:run AND action='run.cancellation_converged' AND details->>'reason'='CANCEL_DEADLINE_EXCEEDED'"),
+            {"run": str(run_id)},
+        )
+    assert run == ("ABORTED", None, True)
+    assert lease == ("CANCELLED", "RUN_CANCELLED")
+    assert {row[1:] for row in commands} == {
+        ("CANCELLED", "RUN_CANCELLATION_CONVERGED")
+    }
+    assert audit == 1
+
+
+async def test_postgres_lost_run_lease_converges_pending_cancellation() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    lease_id, _, run_id, _, org_id, project_id, _ = await _seed_deadline_lease(
+        work_kind="RUN_START",
+        now=now,
+        overdue=True,
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE control.runs SET status='ABORTING',cancel_requested_at=:requested,cancel_deadline_at=:deadline WHERE id=:run"),
+            {"run": run_id, "requested": now - timedelta(minutes=2), "deadline": now + timedelta(minutes=3)},
+        )
+        await connection.execute(
+            text("INSERT INTO control.run_command_outbox (organization_id,project_id,run_id,command,topic,payload,status,attempts,available_at) VALUES (:org,:project,:run,'CANCEL','rdc.run.cancel.requested.v1','{}','PENDING',0,:now)"),
+            {"org": org_id, "project": project_id, "run": run_id, "now": now},
+        )
+    async with session_factory() as session:
+        assert await reap_expired_leases(
+            session,
+            now=now,
+            request_id="lost-run-cancellation",
+        ) == 1
+        await session.commit()
+    async with engine.connect() as connection:
+        run_status = await connection.scalar(
+            text("SELECT status FROM control.runs WHERE id=:id"),
+            {"id": run_id},
+        )
+        lease_status = await connection.scalar(
+            text("SELECT status FROM control.execution_leases WHERE id=:id"),
+            {"id": lease_id},
+        )
+        retries = await connection.scalar(
+            text("SELECT count(*) FROM control.run_command_outbox WHERE run_id=:run AND status='PENDING'"),
+            {"run": run_id},
+        )
+    assert run_status == "ABORTED"
+    assert lease_status == "CANCELLED"
+    assert retries == 0
+
+
+async def test_postgres_late_run_completion_cannot_override_cancellation() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    lease_id, _, run_id, _, org_id, project_id, worker_id = (
+        await _seed_deadline_lease(
+            work_kind="RUN_START",
+            now=now,
+            overdue=False,
+        )
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE control.runs SET status='ABORTING',cancel_requested_at=:requested,cancel_deadline_at=:deadline WHERE id=:run"),
+            {"run": run_id, "requested": now, "deadline": now + timedelta(minutes=5)},
+        )
+        await connection.execute(
+            text("INSERT INTO control.run_command_outbox (organization_id,project_id,run_id,command,topic,payload,status,attempts,available_at) VALUES (:org,:project,:run,'CANCEL','rdc.run.cancel.requested.v1','{}','PENDING',0,:now)"),
+            {"org": org_id, "project": project_id, "run": run_id, "now": now},
+        )
+    async with session_factory() as session:
+        lease = await session.scalar(
+            select(ExecutionLease).where(ExecutionLease.id == lease_id)
+        )
+        worker = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert lease is not None
+        assert worker is not None
+        result = await complete_lease(
+            session,
+            lease=lease,
+            worker=worker,
+            payload=CompleteLeaseRequest(outcome="SUCCEEDED"),
+            request_id="late-run-completion",
+        )
+        await session.commit()
+    assert result.status == "CANCELLED"
+    async with engine.connect() as connection:
+        run_status = await connection.scalar(
+            text("SELECT status FROM control.runs WHERE id=:id"),
+            {"id": run_id},
+        )
+        event_count = await connection.scalar(
+            text("SELECT count(*) FROM control.run_events WHERE run_id=:run AND event_type='run.completed' AND payload->>'reason'='LATE_RUN_START_COMPLETION'"),
+            {"run": run_id},
+        )
+    assert run_status == "ABORTED"
+    assert event_count == 1

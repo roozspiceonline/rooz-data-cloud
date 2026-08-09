@@ -20,6 +20,15 @@ retaining Request Queue access. Row locking and `SKIP LOCKED` make concurrent
 reapers single-winner; a deadline path is terminal and cannot be converted into
 a retry by a worker-supplied `retryable` flag.
 
-This increment does not yet claim full production recovery. Cancellation must
-converge after worker loss; recovery sweeps must run without relying on worker
-traffic; and concurrency admission must be enforced across workers and projects.
+Cancellation ownership remains server-side. The API row-locks the Run and
+reuses its unique `(run_id, command)` outbox identity, so callers cannot create
+duplicate cancel work by racing idempotency keys. PostgreSQL makes the first
+cancellation request/deadline immutable. A late start worker cannot move an
+`ABORTING` Run back to `RUNNING` or complete it successfully. Convergence fences
+all active Run leases before terminalization, which removes worker API and RLS
+authority and revokes issued secret grants even if the underlying process is
+slow to exit.
+
+This increment does not yet claim full production recovery. Recovery sweeps
+must run without relying on worker traffic, and concurrency admission must be
+enforced across workers and projects.

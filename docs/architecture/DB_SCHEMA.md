@@ -652,6 +652,7 @@ queued_at timestamptz NOT NULL
 started_at timestamptz NULL
 finished_at timestamptz NULL
 cancel_requested_at timestamptz NULL
+cancel_deadline_at timestamptz NULL
 failure_code text NULL
 failure_summary text NULL
 estimated_cost_minor bigint NULL
@@ -690,7 +691,8 @@ Indexes:
 Rules:
 
 - Status transitions are explicit.
-- Cancellation is a command.
+- Cancellation is a unique durable command with an immutable bounded
+  convergence deadline.
 - Phase 1E accepts inline JSON object inputs up to 64 KiB; larger object-storage inputs remain deferred.
 - Runtime configuration is validated against both hard limits and immutable Agent-version limits.
 - Run creation and cancellation use a durable command outbox.
@@ -1060,4 +1062,3 @@ The migration initially permits null source references for pre-1G rows; all Phas
 ## Phase 1H worker attestation columns
 
 `security.worker_identities` adds nullable `sandbox_profile`, nullable SHA-256 `sandbox_attestation_digest`, non-null `sandbox_execution_enabled` default false, and nullable `sandbox_attested_at`. A database check prevents an enabled worker without the required Phase 1H profile, digest, and attestation timestamp.
-

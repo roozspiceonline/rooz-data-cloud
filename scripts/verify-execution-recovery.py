@@ -29,6 +29,21 @@ need(
     '"WORKLOAD_DEADLINE_EXCEEDED"',
     '"execution.lease.deadline_exceeded"',
     "ExecutionLease.deadline_at <= current",
+    "reap_overdue_cancellations",
+    '"run.cancellation_converged"',
+    '"RUN_CANCELLATION_PENDING"',
+)
+need(
+    "apps/api/migrations/versions/20260809_0017_run_cancellation_convergence.py",
+    "cancel_deadline_at > cancel_requested_at",
+    "run_cancellation_immutable",
+    "Run cancellation deadline is immutable",
+)
+need(
+    "apps/api/app/services/runs.py",
+    "_ensure_cancel_command",
+    "populate_existing=True",
+    "worker_cancel_convergence_seconds",
 )
 need(
     "apps/api/migrations/versions/20260809_0016_execution_deadlines.py",
@@ -49,9 +64,20 @@ need(
     "apps/api/app/core/config.py",
     "worker_retry_base_seconds",
     "worker_retry_max_seconds",
+    "worker_cancel_convergence_seconds",
 )
-need(".env.example", "RDC_WORKER_RETRY_BASE_SECONDS", "RDC_WORKER_RETRY_MAX_SECONDS")
-need("docker-compose.yml", "RDC_WORKER_RETRY_BASE_SECONDS", "RDC_WORKER_RETRY_MAX_SECONDS")
+need(
+    ".env.example",
+    "RDC_WORKER_RETRY_BASE_SECONDS",
+    "RDC_WORKER_RETRY_MAX_SECONDS",
+    "RDC_WORKER_CANCEL_CONVERGENCE_SECONDS",
+)
+need(
+    "docker-compose.yml",
+    "RDC_WORKER_RETRY_BASE_SECONDS",
+    "RDC_WORKER_RETRY_MAX_SECONDS",
+    "RDC_WORKER_CANCEL_CONVERGENCE_SECONDS",
+)
 need(
     "apps/api/tests/test_execution_recovery.py",
     "exponential_and_bounded",
@@ -64,6 +90,9 @@ need(
     "Execution deadline is immutable",
     "terminally_timed_out",
     "WORKLOAD_DEADLINE_EXCEEDED",
+    "concurrent_cancel_dispatch_is_idempotent",
+    "lost_run_lease_converges_pending_cancellation",
+    "late_run_completion_cannot_override_cancellation",
 )
 need(
     "docs/execution-recovery/THREAT_MODEL.md",
@@ -77,5 +106,7 @@ need(
     "SKIP LOCKED",
     "20260809_0016",
     "execution.lease.deadline_exceeded",
+    "20260809_0017",
+    "run.cancellation_converged",
 )
-print("Execution recovery increment 2 verification passed")
+print("Execution recovery increment 3 verification passed")

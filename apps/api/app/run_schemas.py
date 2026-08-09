@@ -328,6 +328,7 @@ class RunSummary(ORMModel):
     started_at: datetime | None
     finished_at: datetime | None
     cancel_requested_at: datetime | None
+    cancel_deadline_at: datetime | None
     failure_code: str | None
     failure_summary: str | None
     created_at: datetime

@@ -851,7 +851,7 @@ Phase 1E implementation rules:
 - Inline JSON input is limited to 64 KiB; large object-storage inputs are deferred.
 - Runtime overrides may reduce but cannot exceed immutable manifest resource limits.
 - Run creation writes a durable `START` command and an initial persisted status event.
-- Cancellation requires `Idempotency-Key`; queued Runs are aborted before dispatch, while active Runs receive a durable `CANCEL` command.
+- Cancellation requires `Idempotency-Key`; queued Runs are aborted before dispatch, while active Runs receive one durable `CANCEL` command and an immutable server-derived `cancel_deadline_at`.
 - The public API never executes Agent code or decrypts project secrets.
 
 Cancellation is a command, not a resource deletion.

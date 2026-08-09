@@ -196,6 +196,11 @@ async def foundation_status() -> dict[str, object]:
         "execution_deadline_server_derived": True,
         "execution_deadline_immutable": True,
         "lease_renewal_deadline_clamped": True,
+        "run_cancellation_dispatch_idempotent": True,
+        "run_cancellation_convergence_seconds": (
+            settings.worker_cancel_convergence_seconds
+        ),
+        "run_cancellation_lease_fencing": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
         "secure_source_ingestion_enabled": True,

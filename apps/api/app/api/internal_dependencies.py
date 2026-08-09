@@ -13,7 +13,7 @@ from ..core.config import get_settings
 from ..core.database import get_db, set_worker_context
 from ..core.errors import ApiError
 from ..core.security import secret_digest
-from ..models import ExecutionLease, WorkerIdentity
+from ..models import ExecutionLease, Run, WorkerIdentity
 
 settings = get_settings()
 WORKER_TOKEN_PATTERN = re.compile(r"^rdc_worker_([a-z2-7]{8})_(.+)$")
@@ -149,4 +149,14 @@ async def require_lease_access(
             code="LEASE_CREDENTIAL_INVALID",
             message="The lease credential is invalid or expired.",
         )
+    if lease.work_kind == "RUN_START" and lease.run_id is not None:
+        cancel_requested_at = await db.scalar(
+            select(Run.cancel_requested_at).where(Run.id == lease.run_id)
+        )
+        if cancel_requested_at is not None:
+            raise ApiError(
+                status_code=401,
+                code="LEASE_CREDENTIAL_INVALID",
+                message="The lease credential is invalid or expired.",
+            )
     return LeaseAccess(context=context, lease=lease)

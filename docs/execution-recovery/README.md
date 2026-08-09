@@ -20,8 +20,16 @@ source becomes `FAILED`, no retry is scheduled, outstanding secret grants are
 expired, and immutable audit lineage records
 `execution.lease.deadline_exceeded`.
 
-Remaining increments cover cancellation convergence, an independently
-scheduled stale-lease sweep, bounded project and worker admission,
-crash/restart integration tests, and production operations.
+Run cancellation now has a server-derived immutable `cancel_deadline_at` and a
+single durable `CANCEL` outbox row even under concurrent requests with distinct
+idempotency keys. Cancellation intent wins over late `RUN_START` status or
+completion reports. Worker-confirmed cancellation, loss of a Run/Cancel lease,
+or expiry of the cancellation deadline fences every active Run lease, revokes
+issued secret grants, cancels pending/claimed commands, terminally marks the Run
+`ABORTED`, and records `run.cancellation_converged` lineage.
+
+Remaining increments cover an independently scheduled stale-lease sweep,
+bounded project and worker admission, crash/restart integration tests, and
+production operations.
 
 See the [threat model](THREAT_MODEL.md) and [runbook](RUNBOOK.md).

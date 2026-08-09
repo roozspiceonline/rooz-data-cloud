@@ -4,10 +4,15 @@ Configure `RDC_WORKER_RETRY_BASE_SECONDS` and
 `RDC_WORKER_RETRY_MAX_SECONDS`; startup rejects a base below one second, a base
 above 60 seconds, a maximum below the base, or a maximum above one hour. Keep
 `RDC_WORKER_MAX_ATTEMPTS` between 1 and 20.
+Configure `RDC_WORKER_CANCEL_CONVERGENCE_SECONDS` between 30 and 3600 seconds;
+the default is five minutes.
 
 Migration `20260809_0016` backfills existing lease deadlines to their current
 expiry, adds an immutable deadline trigger, and installs deadline-aware recovery
 policies. Deploy the migration before the API and worker protocol change.
+Migration `20260809_0017` backfills cancellation deadlines for existing
+cancel-requested Runs, adds the cancellation deadline index, and prevents
+mutation of the first cancellation request or deadline.
 
 Monitor `execution.lease.expired`, `execution.lease.deadline_exceeded`, and
 `execution.lease.completed` audit events.
@@ -27,3 +32,12 @@ grant. Do not extend `deadline_at` during incident handling: the database
 immutability trigger intentionally rejects that mutation. Queue a new Build or
 Run through the normal tenant-authorized API when an operator-approved retry is
 required.
+
+Monitor `run.cancellation_converged` and
+`execution.lease.cancellation_converged`. A converged Run must be `ABORTED`,
+must have no ACTIVE execution lease or ISSUED secret grant, and must have no
+`PENDING` or `CLAIMED` Run command. The audit `reason` distinguishes
+`WORKER_CONFIRMED`, `RUN_START_LEASE_LOST`, `RUN_CANCEL_LEASE_LOST`,
+`LATE_RUN_START_COMPLETION`, and `CANCEL_DEADLINE_EXCEEDED`. Do not mutate the
+cancellation deadline or manually reactivate a fenced lease; create a new Run
+through the normal authorized API if execution is needed again.

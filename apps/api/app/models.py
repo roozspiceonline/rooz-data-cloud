@@ -668,6 +668,9 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    cancel_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     failure_code: Mapped[str | None] = mapped_column(String(80))
     failure_summary: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(
