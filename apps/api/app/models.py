@@ -237,6 +237,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    max_active_leases: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=20,
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 

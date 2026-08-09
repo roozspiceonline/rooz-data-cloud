@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     worker_retry_max_seconds: int = 300
     worker_cancel_convergence_seconds: int = 300
     worker_secret_envelope_seconds: int = 60
+    worker_registration_max_concurrency: int = 16
+    execution_project_default_max_active_leases: int = 20
     execution_recovery_sweep_enabled: bool = True
     execution_recovery_sweep_interval_seconds: int = 10
     execution_recovery_sweep_batch_size: int = 100
@@ -173,6 +175,14 @@ class Settings(BaseSettings):
             )
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
+        if not 1 <= self.worker_registration_max_concurrency <= 16:
+            raise ValueError(
+                "Worker registration concurrency must be between 1 and 16."
+            )
+        if not 1 <= self.execution_project_default_max_active_leases <= 1000:
+            raise ValueError(
+                "Default project execution concurrency must be between 1 and 1000."
+            )
         if not 1 <= self.execution_recovery_sweep_interval_seconds <= 300:
             raise ValueError(
                 "Execution recovery sweep interval must be between 1 and 300 seconds."

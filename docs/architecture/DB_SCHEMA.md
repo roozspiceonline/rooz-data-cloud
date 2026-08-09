@@ -1034,6 +1034,8 @@ Destructive migration requires:
 ### `security.worker_identities`
 
 Stores worker metadata, public token prefix, last-four display, token digest, capabilities, concurrency, protocol/software versions, lifecycle state, heartbeat time, expiry, and revocation. Raw worker tokens are never stored.
+The persisted concurrency value is server-capped at 16 and independently
+constrained by PostgreSQL.
 
 ### `control.execution_leases`
 
@@ -1048,6 +1050,16 @@ Stores digest-addressed artifact metadata and provenance. Artifact bytes remain 
 Stores only encrypted worker envelopes and metadata. It binds one active `RUN_START` lease, worker, tenant, project, Run, requested secret names, environment, worker public-key digest, encryption algorithm, expiry, and lifecycle state.
 
 All Phase 1F tenant-owned tables use RLS and tenancy triggers. Worker access is based on transaction-local `rdc.current_worker_id` and active lease relationships.
+
+### Execution admission limits
+
+`control.projects.max_active_leases` persists a server-derived 1–1000 limit,
+defaulting to 20. Partial execution-lease indexes support derived counts of
+valid ACTIVE BUILD/RUN_START leases by Project and all valid ACTIVE leases by
+worker. Admission uses these lease rows as the source of truth; no mutable slot
+counter exists. Project and worker row locking plus a per-worker transaction
+advisory lock make the final claim-time recount atomic. Recovery state changes
+release capacity naturally, and RUN_CANCEL is excluded from Project slots.
 
 
 ## Phase 1G storage tables

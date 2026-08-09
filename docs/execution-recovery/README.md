@@ -40,7 +40,23 @@ Migration `20260809_0018` adds singleton scheduler health and counters.
 API readiness degrades when the enabled scheduler has never succeeded, reports
 failure, or becomes stale.
 
-Remaining increments cover bounded project and worker admission, broader
-crash/restart scenarios, and production operations.
+Migration `20260809_0019` persists a bounded server-owned
+`projects.max_active_leases`, caps persisted worker registration concurrency at
+16, and adds partial active-lease admission indexes. Claim transactions take a
+per-worker advisory lock and row lock, select only capacity-eligible work with
+`SKIP LOCKED`, lock the owning project, and recount valid active leases before
+creating the lease. Only ACTIVE BUILD and RUN_START leases whose expiry and
+immutable deadline are still in the future consume a project slot. Every ACTIVE
+unexpired worker lease consumes a worker slot. Recovery therefore releases
+capacity without a separate counter or cleanup write that could drift.
+
+RUN_CANCEL deliberately bypasses project admission so saturation cannot prevent
+termination, but it still consumes the cancellation worker's own capacity.
+Claim receipts and immutable audit details record the effective limits and
+pre-claim aggregate counts. `/health/recovery` also exposes aggregate active
+lease and saturated project/worker counts without tenant or worker identifiers.
+
+Remaining increments cover broader process/container crash and restart
+scenarios and production operations.
 
 See the [threat model](THREAT_MODEL.md) and [runbook](RUNBOOK.md).

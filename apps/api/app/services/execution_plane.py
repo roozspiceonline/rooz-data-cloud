@@ -61,6 +61,7 @@ from ..models import (
     Dataset,
     ExecutionArtifact,
     ExecutionLease,
+    Project,
     ProjectSecret,
     Run,
     RunCommandOutbox,
@@ -83,6 +84,7 @@ from .runs import (
 from .worker_key_value_store import key_value_store_capability
 
 settings = get_settings()
+PROJECT_EXECUTION_SLOT_KINDS = {"BUILD", "RUN_START"}
 
 
 def _sandbox_digest(attestation: SandboxAttestation) -> str:
@@ -703,7 +705,10 @@ async def register_worker(
             settings.worker_token_pepper,
         ),
         capabilities=sorted(payload.capabilities),
-        max_concurrency=payload.max_concurrency,
+        max_concurrency=min(
+            payload.max_concurrency,
+            settings.worker_registration_max_concurrency,
+        ),
         status="ACTIVE",
         protocol_version=payload.protocol_version,
         software_version=payload.software_version,
@@ -729,6 +734,8 @@ async def register_worker(
             "name": record.name,
             "capabilities": list(record.capabilities),
             "protocol_version": record.protocol_version,
+            "requested_max_concurrency": payload.max_concurrency,
+            "effective_max_concurrency": record.max_concurrency,
         },
     )
     return RegisteredWorkerResponse(
@@ -1367,33 +1374,80 @@ async def _select_source(
     now: datetime,
 ) -> BuildDispatchOutbox | RunCommandOutbox | None:
     if kind == "BUILD":
+        active_project_leases = (
+            select(func.count(ExecutionLease.id))
+            .where(
+                ExecutionLease.project_id == BuildDispatchOutbox.project_id,
+                ExecutionLease.status == "ACTIVE",
+                ExecutionLease.work_kind.in_(PROJECT_EXECUTION_SLOT_KINDS),
+                ExecutionLease.expires_at > now,
+                ExecutionLease.deadline_at > now,
+            )
+            .correlate(BuildDispatchOutbox)
+            .scalar_subquery()
+        )
+        project_limit = (
+            select(Project.max_active_leases)
+            .where(
+                Project.id == BuildDispatchOutbox.project_id,
+                Project.status == "ACTIVE",
+                Project.deleted_at.is_(None),
+            )
+            .correlate(BuildDispatchOutbox)
+            .scalar_subquery()
+        )
         source = await session.scalar(
             select(BuildDispatchOutbox)
             .where(
                 BuildDispatchOutbox.status == "PENDING",
                 BuildDispatchOutbox.available_at <= now,
+                active_project_leases < project_limit,
             )
             .order_by(
                 BuildDispatchOutbox.available_at.asc(),
                 BuildDispatchOutbox.id.asc(),
             )
-            .with_for_update(skip_locked=True)
+            .with_for_update(of=BuildDispatchOutbox, skip_locked=True)
             .limit(1)
         )
         return source
     command = "START" if kind == "RUN_START" else "CANCEL"
-    source = await session.scalar(
-        select(RunCommandOutbox)
-        .where(
-            RunCommandOutbox.status == "PENDING",
-            RunCommandOutbox.command == command,
-            RunCommandOutbox.available_at <= now,
+    query = select(RunCommandOutbox).where(
+        RunCommandOutbox.status == "PENDING",
+        RunCommandOutbox.command == command,
+        RunCommandOutbox.available_at <= now,
+    )
+    if kind == "RUN_START":
+        active_project_leases = (
+            select(func.count(ExecutionLease.id))
+            .where(
+                ExecutionLease.project_id == RunCommandOutbox.project_id,
+                ExecutionLease.status == "ACTIVE",
+                ExecutionLease.work_kind.in_(PROJECT_EXECUTION_SLOT_KINDS),
+                ExecutionLease.expires_at > now,
+                ExecutionLease.deadline_at > now,
+            )
+            .correlate(RunCommandOutbox)
+            .scalar_subquery()
         )
+        project_limit = (
+            select(Project.max_active_leases)
+            .where(
+                Project.id == RunCommandOutbox.project_id,
+                Project.status == "ACTIVE",
+                Project.deleted_at.is_(None),
+            )
+            .correlate(RunCommandOutbox)
+            .scalar_subquery()
+        )
+        query = query.where(active_project_leases < project_limit)
+    source = await session.scalar(
+        query
         .order_by(
             RunCommandOutbox.available_at.asc(),
             RunCommandOutbox.id.asc(),
         )
-        .with_for_update(skip_locked=True)
+        .with_for_update(of=RunCommandOutbox, skip_locked=True)
         .limit(1)
     )
     return cast(RunCommandOutbox | None, source)
@@ -1470,6 +1524,73 @@ async def _lock_worker_claims(
     )
 
 
+async def _active_worker_lease_count(
+    session: AsyncSession,
+    *,
+    worker_id: UUID,
+    now: datetime,
+) -> int:
+    value = await session.scalar(
+        select(func.count())
+        .select_from(ExecutionLease)
+        .where(
+            ExecutionLease.worker_id == worker_id,
+            ExecutionLease.status == "ACTIVE",
+            ExecutionLease.expires_at > now,
+            ExecutionLease.deadline_at > now,
+        )
+    )
+    return int(value or 0)
+
+
+async def _lock_project_admission(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    work_kind: str,
+    now: datetime,
+) -> tuple[Project, int]:
+    project = await session.scalar(
+        select(Project)
+        .where(Project.id == project_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if (
+        project is None
+        or project.status != "ACTIVE"
+        or project.deleted_at is not None
+    ):
+        raise ApiError(
+            status_code=409,
+            code="PROJECT_EXECUTION_DISABLED",
+            message="The work item's project is not active.",
+        )
+    value = await session.scalar(
+        select(func.count())
+        .select_from(ExecutionLease)
+        .where(
+            ExecutionLease.project_id == project.id,
+            ExecutionLease.status == "ACTIVE",
+            ExecutionLease.work_kind.in_(PROJECT_EXECUTION_SLOT_KINDS),
+            ExecutionLease.expires_at > now,
+            ExecutionLease.deadline_at > now,
+        )
+    )
+    active_count = int(value or 0)
+    if (
+        work_kind in PROJECT_EXECUTION_SLOT_KINDS
+        and active_count >= project.max_active_leases
+    ):
+        raise ApiError(
+            status_code=409,
+            code="PROJECT_CONCURRENCY_LIMIT",
+            message="The project has reached its active execution lease limit.",
+            details={"max_active_leases": project.max_active_leases},
+        )
+    return project, active_count
+
+
 async def claim_work(
     session: AsyncSession,
     *,
@@ -1480,6 +1601,19 @@ async def claim_work(
     now = datetime.now(UTC)
     await reap_expired_leases(session, now=now, request_id=request_id)
     await _lock_worker_claims(session, worker_id=worker.id)
+    locked_worker = await session.scalar(
+        select(WorkerIdentity)
+        .where(WorkerIdentity.id == worker.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if locked_worker is None:
+        raise ApiError(
+            status_code=401,
+            code="INTERNAL_CREDENTIAL_INVALID",
+            message="The internal credential is invalid.",
+        )
+    worker = locked_worker
     if worker.status != "ACTIVE":
         raise ApiError(
             status_code=409,
@@ -1495,16 +1629,12 @@ async def claim_work(
             message="The worker is not allowed to claim this work kind.",
             details={"unsupported": unsupported},
         )
-    active_count = await session.scalar(
-        select(func.count())
-        .select_from(ExecutionLease)
-        .where(
-            ExecutionLease.worker_id == worker.id,
-            ExecutionLease.status == "ACTIVE",
-            ExecutionLease.expires_at > now,
-        )
+    active_worker_count = await _active_worker_lease_count(
+        session,
+        worker_id=worker.id,
+        now=now,
     )
-    if int(active_count or 0) >= worker.max_concurrency:
+    if active_worker_count >= worker.max_concurrency:
         raise ApiError(
             status_code=409,
             code="WORKER_CONCURRENCY_LIMIT",
@@ -1526,6 +1656,13 @@ async def claim_work(
             project_id = source.project_id
             build_id = None
             run_id = source.run_id
+
+        project, active_project_count = await _lock_project_admission(
+            session,
+            project_id=project_id,
+            work_kind=kind,
+            now=now,
+        )
 
         source.status = "CLAIMED"
         source.attempts += 1
@@ -1629,6 +1766,13 @@ async def claim_work(
         claim_payload["sandbox"] = sandbox_policy if execution_enabled else None
         claim_payload["activation"] = _activation_payload(activation)
         claim_payload["deadline_at"] = deadline_at.isoformat()
+        claim_payload["admission"] = {
+            "worker_active_before_claim": active_worker_count,
+            "worker_max_concurrency": worker.max_concurrency,
+            "project_active_before_claim": active_project_count,
+            "project_max_active_leases": project.max_active_leases,
+            "project_slot_consumed": kind in PROJECT_EXECUTION_SLOT_KINDS,
+        }
         claim_payload["dataset_append_capability"] = (
             _dataset_append_capability(
                 worker,
@@ -1666,6 +1810,13 @@ async def claim_work(
                 "attempt": lease.attempt,
                 "source_topic": lease.source_topic,
                 "deadline_at": deadline_at.isoformat(),
+                "worker_active_before_claim": active_worker_count,
+                "worker_max_concurrency": worker.max_concurrency,
+                "project_active_before_claim": active_project_count,
+                "project_max_active_leases": project.max_active_leases,
+                "project_slot_consumed": (
+                    kind in PROJECT_EXECUTION_SLOT_KINDS
+                ),
                 "execution_enabled": execution_enabled,
                 "sandbox_attestation_digest": worker.sandbox_attestation_digest,
                 "activation_mode": (

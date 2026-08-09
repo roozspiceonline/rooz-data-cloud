@@ -33,6 +33,13 @@ class ExecutionRecoveryHealth:
     last_error_code: str | None
 
 
+@dataclass(frozen=True)
+class ExecutionAdmissionHealth:
+    active_leases: int
+    saturated_projects: int
+    saturated_workers: int
+
+
 async def run_execution_recovery_sweep(
     session: AsyncSession,
     *,
@@ -196,6 +203,61 @@ async def read_execution_recovery_health(
         total_sweeps=int(row.total_sweeps),
         total_failures=int(row.total_failures),
         last_error_code=row.last_error_code,
+    )
+
+
+async def read_execution_admission_health(
+    session: AsyncSession,
+) -> ExecutionAdmissionHealth:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                  (
+                    SELECT count(*)
+                    FROM control.execution_leases lease
+                    WHERE lease.status = 'ACTIVE'
+                      AND lease.expires_at > CURRENT_TIMESTAMP
+                      AND lease.deadline_at > CURRENT_TIMESTAMP
+                  ) AS active_leases,
+                  (
+                    SELECT count(*)
+                    FROM control.projects project
+                    WHERE project.status = 'ACTIVE'
+                      AND project.deleted_at IS NULL
+                      AND (
+                        SELECT count(*)
+                        FROM control.execution_leases lease
+                        WHERE lease.project_id = project.id
+                          AND lease.status = 'ACTIVE'
+                          AND lease.work_kind IN ('BUILD', 'RUN_START')
+                          AND lease.expires_at > CURRENT_TIMESTAMP
+                          AND lease.deadline_at > CURRENT_TIMESTAMP
+                      ) >= project.max_active_leases
+                  ) AS saturated_projects,
+                  (
+                    SELECT count(*)
+                    FROM security.worker_identities worker
+                    WHERE worker.status = 'ACTIVE'
+                      AND worker.revoked_at IS NULL
+                      AND (
+                        SELECT count(*)
+                        FROM control.execution_leases lease
+                        WHERE lease.worker_id = worker.id
+                          AND lease.status = 'ACTIVE'
+                          AND lease.expires_at > CURRENT_TIMESTAMP
+                          AND lease.deadline_at > CURRENT_TIMESTAMP
+                      ) >= worker.max_concurrency
+                  ) AS saturated_workers
+                """
+            )
+        )
+    ).one()
+    return ExecutionAdmissionHealth(
+        active_leases=int(row.active_leases),
+        saturated_projects=int(row.saturated_projects),
+        saturated_workers=int(row.saturated_workers),
     )
 
 

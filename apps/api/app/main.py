@@ -211,6 +211,15 @@ async def foundation_status() -> dict[str, object]:
             settings.execution_recovery_sweep_batch_size
         ),
         "execution_recovery_singleton_lock": "postgresql-advisory-xact",
+        "execution_project_concurrency_admission": True,
+        "execution_worker_concurrency_admission": True,
+        "execution_project_default_max_active_leases": (
+            settings.execution_project_default_max_active_leases
+        ),
+        "worker_registration_max_concurrency": (
+            settings.worker_registration_max_concurrency
+        ),
+        "run_cancel_project_slot_exempt": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
         "secure_source_ingestion_enabled": True,

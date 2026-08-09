@@ -969,6 +969,14 @@ GET /api/v1/projects/{project_id}/execution-artifacts
 
 Claims MUST be transactionally leased, MUST prevent concurrent duplicate claims, MUST expire, and MUST have bounded retries. Secret envelopes MUST be limited to declared Agent-manifest names, matching project and environment, the active `RUN_START` lease, and a short expiry. Artifact registration MUST be digest-addressed and tenant-bound.
 
+BUILD and RUN_START claims MUST also enforce the persisted owning Project's
+server-derived active-lease limit and the claiming worker's server-capped limit
+inside the claim transaction. Capacity counts include only ACTIVE leases whose
+expiry and immutable deadline remain in the future. RUN_CANCEL MUST bypass the
+Project execution limit so cancellation can drain a saturated Project, while
+still consuming worker capacity. Claim payload admission metadata is
+informational; persisted locks, counts, and limits are authoritative.
+
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 
 

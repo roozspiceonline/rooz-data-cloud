@@ -9,6 +9,7 @@ from ...core.database import check_database, session_factory
 from ...core.redis_client import check_redis
 from ...services.execution_recovery_sweeper import (
     execution_recovery_is_fresh,
+    read_execution_admission_health,
     read_execution_recovery_health,
 )
 
@@ -63,6 +64,7 @@ async def recovery_health() -> JSONResponse:
     try:
         async with session_factory() as session:
             health = await read_execution_recovery_health(session)
+            admission = await read_execution_admission_health(session)
         fresh = execution_recovery_is_fresh(
             health,
             now=datetime.now(UTC),
@@ -100,6 +102,9 @@ async def recovery_health() -> JSONResponse:
             "total_sweeps": health.total_sweeps,
             "total_failures": health.total_failures,
             "last_error_code": health.last_error_code,
+            "active_execution_leases": admission.active_leases,
+            "saturated_projects": admission.saturated_projects,
+            "saturated_workers": admission.saturated_workers,
         }
         return JSONResponse(status_code=200 if fresh else 503, content=body)
     except Exception:

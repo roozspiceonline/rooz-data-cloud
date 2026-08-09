@@ -16,6 +16,13 @@ mutation of the first cancellation request or deadline.
 Migration `20260809_0018` creates the singleton
 `control.execution_recovery_state` row used for scheduler freshness, bounded
 batch counts, and failure counters.
+Migration `20260809_0019` adds `control.projects.max_active_leases`, constrains
+it to 1–1000, clamps existing worker limits to 16, enforces worker limits of
+1–16, and installs partial admission indexes. Deploy it before enabling the
+corresponding API claim path. Configure
+`RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES` from 1–1000 and
+`RDC_WORKER_REGISTRATION_MAX_CONCURRENCY` from 1–16. These are server policy;
+do not treat a worker registration request as authoritative.
 
 Monitor `execution.lease.expired`, `execution.lease.deadline_exceeded`, and
 `execution.lease.completed` audit events.
@@ -61,6 +68,16 @@ Check `/health/recovery` or run
 recent successful sweep. Inspect aggregate `last_leases_reaped`,
 `last_cancellations_converged`, `total_sweeps`, and `total_failures`; no tenant,
 payload, token, or secret data is exposed.
+
+Admission diagnostics in the same response are aggregate
+`active_execution_leases`, `saturated_projects`, and `saturated_workers`.
+Saturation is not itself a recovery failure. If it persists, verify that ACTIVE
+leases have future `expires_at` and `deadline_at`, that the recovery scheduler
+is healthy, and that workers are completing or failing leases normally. Do not
+increase limits to conceal stale work or manually decrement derived capacity.
+Project capacity is recomputed from valid ACTIVE BUILD/RUN_START leases; worker
+capacity is recomputed from all valid ACTIVE leases. RUN_CANCEL is exempt only
+from the project limit so cancellation can drain a saturated project.
 
 Multiple scheduler replicas are safe: only the replica holding
 `pg_try_advisory_xact_lock` performs a batch. Do not delete or manually rewrite

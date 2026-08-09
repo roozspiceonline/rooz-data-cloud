@@ -33,7 +33,10 @@ persists an immutable convergence deadline, fences late/lost worker leases, and
 terminally aborts cancelled Runs. The fourth increment adds an independently
 scheduled recovery process with transaction-scoped singleton ownership, bounded
 `SKIP LOCKED` batches, crash-safe rollback/restart behavior, and durable health
-telemetry. Project/worker concurrency admission remains in this workstream.
+telemetry. The fifth increment persists bounded server-owned project and worker
+limits and enforces them atomically at claim time with recovery-derived release;
+RUN_CANCEL remains available when project execution capacity is saturated.
+Broader process/container termination scenarios remain in this workstream.
 
 ## Remaining RDC v1 workstreams
 

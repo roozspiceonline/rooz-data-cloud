@@ -12,14 +12,22 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
 from app.core.database import engine, session_factory
-from app.execution_schemas import CompleteLeaseRequest
+from app.core.errors import ApiError
+from app.execution_schemas import (
+    ClaimWorkRequest,
+    CompleteLeaseRequest,
+    RegisterWorkerRequest,
+)
 from app.models import ExecutionLease, Run, WorkerIdentity
 from app.services.execution_plane import (
+    claim_work,
     complete_lease,
     reap_expired_leases,
     reap_overdue_cancellations,
+    register_worker,
 )
 from app.services.execution_recovery_sweeper import (
+    read_execution_admission_health,
     read_execution_recovery_health,
     record_execution_recovery_failure,
     run_execution_recovery_sweep,
@@ -658,3 +666,340 @@ async def test_postgres_delayed_failure_cannot_overwrite_newer_health() -> None:
         final = await read_execution_recovery_health(session)
     assert final.status == "HEALTHY"
     assert final.total_failures == failed.total_failures
+
+
+async def _prepare_run_start_admission(
+    *,
+    now: datetime,
+    project_limit: int,
+    worker_limit: int,
+) -> tuple[UUID, UUID, UUID, UUID]:
+    lease_id, source_id, first_run_id, _, org_id, project_id, first_worker_id = (
+        await _seed_deadline_lease(
+            work_kind="RUN_START",
+            now=now,
+            overdue=False,
+        )
+    )
+    second_run_id = uuid4()
+    second_source_id = uuid4()
+    second_worker_id = uuid4()
+    suffix = uuid4().hex
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE control.projects SET max_active_leases=:limit WHERE id=:project"),
+            {"limit": project_limit, "project": project_id},
+        )
+        await connection.execute(
+            text("UPDATE security.worker_identities SET max_concurrency=:limit WHERE id=:worker"),
+            {"limit": worker_limit, "worker": first_worker_id},
+        )
+        await connection.execute(
+            text("UPDATE control.execution_leases SET status='COMPLETED',completed_at=:now WHERE id=:lease"),
+            {"now": now, "lease": lease_id},
+        )
+        await connection.execute(
+            text("UPDATE control.run_command_outbox SET status='PENDING',attempts=1,claimed_at=NULL,available_at=:available_at,payload=CAST(:payload AS jsonb),updated_at=:now WHERE id=:source"),
+            {
+                "now": now,
+                "available_at": now - timedelta(days=1),
+                "source": source_id,
+                "payload": '{"runtime":{"timeout_seconds":60}}',
+            },
+        )
+        await connection.execute(
+            text("UPDATE control.runs SET status='QUEUED',started_at=NULL,updated_at=:now WHERE id=:run"),
+            {"now": now, "run": first_run_id},
+        )
+        await connection.execute(
+            text("INSERT INTO control.runs (id,organization_id,project_id,agent_id,agent_version_id,build_id,status,input_reference,runtime_configuration,memory_mb,cpu_millis,timeout_seconds,requested_by_user_id,queued_at) SELECT :second,organization_id,project_id,agent_id,agent_version_id,build_id,'QUEUED',input_reference,runtime_configuration,memory_mb,cpu_millis,timeout_seconds,requested_by_user_id,:now FROM control.runs WHERE id=:first"),
+            {"second": second_run_id, "first": first_run_id, "now": now},
+        )
+        await connection.execute(
+            text("INSERT INTO control.run_command_outbox (id,organization_id,project_id,run_id,command,topic,payload,status,attempts,available_at) VALUES (:source,:org,:project,:run,'START','rdc.run.requested.v1',CAST(:payload AS jsonb),'PENDING',0,:available_at)"),
+            {
+                "source": second_source_id,
+                "org": org_id,
+                "project": project_id,
+                "run": second_run_id,
+                "available_at": now - timedelta(days=1),
+                "payload": '{"runtime":{"timeout_seconds":60}}',
+            },
+        )
+        await connection.execute(
+            text("INSERT INTO security.worker_identities (id,name,public_prefix,last_four,token_digest,capabilities,max_concurrency,status,protocol_version,software_version,metadata_json) VALUES (:worker,:name,:prefix,'0002',:digest,'[\"RUN_START\"]',:limit,'ACTIVE','rdc-worker/v1','test','{}')"),
+            {
+                "worker": second_worker_id,
+                "name": f"admission-{suffix}",
+                "prefix": suffix[:12],
+                "digest": uuid4().bytes + uuid4().bytes,
+                "limit": worker_limit,
+            },
+        )
+    return first_worker_id, second_worker_id, project_id, first_run_id
+
+
+async def _claim_run_start(worker_id: UUID, request_id: str) -> str:
+    async with session_factory() as session:
+        worker = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert worker is not None
+        try:
+            result = await claim_work(
+                session,
+                worker=worker,
+                payload=ClaimWorkRequest(kinds=["RUN_START"]),
+                request_id=request_id,
+            )
+            await session.commit()
+            return "CLAIMED" if result is not None else "NO_CAPACITY"
+        except ApiError as exc:
+            await session.rollback()
+            return exc.code
+
+
+async def test_postgres_project_admission_is_single_winner_and_releases() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    first_worker, second_worker, project_id, _ = (
+        await _prepare_run_start_admission(
+            now=now,
+            project_limit=1,
+            worker_limit=1,
+        )
+    )
+    results = await asyncio.gather(
+        _claim_run_start(first_worker, "project-admission-a"),
+        _claim_run_start(second_worker, "project-admission-b"),
+    )
+    assert results.count("CLAIMED") == 1
+    assert set(results) <= {"CLAIMED", "NO_CAPACITY", "PROJECT_CONCURRENCY_LIMIT"}
+    async with engine.begin() as connection:
+        active_lease = (
+            await connection.execute(
+                text("SELECT id,worker_id FROM control.execution_leases WHERE project_id=:project AND status='ACTIVE' AND work_kind='RUN_START'"),
+                {"project": project_id},
+            )
+        ).one()
+        await connection.execute(
+            text("UPDATE control.execution_leases SET status='COMPLETED',completed_at=:now WHERE id=:lease"),
+            {"now": now, "lease": active_lease.id},
+        )
+    losing_worker = (
+        second_worker if active_lease.worker_id == first_worker else first_worker
+    )
+    assert await _claim_run_start(
+        losing_worker,
+        "project-admission-after-release",
+    ) == "CLAIMED"
+
+
+async def test_postgres_worker_admission_is_single_winner() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    worker_id, _, project_id, _ = await _prepare_run_start_admission(
+        now=now,
+        project_limit=2,
+        worker_limit=1,
+    )
+    results = await asyncio.gather(
+        _claim_run_start(worker_id, "worker-admission-a"),
+        _claim_run_start(worker_id, "worker-admission-b"),
+    )
+    assert sorted(results) == ["CLAIMED", "WORKER_CONCURRENCY_LIMIT"]
+    async with engine.connect() as connection:
+        active_count = await connection.scalar(
+            text("SELECT count(*) FROM control.execution_leases WHERE project_id=:project AND worker_id=:worker AND status='ACTIVE'"),
+            {"project": project_id, "worker": worker_id},
+        )
+    assert active_count == 1
+
+
+async def test_postgres_run_cancel_bypasses_saturated_project_admission() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, run_id, _, org_id, project_id, _ = await _seed_deadline_lease(
+        work_kind="RUN_START",
+        now=now,
+        overdue=False,
+    )
+    cancel_source_id = uuid4()
+    cancel_worker_id = uuid4()
+    suffix = uuid4().hex
+    cancel_deadline = now + timedelta(minutes=5)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.projects SET max_active_leases=1 "
+                "WHERE id=:project"
+            ),
+            {"project": project_id},
+        )
+        await connection.execute(
+            text(
+                "UPDATE control.runs SET status='ABORTING',"
+                "cancel_requested_at=:now,cancel_deadline_at=:deadline "
+                "WHERE id=:run"
+            ),
+            {"run": run_id, "now": now, "deadline": cancel_deadline},
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO control.run_command_outbox "
+                "(id,organization_id,project_id,run_id,command,topic,payload,"
+                "status,attempts,available_at) VALUES "
+                "(:source,:org,:project,:run,'CANCEL',"
+                "'rdc.run.cancel.requested.v1',CAST(:payload AS jsonb),"
+                "'PENDING',0,:now)"
+            ),
+            {
+                "source": cancel_source_id,
+                "org": org_id,
+                "project": project_id,
+                "run": run_id,
+                "payload": (
+                    '{"cancel_deadline_at":"'
+                    f"{cancel_deadline.isoformat()}"
+                    '"}'
+                ),
+                "now": now - timedelta(days=3650),
+            },
+        )
+        await connection.execute(
+            text(
+                "INSERT INTO security.worker_identities "
+                "(id,name,public_prefix,last_four,token_digest,capabilities,"
+                "max_concurrency,status,protocol_version,software_version,"
+                "metadata_json) VALUES "
+                "(:worker,:name,:prefix,'0003',:digest,'[\"RUN_CANCEL\"]',"
+                "1,'ACTIVE','rdc-worker/v1','test','{}')"
+            ),
+            {
+                "worker": cancel_worker_id,
+                "name": f"cancel-admission-{suffix}",
+                "prefix": suffix[:12],
+                "digest": uuid4().bytes + uuid4().bytes,
+            },
+        )
+    async with session_factory() as session:
+        worker = await session.scalar(
+            select(WorkerIdentity).where(
+                WorkerIdentity.id == cancel_worker_id
+            )
+        )
+        assert worker is not None
+        claim = await claim_work(
+            session,
+            worker=worker,
+            payload=ClaimWorkRequest(kinds=["RUN_CANCEL"]),
+            request_id="cancel-bypasses-project-admission",
+        )
+        await session.commit()
+    assert claim is not None
+    assert claim.work_kind == "RUN_CANCEL"
+    assert claim.run_id == run_id
+    assert claim.payload["admission"] == {
+        "worker_active_before_claim": 0,
+        "worker_max_concurrency": 1,
+        "project_active_before_claim": 1,
+        "project_max_active_leases": 1,
+        "project_slot_consumed": False,
+    }
+    async with engine.connect() as connection:
+        active_slots = await connection.scalar(
+            text(
+                "SELECT count(*) FROM control.execution_leases "
+                "WHERE project_id=:project AND status='ACTIVE' "
+                "AND work_kind IN ('BUILD','RUN_START')"
+            ),
+            {"project": project_id},
+        )
+        active_cancellations = await connection.scalar(
+            text(
+                "SELECT count(*) FROM control.execution_leases "
+                "WHERE project_id=:project AND status='ACTIVE' "
+                "AND work_kind='RUN_CANCEL'"
+            ),
+            {"project": project_id},
+        )
+    assert active_slots == 1
+    assert active_cancellations == 1
+
+
+async def test_postgres_admission_limits_are_database_bounded() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, _, _, _, project_id, worker_id = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    with pytest.raises(DBAPIError, match="ck_projects_max_active_leases"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE control.projects SET max_active_leases=0 "
+                    "WHERE id=:project"
+                ),
+                {"project": project_id},
+            )
+    with pytest.raises(
+        DBAPIError,
+        match="ck_worker_identities_max_concurrency",
+    ):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE security.worker_identities SET max_concurrency=17 "
+                    "WHERE id=:worker"
+                ),
+                {"worker": worker_id},
+            )
+
+
+async def test_postgres_admission_health_reports_aggregate_saturation() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, _, _, _, project_id, _ = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.projects SET max_active_leases=1 "
+                "WHERE id=:project"
+            ),
+            {"project": project_id},
+        )
+    async with session_factory() as session:
+        health = await read_execution_admission_health(session)
+    assert health.active_leases >= 1
+    assert health.saturated_projects >= 1
+    assert health.saturated_workers >= 1
+
+
+async def test_postgres_worker_registration_is_server_capped() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    suffix = uuid4().hex
+    async with session_factory() as session:
+        result = await register_worker(
+            session,
+            payload=RegisterWorkerRequest(
+                name=f"capped-{suffix}",
+                capabilities=["BUILD"],
+                max_concurrency=256,
+                software_version="test",
+            ),
+            request_id="worker-registration-cap",
+        )
+        await session.commit()
+    assert result.worker.max_concurrency == 16

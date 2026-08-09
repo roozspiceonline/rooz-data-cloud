@@ -42,6 +42,22 @@ text, tokens, and secrets. Failures persist only a bounded exception class name
 and generic summary. Readiness reports an enabled scheduler as stale when no
 recent successful heartbeat exists, preventing silent recovery loss.
 
-This increment does not yet claim full production recovery. Concurrency
-admission must still be enforced across workers and projects, and broader
+Concurrency admission is server-owned. Project limits are persisted on the
+server-derived owning Project and cannot be supplied by a claim caller. Worker
+requests are clamped to a configured maximum and the database independently
+rejects larger persisted values. A transaction advisory lock serializes claims
+for one worker; row locks protect both the worker and project, and the project
+count is repeated after work selection. This closes same-worker and
+cross-worker oversubscription races without maintaining a mutable slot counter.
+
+Only ACTIVE, unexpired and non-overdue BUILD/RUN_START leases consume project
+capacity. All valid ACTIVE leases consume worker capacity. Recovery terminal
+transitions therefore release admission through the same durable lease state.
+Capacity-aware source selection avoids hot saturated projects, while the locked
+recount is authoritative. Cancellation does not consume or require a project
+execution slot, preventing a saturated tenant from blocking termination; its
+worker is still bounded. Aggregate health metrics expose no tenant, project,
+worker, payload, token, or secret identifiers.
+
+This increment does not yet claim full production recovery. Broader
 process/container termination scenarios remain part of the workstream gate.

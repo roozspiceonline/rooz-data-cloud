@@ -68,6 +68,8 @@ need(
     "execution_recovery_sweep_interval_seconds",
     "execution_recovery_sweep_batch_size",
     "execution_recovery_stale_after_seconds",
+    "worker_registration_max_concurrency",
+    "execution_project_default_max_active_leases",
 )
 need(
     ".env.example",
@@ -77,6 +79,8 @@ need(
     "RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS",
     "RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE",
     "RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS",
+    "RDC_WORKER_REGISTRATION_MAX_CONCURRENCY",
+    "RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES",
 )
 need(
     "docker-compose.yml",
@@ -99,6 +103,16 @@ need(
     "run_execution_recovery_sweep",
     "execution.recovery.sweep_completed",
     "read_execution_recovery_health",
+    "read_execution_admission_health",
+    "saturated_projects",
+    "saturated_workers",
+)
+need(
+    "apps/api/migrations/versions/20260809_0019_execution_concurrency_admission.py",
+    "max_active_leases BETWEEN 1 AND 1000",
+    "max_concurrency BETWEEN 1 AND 16",
+    "ix_execution_leases_active_project_admission",
+    "ix_execution_leases_active_worker_admission",
 )
 need(
     "apps/api/migrations/versions/20260809_0018_execution_recovery_sweeps.py",
@@ -126,12 +140,19 @@ need(
     "recovery_sweep_is_singleton_and_restart_safe",
     "recovery_sweep_enforces_bounded_batches",
     "concurrent_cancellation_reapers_are_single_winner",
+    "project_admission_is_single_winner_and_releases",
+    "worker_admission_is_single_winner",
+    "run_cancel_bypasses_saturated_project_admission",
+    "admission_limits_are_database_bounded",
+    "admission_health_reports_aggregate_saturation",
+    "worker_registration_is_server_capped",
 )
 need(
     "docs/execution-recovery/THREAT_MODEL.md",
     "server",
     "outbox",
     "immutable lease deadline",
+    "Concurrency admission is server-owned",
 )
 need(
     "docs/execution-recovery/RUNBOOK.md",
@@ -144,5 +165,7 @@ need(
     "20260809_0018",
     "pg_try_advisory_xact_lock",
     "/health/recovery",
+    "20260809_0019",
+    "RUN_CANCEL",
 )
-print("Execution recovery increment 4 verification passed")
+print("Execution recovery increment 5 verification passed")
