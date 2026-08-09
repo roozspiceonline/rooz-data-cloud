@@ -184,6 +184,10 @@ class WorkerSummary(BaseModel):
     sandbox_attested_at: datetime | None
     registered_at: datetime
     last_seen_at: datetime | None
+    last_lost_at: datetime | None
+    last_recovered_at: datetime | None
+    last_cleanup_at: datetime | None
+    cleanup_generation: int
     expires_at: datetime | None
 
 
@@ -193,16 +197,35 @@ class RegisteredWorkerResponse(BaseModel):
     warning: str = "This worker token is shown only once."
 
 
+class WorkerRecoveryReport(StrictModel):
+    schema_version: Literal["rdc.worker-recovery/v1"] = (
+        "rdc.worker-recovery/v1"
+    )
+    startup_id: UUID
+    forced_cleanup_completed: Literal[True] = True
+    managed_containers_removed: int = Field(ge=0, le=256)
+    workspace_directories_removed: int = Field(ge=0, le=256)
+
+
 class WorkerHeartbeatRequest(StrictModel):
     status: Literal["ACTIVE", "DRAINING"] = "ACTIVE"
     software_version: str = Field(min_length=1, max_length=80)
     active_lease_count: int = Field(ge=0, le=256)
     sandbox: SandboxAttestation | None = None
+    recovery: WorkerRecoveryReport | None = None
     metadata: dict[str, object] = Field(default_factory=dict)
 
     @field_validator("metadata")
     @classmethod
     def metadata_size(cls, value: dict[str, object]) -> dict[str, object]:
+        server_owned = {
+            "active_lease_count",
+            "recovery_startup_id",
+            "managed_containers_removed",
+            "workspace_directories_removed",
+        }
+        if server_owned.intersection(value):
+            raise ValueError("Worker metadata contains a server-owned key.")
         encoded = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
         if len(encoded) > 16_384:
             raise ValueError("Worker metadata cannot exceed 16 KiB.")

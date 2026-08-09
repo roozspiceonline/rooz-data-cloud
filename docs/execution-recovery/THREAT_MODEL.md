@@ -59,5 +59,31 @@ execution slot, preventing a saturated tenant from blocking termination; its
 worker is still bounded. Aggregate health metrics expose no tenant, project,
 worker, payload, token, or secret identifiers.
 
-This increment does not yet claim full production recovery. Broader
-process/container termination scenarios remain part of the workstream gate.
+Worker-process loss is detected from server-observed activity, not a
+worker-supplied active count. Detection is singleton-owned and row-locked,
+bounded per sweep, disables sandbox execution, shortens valid active leases,
+marks them `WORKER_LOST`, and reuses normal recovery so grants, source state,
+targets, counters, and audit lineage transition atomically. A delayed worker
+cannot retain lease API or RLS authority after the loss transaction commits.
+
+A worker may authenticate after loss only to report recovery; it cannot claim
+or regain lease-scoped authority until cleanup evidence is accepted. The report
+is strict and bounded but is not treated as proof of tenant work completion.
+The durable lease transition remains authoritative. Replayed cleanup startup
+identifiers cannot recover a later loss, while a retried accepted report is
+idempotent. Worker watchdog heartbeats prevent healthy long-running work from
+being mistaken for loss and fail closed by forcing managed cleanup when renewal
+fails.
+
+Cleanup cannot select arbitrary host resources. Containers require both the
+dedicated rootless namespace and RDC managed label, names must match an exact
+RDC prefix, target counts are bounded, and workspaces must be non-symlink
+directories with generated prefixes. Signal and restart forced cleanup are
+idempotent. Unlabeled or ambiguously named resources cause startup failure
+instead of broad deletion. BuildKit/containerd must remain within the worker
+service cgroup so the production supervisor terminates child processes with
+the worker.
+
+This increment completes the planned application-level process/container
+restart foundation; production deployment, supervisor, backup/restore, and
+environment-separation gates remain.

@@ -32,6 +32,9 @@ need(
     "reap_overdue_cancellations",
     '"run.cancellation_converged"',
     '"RUN_CANCELLATION_PENDING"',
+    '"WORKER_RECOVERY_REQUIRED"',
+    '"execution.lease.worker_lost"',
+    '"worker.recovered"',
 )
 need(
     "apps/api/migrations/versions/20260809_0017_run_cancellation_convergence.py",
@@ -70,6 +73,7 @@ need(
     "execution_recovery_stale_after_seconds",
     "worker_registration_max_concurrency",
     "execution_project_default_max_active_leases",
+    "worker_lost_after_seconds",
 )
 need(
     ".env.example",
@@ -81,6 +85,9 @@ need(
     "RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS",
     "RDC_WORKER_REGISTRATION_MAX_CONCURRENCY",
     "RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES",
+    "RDC_WORKER_LOST_AFTER_SECONDS",
+    "RDC_WORKER_HEARTBEAT_SECONDS",
+    "RDC_WORKER_LEASE_RENEW_SECONDS",
 )
 need(
     "docker-compose.yml",
@@ -106,6 +113,10 @@ need(
     "read_execution_admission_health",
     "saturated_projects",
     "saturated_workers",
+    "detect_lost_workers",
+    "WORKER_LOST",
+    "worker.lost",
+    "recovery_pending_workers",
 )
 need(
     "apps/api/migrations/versions/20260809_0019_execution_concurrency_admission.py",
@@ -121,6 +132,43 @@ need(
     "last_heartbeat_at",
     "total_sweeps",
     "total_failures",
+)
+need(
+    "apps/api/migrations/versions/20260809_0020_worker_loss_recovery.py",
+    "last_lost_at",
+    "last_recovered_at",
+    "cleanup_generation",
+    "ix_worker_identities_loss_detection",
+    "total_worker_leases_fenced",
+    "worker.last_recovered_at >= worker.last_lost_at",
+)
+need(
+    "apps/api/app/execution_schemas.py",
+    "WorkerRecoveryReport",
+    'Literal["rdc.worker-recovery/v1"]',
+    "forced_cleanup_completed: Literal[True]",
+)
+need(
+    "packages/agent-protocol/schemas/worker-heartbeat.schema.json",
+    '"rdc.worker-recovery/v1"',
+    '"forced_cleanup_completed"',
+    '"managed_containers_removed"',
+    '"workspace_directories_removed"',
+)
+need(
+    "workers/sandbox-runtime/worker_recovery.py",
+    'MANAGED_LABEL = "io.rooz.rdc.managed=true"',
+    "MAX_CLEANUP_TARGETS = 256",
+    "force_startup_cleanup",
+    "class LeaseWatchdog",
+    "cleanup_managed_containers",
+)
+need(
+    "workers/sandbox-runtime/worker.py",
+    "raise WorkerShutdown",
+    "LeaseWatchdog",
+    "draining=True",
+    "recovery=final_cleanup.as_protocol()",
 )
 need(
     "apps/api/tests/test_execution_recovery.py",
@@ -146,6 +194,13 @@ need(
     "admission_limits_are_database_bounded",
     "admission_health_reports_aggregate_saturation",
     "worker_registration_is_server_capped",
+    "lost_worker_is_fenced_and_requires_cleanup_recovery",
+)
+need(
+    "apps/api/tests/test_execution_worker_loss_contracts.py",
+    "startup_cleanup_is_label_scoped_validated_and_bounded",
+    "lease_watchdog_renews_until_work_completes",
+    "lease_watchdog_fails_closed_and_forces_runtime_cleanup",
 )
 need(
     "docs/execution-recovery/THREAT_MODEL.md",
@@ -153,6 +208,8 @@ need(
     "outbox",
     "immutable lease deadline",
     "Concurrency admission is server-owned",
+    "WORKER_LOST",
+    "forced cleanup",
 )
 need(
     "docs/execution-recovery/RUNBOOK.md",
@@ -167,5 +224,8 @@ need(
     "/health/recovery",
     "20260809_0019",
     "RUN_CANCEL",
+    "20260809_0020",
+    "WORKER_RECOVERY_REQUIRED",
+    "io.rooz.rdc.managed=true",
 )
-print("Execution recovery increment 5 verification passed")
+print("Execution recovery increment 6 verification passed")

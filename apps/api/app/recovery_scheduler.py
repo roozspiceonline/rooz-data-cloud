@@ -44,9 +44,12 @@ async def run_sweep_loop(*, stop: asyncio.Event, owner_id: str) -> None:
                 await session.commit()
             if result.acquired:
                 logger.info(
-                    "execution recovery sweep completed leases=%d cancellations=%d",
+                    "execution recovery sweep completed leases=%d "
+                    "cancellations=%d workers_lost=%d leases_fenced=%d",
                     result.leases_reaped,
                     result.cancellations_converged,
+                    result.workers_lost,
+                    result.worker_leases_fenced,
                 )
         except asyncio.CancelledError:
             raise

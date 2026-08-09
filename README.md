@@ -23,3 +23,6 @@ scheduled singleton-safe recovery service with durable health telemetry.
 Persisted project limits, server-capped worker limits, and atomic claim-time
 admission now prevent concurrent BUILD/RUN_START oversubscription while keeping
 RUN_CANCEL available to drain saturated projects.
+The recovery scheduler also detects stale workers, fences their active leases,
+and requires label-scoped container/workspace cleanup evidence before a
+restarted worker can resume claims.

@@ -85,8 +85,12 @@ def test_recovery_health_requires_recent_success() -> None:
         last_heartbeat_at=now,
         last_leases_reaped=2,
         last_cancellations_converged=1,
+        last_workers_lost=0,
+        last_worker_leases_fenced=0,
         total_sweeps=4,
         total_failures=0,
+        total_workers_lost=0,
+        total_worker_leases_fenced=0,
         last_error_code=None,
     )
     assert execution_recovery_is_fresh(

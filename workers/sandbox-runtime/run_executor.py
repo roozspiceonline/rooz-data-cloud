@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 from pathlib import Path
@@ -8,6 +7,7 @@ from pathlib import Path
 from config import SandboxWorkerConfig
 from io_utils import write_private_json
 from policy import SandboxPolicyError
+from worker_recovery import MANAGED_LABEL
 
 
 def _container_name(run_id: str) -> str:
@@ -81,6 +81,8 @@ def run_agent(
         "--rm",
         "--name",
         name,
+        "--label",
+        MANAGED_LABEL,
         "--pull",
         "never",
         "--user",
@@ -132,25 +134,29 @@ def run_agent(
         cancel_run(config=config, run_id=run_id)
         raise SandboxPolicyError("Run exceeded its sandbox timeout.") from exc
     finally:
+        cancel_run(config=config, run_id=run_id)
         env_path.unlink(missing_ok=True)
     return completed.returncode, output_path, log_path
 
 
 def cancel_run(*, config: SandboxWorkerConfig, run_id: str) -> None:
-    subprocess.run(
-        [
-            "nerdctl",
-            "--address",
-            config.containerd_address,
-            "--namespace",
-            config.namespace,
-            "rm",
-            "--force",
-            _container_name(run_id),
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=30,
-        check=False,
-    )
+    try:
+        subprocess.run(
+            [
+                "nerdctl",
+                "--address",
+                config.containerd_address,
+                "--namespace",
+                config.namespace,
+                "rm",
+                "--force",
+                _container_name(run_id),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return

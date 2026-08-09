@@ -18,6 +18,7 @@ from browser_navigation_result import (
 )
 from config import SandboxWorkerConfig
 from policy import SandboxPolicyError
+from worker_recovery import MANAGED_LABEL
 
 _IMAGE_REF = re.compile(r"^rdc\.local/browser-runtime@sha256:[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -174,6 +175,8 @@ def browser_self_test_command(
         "--rm",
         "--name",
         name,
+        "--label",
+        MANAGED_LABEL,
         "--pull",
         "never",
         "--init",
@@ -306,6 +309,8 @@ def browser_transport_self_test_command(
         "--rm",
         "--name",
         name,
+        "--label",
+        MANAGED_LABEL,
         "--pull",
         "never",
         "--init",
@@ -493,6 +498,8 @@ def browser_live_navigation_command(
         "--rm",
         "--name",
         name,
+        "--label",
+        MANAGED_LABEL,
         "--pull",
         "never",
         "--init",
@@ -704,4 +711,3 @@ def run_browser_live_navigation(
         encoding="utf-8",
     )
     return final_output, log_path
-

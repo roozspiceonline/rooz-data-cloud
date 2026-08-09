@@ -634,6 +634,10 @@ def worker_summary(record: WorkerIdentity) -> WorkerSummary:
         sandbox_attested_at=record.sandbox_attested_at,
         registered_at=record.registered_at,
         last_seen_at=record.last_seen_at,
+        last_lost_at=record.last_lost_at,
+        last_recovered_at=record.last_recovered_at,
+        last_cleanup_at=record.last_cleanup_at,
+        cleanup_generation=record.cleanup_generation,
         expires_at=record.expires_at,
     )
 
@@ -751,6 +755,19 @@ async def heartbeat_worker(
     payload: WorkerHeartbeatRequest,
     request_id: str,
 ) -> WorkerSummary:
+    locked_worker = await session.scalar(
+        select(WorkerIdentity)
+        .where(WorkerIdentity.id == worker.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if locked_worker is None:
+        raise ApiError(
+            status_code=401,
+            code="INTERNAL_CREDENTIAL_INVALID",
+            message="The internal credential is invalid.",
+        )
+    worker = locked_worker
     if worker.status == "REVOKED" or worker.revoked_at is not None:
         raise ApiError(
             status_code=401,
@@ -758,6 +775,23 @@ async def heartbeat_worker(
             message="The internal credential is invalid.",
         )
     now = datetime.now(UTC)
+    recovery_pending = (
+        worker.last_lost_at is not None
+        and (
+            worker.last_recovered_at is None
+            or worker.last_recovered_at < worker.last_lost_at
+        )
+    )
+    if recovery_pending and payload.recovery is None:
+        raise ApiError(
+            status_code=409,
+            code="WORKER_RECOVERY_REQUIRED",
+            message=(
+                "The worker must complete managed-runtime cleanup before "
+                "it can recover."
+            ),
+        )
+    previous_startup_id = worker.metadata_json.get("recovery_startup_id")
     worker.status = payload.status
     worker.software_version = payload.software_version
     worker.last_seen_at = now
@@ -767,6 +801,59 @@ async def heartbeat_worker(
         "active_lease_count": payload.active_lease_count,
     }
     _apply_sandbox_attestation(worker, payload.sandbox, now=now)
+    recovery_startup_id = (
+        str(payload.recovery.startup_id)
+        if payload.recovery is not None
+        else None
+    )
+    if (
+        recovery_pending
+        and recovery_startup_id is not None
+        and recovery_startup_id == previous_startup_id
+    ):
+        raise ApiError(
+            status_code=409,
+            code="WORKER_RECOVERY_REPORT_REPLAYED",
+            message="The worker recovery report was already accepted.",
+        )
+    if (
+        payload.recovery is not None
+        and recovery_startup_id != previous_startup_id
+    ):
+        worker.last_cleanup_at = now
+        worker.cleanup_generation += 1
+        worker.metadata_json = {
+            **dict(worker.metadata_json),
+            "recovery_startup_id": recovery_startup_id,
+            "managed_containers_removed": (
+                payload.recovery.managed_containers_removed
+            ),
+            "workspace_directories_removed": (
+                payload.recovery.workspace_directories_removed
+            ),
+        }
+        if recovery_pending:
+            worker.last_recovered_at = now
+            await append_audit_event(
+                session,
+                organization_id=None,
+                project_id=None,
+                actor_type="worker",
+                actor_id=str(worker.id),
+                action="worker.recovered",
+                resource_type="worker",
+                resource_id=str(worker.id),
+                request_id=request_id,
+                details={
+                    "cleanup_generation": worker.cleanup_generation,
+                    "managed_containers_removed": (
+                        payload.recovery.managed_containers_removed
+                    ),
+                    "workspace_directories_removed": (
+                        payload.recovery.workspace_directories_removed
+                    ),
+                },
+            )
     if not settings.sandbox_execution_enabled:
         worker.sandbox_execution_enabled = False
     await reap_expired_leases(session, now=now, request_id=request_id)
@@ -951,6 +1038,7 @@ async def _reset_expired_source(
     lease: ExecutionLease,
     now: datetime,
     deadline_exceeded: bool,
+    failure_code: str,
     request_id: str,
 ) -> tuple[datetime | None, bool]:
     if lease.work_kind == "BUILD":
@@ -961,11 +1049,6 @@ async def _reset_expired_source(
         )
         build = await session.scalar(
             select(Build).where(Build.id == lease.build_id)
-        )
-        failure_code = (
-            "WORKLOAD_DEADLINE_EXCEEDED"
-            if deadline_exceeded
-            else "LEASE_EXPIRED"
         )
         retry = execution_retry_allowed(
             requested=not deadline_exceeded,
@@ -1002,7 +1085,11 @@ async def _reset_expired_source(
                 else (
                     "The Build execution deadline was exceeded."
                     if deadline_exceeded
-                    else "The execution lease expired."
+                    else (
+                        "The execution worker was lost."
+                        if failure_code == "WORKER_LOST"
+                        else "The execution lease expired."
+                    )
                 )
             )
             build.completed_at = None if retry else now
@@ -1033,11 +1120,6 @@ async def _reset_expired_source(
         )
     ):
         return None, True
-    failure_code = (
-        "WORKLOAD_DEADLINE_EXCEEDED"
-        if deadline_exceeded
-        else "LEASE_EXPIRED"
-    )
     retry = execution_retry_allowed(
         requested=not deadline_exceeded,
         outcome="FAILED",
@@ -1076,7 +1158,11 @@ async def _reset_expired_source(
             else (
                 "The Run execution deadline was exceeded."
                 if deadline_exceeded
-                else "The execution lease expired."
+                else (
+                    "The execution worker was lost."
+                    if failure_code == "WORKER_LOST"
+                    else "The execution lease expired."
+                )
             )
         )
         run.finished_at = None if retry else now
@@ -1135,11 +1221,21 @@ async def reap_expired_leases(
     )
     for lease in records:
         deadline_exceeded = lease.deadline_at <= current
+        failure_code = (
+            "WORKLOAD_DEADLINE_EXCEEDED"
+            if deadline_exceeded
+            else (
+                "WORKER_LOST"
+                if lease.failure_code == "WORKER_LOST"
+                else "LEASE_EXPIRED"
+            )
+        )
         next_attempt_at, cancellation_converged = await _reset_expired_source(
             session,
             lease=lease,
             now=current,
             deadline_exceeded=deadline_exceeded,
+            failure_code=failure_code,
             request_id=request_id,
         )
         if cancellation_converged:
@@ -1175,15 +1271,15 @@ async def reap_expired_leases(
             grant.status = "EXPIRED"
         lease.status = "FAILED" if deadline_exceeded else "EXPIRED"
         lease.completed_at = current
-        lease.failure_code = (
-            "WORKLOAD_DEADLINE_EXCEEDED"
-            if deadline_exceeded
-            else "LEASE_EXPIRED"
-        )
+        lease.failure_code = failure_code
         lease.failure_summary = (
             "The workload execution deadline was exceeded."
             if deadline_exceeded
-            else "The worker did not renew the lease."
+            else (
+                "The execution worker heartbeat was lost."
+                if failure_code == "WORKER_LOST"
+                else "The worker did not renew the lease."
+            )
         )
         lease.updated_at = current
         await append_audit_event(
@@ -1191,11 +1287,19 @@ async def reap_expired_leases(
             organization_id=lease.organization_id,
             project_id=lease.project_id,
             actor_type="system",
-            actor_id="lease-reaper",
+            actor_id=(
+                "worker-loss-reaper"
+                if failure_code == "WORKER_LOST"
+                else "lease-reaper"
+            ),
             action=(
                 "execution.lease.deadline_exceeded"
                 if deadline_exceeded
-                else "execution.lease.expired"
+                else (
+                    "execution.lease.worker_lost"
+                    if failure_code == "WORKER_LOST"
+                    else "execution.lease.expired"
+                )
             ),
             resource_type="execution_lease",
             resource_id=str(lease.id),
@@ -1206,6 +1310,7 @@ async def reap_expired_leases(
                 "worker_id": str(lease.worker_id),
                 "deadline_at": lease.deadline_at.isoformat(),
                 "deadline_exceeded": deadline_exceeded,
+                "worker_lost": failure_code == "WORKER_LOST",
                 "retry_scheduled": next_attempt_at is not None,
                 "next_attempt_at": (
                     next_attempt_at.isoformat()
@@ -1614,6 +1719,19 @@ async def claim_work(
             message="The internal credential is invalid.",
         )
     worker = locked_worker
+    recovery_pending = (
+        worker.last_lost_at is not None
+        and (
+            worker.last_recovered_at is None
+            or worker.last_recovered_at < worker.last_lost_at
+        )
+    )
+    if recovery_pending:
+        raise ApiError(
+            status_code=409,
+            code="WORKER_RECOVERY_REQUIRED",
+            message="The worker must complete managed-runtime cleanup.",
+        )
     if worker.status != "ACTIVE":
         raise ApiError(
             status_code=409,

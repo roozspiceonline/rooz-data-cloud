@@ -24,3 +24,6 @@ def test_foundation_contract() -> None:
         payload["execution_recovery_singleton_lock"]
         == "postgresql-advisory-xact"
     )
+    assert payload["worker_loss_detection"] is True
+    assert payload["worker_lost_after_seconds"] == 45
+    assert payload["worker_restart_cleanup_required"] is True

@@ -36,7 +36,11 @@ scheduled recovery process with transaction-scoped singleton ownership, bounded
 telemetry. The fifth increment persists bounded server-owned project and worker
 limits and enforces them atomically at claim time with recovery-derived release;
 RUN_CANCEL remains available when project execution capacity is saturated.
-Broader process/container termination scenarios remain in this workstream.
+The sixth increment detects stale workers from server-observed activity, fences
+and retries their leases, renews healthy in-flight work, performs bounded
+label-scoped runtime cleanup on failure/restart/signal, and requires persisted
+cleanup recovery evidence before claims and RLS authority resume. Production
+operational gates remain in this workstream.
 
 ## Remaining RDC v1 workstreams
 

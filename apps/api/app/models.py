@@ -1432,6 +1432,20 @@ class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_lost_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_recovered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    cleanup_generation: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

@@ -56,7 +56,23 @@ Claim receipts and immutable audit details record the effective limits and
 pre-claim aggregate counts. `/health/recovery` also exposes aggregate active
 lease and saturated project/worker counts without tenant or worker identifiers.
 
-Remaining increments cover broader process/container crash and restart
-scenarios and production operations.
+Migration `20260809_0020` persists worker loss, recovery, and forced-cleanup
+evidence plus scheduler counters. The scheduler detects an ACTIVE worker with a
+valid lease whose server-observed activity is older than
+`RDC_WORKER_LOST_AFTER_SECONDS`, disables its sandbox authority, shortens its
+leases for immediate normal recovery, and records `worker.lost` and
+`execution.lease.worker_lost` audit lineage. Retry remains bounded by the same
+durable source, attempt, deadline, and backoff policy.
+
+The sandbox worker now heartbeats and renews while a claim executes. Every RDC
+Run and browser container carries the exact `io.rooz.rdc.managed=true` label.
+Startup, renewal failure, signal handling, normal Run completion, and shutdown
+force-remove only labeled containers with validated RDC names and remove only
+bounded non-symlink RDC workspaces. A lost worker remains excluded from claims
+and lease-scoped RLS until a strict `rdc.worker-recovery/v1` cleanup report is
+accepted. Cleanup reports contain only counts and a startup identifier, never
+container output, tenant data, or credentials.
+
+Remaining increments cover production operational gates.
 
 See the [threat model](THREAT_MODEL.md) and [runbook](RUNBOOK.md).

@@ -1061,6 +1061,16 @@ counter exists. Project and worker row locking plus a per-worker transaction
 advisory lock make the final claim-time recount atomic. Recovery state changes
 release capacity naturally, and RUN_CANCEL is excluded from Project slots.
 
+### Worker loss and cleanup recovery
+
+`security.worker_identities` persists the last loss, accepted recovery, and
+cleanup timestamps plus a monotonic cleanup generation. An unresolved loss is
+`last_lost_at > last_recovered_at` (or no recovery timestamp). Worker RLS
+authority requires no unresolved loss. `control.execution_recovery_state`
+stores last/cumulative lost-worker and fenced-lease counts; these are global
+operational aggregates without tenant payloads. Migration `0020` adds the
+columns, checks, partial loss-detection index, and RLS function update.
+
 
 ## Phase 1G storage tables
 

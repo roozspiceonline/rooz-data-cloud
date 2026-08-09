@@ -99,12 +99,23 @@ async def recovery_health() -> JSONResponse:
             "last_cancellations_converged": (
                 health.last_cancellations_converged
             ),
+            "last_workers_lost": health.last_workers_lost,
+            "last_worker_leases_fenced": (
+                health.last_worker_leases_fenced
+            ),
             "total_sweeps": health.total_sweeps,
             "total_failures": health.total_failures,
+            "total_workers_lost": health.total_workers_lost,
+            "total_worker_leases_fenced": (
+                health.total_worker_leases_fenced
+            ),
             "last_error_code": health.last_error_code,
             "active_execution_leases": admission.active_leases,
             "saturated_projects": admission.saturated_projects,
             "saturated_workers": admission.saturated_workers,
+            "recovery_pending_workers": (
+                admission.recovery_pending_workers
+            ),
         }
         return JSONResponse(status_code=200 if fresh else 503, content=body)
     except Exception:

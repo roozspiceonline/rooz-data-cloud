@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.roozdata.cloud/worker-heartbeat.schema.json",
+  "title": "RDC Worker Heartbeat",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "software_version",
+    "active_lease_count"
+  ],
+  "properties": {
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "DRAINING"
+      ]
+    },
+    "software_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "active_lease_count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 256
+    },
+    "sandbox": {
+      "anyOf": [
+        {
+          "$ref": "sandbox-capabilities.schema.json"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "recovery": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "schema_version",
+            "startup_id",
+            "forced_cleanup_completed",
+            "managed_containers_removed",
+            "workspace_directories_removed"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": "rdc.worker-recovery/v1"
+            },
+            "startup_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "forced_cleanup_completed": {
+              "const": true
+            },
+            "managed_containers_removed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            },
+            "workspace_directories_removed": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 256
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "metadata": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": [
+            "active_lease_count",
+            "recovery_startup_id",
+            "managed_containers_removed",
+            "workspace_directories_removed"
+          ]
+        }
+      }
+    }
+  }
+}

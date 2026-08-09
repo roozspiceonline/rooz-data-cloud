@@ -219,6 +219,10 @@ async def foundation_status() -> dict[str, object]:
         "worker_registration_max_concurrency": (
             settings.worker_registration_max_concurrency
         ),
+        "worker_loss_detection": True,
+        "worker_lost_after_seconds": settings.worker_lost_after_seconds,
+        "worker_restart_cleanup_required": True,
+        "managed_runtime_forced_cleanup": True,
         "run_cancel_project_slot_exempt": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,

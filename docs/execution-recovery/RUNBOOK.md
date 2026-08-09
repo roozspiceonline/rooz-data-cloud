@@ -23,6 +23,12 @@ corresponding API claim path. Configure
 `RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES` from 1–1000 and
 `RDC_WORKER_REGISTRATION_MAX_CONCURRENCY` from 1–16. These are server policy;
 do not treat a worker registration request as authoritative.
+Migration `20260809_0020` adds worker loss/recovery timestamps, cleanup
+generation evidence, recovery counters, and a worker-RLS recovery fence.
+Configure `RDC_WORKER_LOST_AFTER_SECONDS` from 15–300 seconds (default 45).
+Sandbox workers must use `RDC_WORKER_HEARTBEAT_SECONDS` from 5–30 seconds and
+`RDC_WORKER_LEASE_RENEW_SECONDS` from 15–300 seconds; keep the heartbeat
+comfortably below the loss threshold.
 
 Monitor `execution.lease.expired`, `execution.lease.deadline_exceeded`, and
 `execution.lease.completed` audit events.
@@ -78,6 +84,24 @@ increase limits to conceal stale work or manually decrement derived capacity.
 Project capacity is recomputed from valid ACTIVE BUILD/RUN_START leases; worker
 capacity is recomputed from all valid ACTIVE leases. RUN_CANCEL is exempt only
 from the project limit so cancellation can drain a saturated project.
+
+Worker-loss diagnostics include `last_workers_lost`,
+`last_worker_leases_fenced`, their cumulative totals, and
+`recovery_pending_workers`. Investigate a nonzero pending count by checking the
+worker service and its rootless containerd namespace. A detected loss must have
+`worker.lost` audit lineage; affected leases must become `EXPIRED` with
+`WORKER_LOST`, issued grants must expire, and retry eligibility must remain
+server-derived. Do not clear recovery timestamps or manually reactivate RLS.
+
+On worker restart, startup cleanup must successfully list only containers with
+label `io.rooz.rdc.managed=true`, validate the `rdc-run-*` or `rdc-browser-*`
+name, force-remove them, and delete only bounded `run-*`/`build-*` workspace
+directories that are real directories rather than symlinks. The worker then
+submits `rdc.worker-recovery/v1`; until accepted, claims fail with
+`WORKER_RECOVERY_REQUIRED`. If discovery or cleanup fails, keep the worker down
+and repair the dedicated rootless runtime. Never broaden cleanup to the host
+Docker socket, another containerd namespace, unlabeled containers, or arbitrary
+workspace paths.
 
 Multiple scheduler replicas are safe: only the replica holding
 `pg_try_advisory_xact_lock` performs a batch. Do not delete or manually rewrite

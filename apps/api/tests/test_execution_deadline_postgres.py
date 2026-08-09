@@ -17,11 +17,13 @@ from app.execution_schemas import (
     ClaimWorkRequest,
     CompleteLeaseRequest,
     RegisterWorkerRequest,
+    WorkerHeartbeatRequest,
 )
 from app.models import ExecutionLease, Run, WorkerIdentity
 from app.services.execution_plane import (
     claim_work,
     complete_lease,
+    heartbeat_worker,
     reap_expired_leases,
     reap_overdue_cancellations,
     register_worker,
@@ -1003,3 +1005,184 @@ async def test_postgres_worker_registration_is_server_capped() -> None:
         )
         await session.commit()
     assert result.worker.max_concurrency == 16
+
+
+async def test_postgres_lost_worker_is_fenced_and_requires_cleanup_recovery() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    lease_id, source_id, _, _, _, _, worker_id = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE security.worker_identities "
+                "SET last_seen_at=:last_seen WHERE id=:worker"
+            ),
+            {
+                "last_seen": now - timedelta(minutes=2),
+                "worker": worker_id,
+            },
+        )
+    async with session_factory() as session:
+        result = await run_execution_recovery_sweep(
+            session,
+            now=now,
+            owner_id="worker-loss-test",
+            batch_size=100,
+            request_id="worker-loss-test",
+        )
+        await session.commit()
+    assert result.workers_lost == 1
+    assert result.worker_leases_fenced == 1
+    assert result.leases_reaped >= 1
+    async with engine.connect() as connection:
+        worker = (
+            await connection.execute(
+                text(
+                    "SELECT last_lost_at,last_recovered_at,"
+                    "sandbox_execution_enabled,cleanup_generation "
+                    "FROM security.worker_identities WHERE id=:worker"
+                ),
+                {"worker": worker_id},
+            )
+        ).one()
+        lease = (
+            await connection.execute(
+                text(
+                    "SELECT status,failure_code FROM control.execution_leases "
+                    "WHERE id=:lease"
+                ),
+                {"lease": lease_id},
+            )
+        ).one()
+        source = (
+            await connection.execute(
+                text(
+                    "SELECT status,last_error_code "
+                    "FROM control.build_dispatch_outbox WHERE id=:source"
+                ),
+                {"source": source_id},
+            )
+        ).one()
+        lost_audits = await connection.scalar(
+            text(
+                "SELECT count(*) FROM security.audit_events "
+                "WHERE resource_id=:worker AND action='worker.lost'"
+            ),
+            {"worker": str(worker_id)},
+        )
+        await connection.execute(
+            text("SELECT set_config('rdc.current_worker_id', :worker, true)"),
+            {"worker": str(worker_id)},
+        )
+        worker_rls_active = await connection.scalar(
+            text("SELECT security.rdc_worker_is_active()")
+        )
+    assert worker.last_lost_at == now
+    assert worker.last_recovered_at is None
+    assert worker.sandbox_execution_enabled is False
+    assert worker.cleanup_generation == 0
+    assert lease == ("EXPIRED", "WORKER_LOST")
+    assert source == ("PENDING", "WORKER_LOST")
+    assert lost_audits == 1
+    assert worker_rls_active is False
+
+    async with session_factory() as session:
+        worker_record = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert worker_record is not None
+        with pytest.raises(ApiError, match="managed-runtime cleanup"):
+            await heartbeat_worker(
+                session,
+                worker=worker_record,
+                payload=WorkerHeartbeatRequest(
+                    software_version="restart-test",
+                    active_lease_count=0,
+                ),
+                request_id="worker-recovery-missing-cleanup",
+            )
+        await session.rollback()
+
+    startup_id = uuid4()
+    async with session_factory() as session:
+        worker_record = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert worker_record is not None
+        recovered = await heartbeat_worker(
+            session,
+            worker=worker_record,
+            payload=WorkerHeartbeatRequest(
+                software_version="restart-test",
+                active_lease_count=0,
+                recovery={
+                    "schema_version": "rdc.worker-recovery/v1",
+                    "startup_id": startup_id,
+                    "forced_cleanup_completed": True,
+                    "managed_containers_removed": 1,
+                    "workspace_directories_removed": 2,
+                },
+            ),
+            request_id="worker-recovered-after-cleanup",
+        )
+        await session.commit()
+    assert recovered.last_recovered_at is not None
+    assert recovered.last_recovered_at >= now
+    assert recovered.last_cleanup_at == recovered.last_recovered_at
+    assert recovered.cleanup_generation == 1
+    assert recovered.metadata["recovery_startup_id"] == str(startup_id)
+
+    recovery_payload = WorkerHeartbeatRequest(
+        software_version="restart-test",
+        active_lease_count=0,
+        recovery={
+            "schema_version": "rdc.worker-recovery/v1",
+            "startup_id": startup_id,
+            "forced_cleanup_completed": True,
+            "managed_containers_removed": 1,
+            "workspace_directories_removed": 2,
+        },
+    )
+    async with session_factory() as session:
+        worker_record = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert worker_record is not None
+        duplicate = await heartbeat_worker(
+            session,
+            worker=worker_record,
+            payload=recovery_payload,
+            request_id="worker-recovery-report-retried",
+        )
+        await session.commit()
+    assert duplicate.cleanup_generation == 1
+    assert duplicate.last_cleanup_at == recovered.last_cleanup_at
+
+    assert recovered.last_recovered_at is not None
+    replay_loss_at = recovered.last_recovered_at + timedelta(seconds=1)
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE security.worker_identities "
+                "SET last_lost_at=:lost_at WHERE id=:worker_id"
+            ),
+            {"lost_at": replay_loss_at, "worker_id": worker_id},
+        )
+    async with session_factory() as session:
+        worker_record = await session.scalar(
+            select(WorkerIdentity).where(WorkerIdentity.id == worker_id)
+        )
+        assert worker_record is not None
+        with pytest.raises(ApiError, match="already accepted"):
+            await heartbeat_worker(
+                session,
+                worker=worker_record,
+                payload=recovery_payload,
+                request_id="worker-recovery-report-replayed",
+            )
+        await session.rollback()

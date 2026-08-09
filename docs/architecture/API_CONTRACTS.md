@@ -977,6 +977,13 @@ Project execution limit so cancellation can drain a saturated Project, while
 still consuming worker capacity. Claim payload admission metadata is
 informational; persisted locks, counts, and limits are authoritative.
 
+Workers executing a claim MUST heartbeat and renew below the server loss
+threshold. A worker marked lost MAY authenticate to submit a strict
+`rdc.worker-recovery/v1` heartbeat report, but MUST NOT claim or use
+lease-scoped authority until server acceptance. The report contains a startup
+UUID, forced-cleanup completion literal, and bounded container/workspace counts;
+it does not select tenancy, leases, or cleanup targets.
+
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 
 
