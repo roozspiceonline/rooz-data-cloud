@@ -1062,3 +1062,12 @@ The migration initially permits null source references for pre-1G rows; all Phas
 ## Phase 1H worker attestation columns
 
 `security.worker_identities` adds nullable `sandbox_profile`, nullable SHA-256 `sandbox_attestation_digest`, non-null `sandbox_execution_enabled` default false, and nullable `sandbox_attested_at`. A database check prevents an enabled worker without the required Phase 1H profile, digest, and attestation timestamp.
+
+## Execution recovery scheduler state
+
+`control.execution_recovery_state` is a global singleton (`id = 1`) containing
+the last scheduler status, bounded batch counts, successful sweep/failure
+counters, timestamps, and a bounded error code. It contains no tenant payloads
+or credentials. Scheduler ownership is coordinated separately with a
+transaction-scoped PostgreSQL advisory lock; the row is durable health evidence,
+not a mutex.

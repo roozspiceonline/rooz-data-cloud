@@ -4,10 +4,16 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from ...core.database import check_database
+from ...core.config import get_settings
+from ...core.database import check_database, session_factory
 from ...core.redis_client import check_redis
+from ...services.execution_recovery_sweeper import (
+    execution_recovery_is_fresh,
+    read_execution_recovery_health,
+)
 
 router = APIRouter(tags=["health"])
+settings = get_settings()
 
 
 @router.get("/health/live")
@@ -27,7 +33,83 @@ async def dependency_status() -> dict[str, str]:
         results["redis"] = "ready"
     except Exception:
         results["redis"] = "unavailable"
+    if settings.execution_recovery_sweep_enabled:
+        try:
+            async with session_factory() as session:
+                recovery = await read_execution_recovery_health(session)
+            results["execution_recovery"] = (
+                "ready"
+                if execution_recovery_is_fresh(
+                    recovery,
+                    now=datetime.now(UTC),
+                    stale_after_seconds=(
+                        settings.execution_recovery_stale_after_seconds
+                    ),
+                )
+                else "stale"
+            )
+        except Exception:
+            results["execution_recovery"] = "unavailable"
     return results
+
+
+@router.get("/health/recovery")
+async def recovery_health() -> JSONResponse:
+    if not settings.execution_recovery_sweep_enabled:
+        return JSONResponse(
+            status_code=200,
+            content={"service": "rdc-execution-recovery", "status": "disabled"},
+        )
+    try:
+        async with session_factory() as session:
+            health = await read_execution_recovery_health(session)
+        fresh = execution_recovery_is_fresh(
+            health,
+            now=datetime.now(UTC),
+            stale_after_seconds=settings.execution_recovery_stale_after_seconds,
+        )
+        reported_status = (
+            "ready"
+            if fresh
+            else "stale"
+            if health.status == "HEALTHY"
+            else health.status.lower()
+        )
+        body: dict[str, Any] = {
+            "service": "rdc-execution-recovery",
+            "status": reported_status,
+            "last_started_at": (
+                health.last_started_at.isoformat()
+                if health.last_started_at is not None
+                else None
+            ),
+            "last_completed_at": (
+                health.last_completed_at.isoformat()
+                if health.last_completed_at is not None
+                else None
+            ),
+            "last_heartbeat_at": (
+                health.last_heartbeat_at.isoformat()
+                if health.last_heartbeat_at is not None
+                else None
+            ),
+            "last_leases_reaped": health.last_leases_reaped,
+            "last_cancellations_converged": (
+                health.last_cancellations_converged
+            ),
+            "total_sweeps": health.total_sweeps,
+            "total_failures": health.total_failures,
+            "last_error_code": health.last_error_code,
+        }
+        return JSONResponse(status_code=200 if fresh else 503, content=body)
+    except Exception:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "service": "rdc-execution-recovery",
+                "status": "unavailable",
+            },
+        )
 
 
 @router.get("/health/ready")

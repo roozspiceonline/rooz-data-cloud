@@ -846,9 +846,16 @@ async def _converge_cancelled_run(
         now=now,
     )
     run = await session.scalar(
-        select(Run).where(Run.id == run_id).with_for_update()
+        select(Run)
+        .where(Run.id == run_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
     )
     if run is None or run.cancel_requested_at is None:
+        return False
+    if run.status == "ABORTED":
+        return True
+    if run.status != "ABORTING":
         return False
     previous = run.status
     run.status = "ABORTED"
@@ -899,7 +906,10 @@ async def reap_overdue_cancellations(
     *,
     now: datetime,
     request_id: str,
+    batch_size: int = 100,
 ) -> int:
+    if not 1 <= batch_size <= 500:
+        raise ValueError("Cancellation recovery batch size must be between 1 and 500.")
     run_ids = list(
         (
             await session.scalars(
@@ -910,7 +920,8 @@ async def reap_overdue_cancellations(
                     Run.cancel_deadline_at <= now,
                 )
                 .order_by(Run.cancel_deadline_at.asc(), Run.id.asc())
-                .limit(100)
+                .with_for_update(skip_locked=True)
+                .limit(batch_size)
             )
         ).all()
     )
@@ -1092,7 +1103,11 @@ async def reap_expired_leases(
     *,
     now: datetime | None = None,
     request_id: str,
+    batch_size: int = 100,
+    reap_cancellations: bool = True,
 ) -> int:
+    if not 1 <= batch_size <= 500:
+        raise ValueError("Lease recovery batch size must be between 1 and 500.")
     current = now or datetime.now(UTC)
     records = list(
         (
@@ -1107,7 +1122,7 @@ async def reap_expired_leases(
                 )
                 .order_by(ExecutionLease.expires_at.asc())
                 .with_for_update(skip_locked=True)
-                .limit(100)
+                .limit(batch_size)
             )
         ).all()
     )
@@ -1192,11 +1207,13 @@ async def reap_expired_leases(
                 ),
             },
         )
-    await reap_overdue_cancellations(
-        session,
-        now=current,
-        request_id=request_id,
-    )
+    if reap_cancellations:
+        await reap_overdue_cancellations(
+            session,
+            now=current,
+            request_id=request_id,
+            batch_size=batch_size,
+        )
     return len(records)
 
 

@@ -201,6 +201,16 @@ async def foundation_status() -> dict[str, object]:
             settings.worker_cancel_convergence_seconds
         ),
         "run_cancellation_lease_fencing": True,
+        "execution_recovery_scheduler_enabled": (
+            settings.execution_recovery_sweep_enabled
+        ),
+        "execution_recovery_sweep_interval_seconds": (
+            settings.execution_recovery_sweep_interval_seconds
+        ),
+        "execution_recovery_sweep_batch_size": (
+            settings.execution_recovery_sweep_batch_size
+        ),
+        "execution_recovery_singleton_lock": "postgresql-advisory-xact",
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
         "secure_source_ingestion_enabled": True,

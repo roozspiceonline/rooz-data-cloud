@@ -65,18 +65,48 @@ need(
     "worker_retry_base_seconds",
     "worker_retry_max_seconds",
     "worker_cancel_convergence_seconds",
+    "execution_recovery_sweep_interval_seconds",
+    "execution_recovery_sweep_batch_size",
+    "execution_recovery_stale_after_seconds",
 )
 need(
     ".env.example",
     "RDC_WORKER_RETRY_BASE_SECONDS",
     "RDC_WORKER_RETRY_MAX_SECONDS",
     "RDC_WORKER_CANCEL_CONVERGENCE_SECONDS",
+    "RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS",
+    "RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE",
+    "RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS",
 )
 need(
     "docker-compose.yml",
     "RDC_WORKER_RETRY_BASE_SECONDS",
     "RDC_WORKER_RETRY_MAX_SECONDS",
     "RDC_WORKER_CANCEL_CONVERGENCE_SECONDS",
+    "execution-recovery:",
+    "app.recovery_scheduler",
+    "--healthcheck",
+)
+need(
+    "apps/api/app/recovery_scheduler.py",
+    "run_sweep_loop",
+    "record_execution_recovery_failure",
+    "execution_recovery_sweep_interval_seconds",
+)
+need(
+    "apps/api/app/services/execution_recovery_sweeper.py",
+    "pg_try_advisory_xact_lock",
+    "run_execution_recovery_sweep",
+    "execution.recovery.sweep_completed",
+    "read_execution_recovery_health",
+)
+need(
+    "apps/api/migrations/versions/20260809_0018_execution_recovery_sweeps.py",
+    "execution_recovery_state",
+    "ck_execution_recovery_state_singleton",
+    "last_heartbeat_at",
+    "total_sweeps",
+    "total_failures",
 )
 need(
     "apps/api/tests/test_execution_recovery.py",
@@ -93,6 +123,9 @@ need(
     "concurrent_cancel_dispatch_is_idempotent",
     "lost_run_lease_converges_pending_cancellation",
     "late_run_completion_cannot_override_cancellation",
+    "recovery_sweep_is_singleton_and_restart_safe",
+    "recovery_sweep_enforces_bounded_batches",
+    "concurrent_cancellation_reapers_are_single_winner",
 )
 need(
     "docs/execution-recovery/THREAT_MODEL.md",
@@ -108,5 +141,8 @@ need(
     "execution.lease.deadline_exceeded",
     "20260809_0017",
     "run.cancellation_converged",
+    "20260809_0018",
+    "pg_try_advisory_xact_lock",
+    "/health/recovery",
 )
-print("Execution recovery increment 3 verification passed")
+print("Execution recovery increment 4 verification passed")

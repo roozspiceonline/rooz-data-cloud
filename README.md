@@ -18,4 +18,5 @@ egress, Dataset, or KV protections. See [the Phase 1P documentation](docs/phase1
 and [the RDC v1 roadmap](docs/roadmap/RDC_V1_ROADMAP.md) for security controls,
 remaining work, and release gates. Production Execution Lifecycle / Recovery is
 now active with server-owned bounded retry, immutable workload and cancellation
-deadlines, lease fencing, cancellation convergence, and recovery lineage.
+deadlines, lease fencing, cancellation convergence, and an independently
+scheduled singleton-safe recovery service with durable health telemetry.

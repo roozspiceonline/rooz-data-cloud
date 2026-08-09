@@ -856,6 +856,15 @@ Phase 1E implementation rules:
 
 Cancellation is a command, not a resource deletion.
 
+### Execution recovery health
+
+`GET /health/recovery` reports the independently scheduled recovery service as
+`ready`, `stale`, `failed`, `never_run`, `unavailable`, or `disabled`. It exposes
+successful sweep and failure counters plus last-success timestamps, but never
+scheduler owner identity, tenant identifiers, work payloads, exception text, or
+credentials. When scheduling is enabled, any non-ready recovery status also
+degrades `GET /health/ready`.
+
 ### 17.7 API keys
 
 | Method | Path | Permission |

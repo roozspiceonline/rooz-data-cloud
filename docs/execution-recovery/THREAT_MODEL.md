@@ -29,6 +29,19 @@ all active Run leases before terminalization, which removes worker API and RLS
 authority and revokes issued secret grants even if the underlying process is
 slow to exit.
 
-This increment does not yet claim full production recovery. Recovery sweeps
-must run without relying on worker traffic, and concurrency admission must be
-enforced across workers and projects.
+Recovery is now independent of worker traffic. The dedicated process uses a
+transaction advisory lock, so horizontally duplicated schedulers cannot both
+own a batch. Candidate rows remain bounded and use `SKIP LOCKED`; a slow batch
+cannot expand into an unbounded transaction. If the process crashes, PostgreSQL
+rolls back lease, outbox, Run, grant, audit, and health mutations together and
+releases the singleton lock. Restarting safely retries durable candidates.
+
+Scheduler health is global operational metadata, not a tenant resource. The
+public health response excludes owner identity, tenant IDs, payloads, exception
+text, tokens, and secrets. Failures persist only a bounded exception class name
+and generic summary. Readiness reports an enabled scheduler as stale when no
+recent successful heartbeat exists, preventing silent recovery loss.
+
+This increment does not yet claim full production recovery. Concurrency
+admission must still be enforced across workers and projects, and broader
+process/container termination scenarios remain part of the workstream gate.

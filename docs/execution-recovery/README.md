@@ -28,8 +28,19 @@ or expiry of the cancellation deadline fences every active Run lease, revokes
 issued secret grants, cancels pending/claimed commands, terminally marks the Run
 `ABORTED`, and records `run.cancellation_converged` lineage.
 
-Remaining increments cover an independently scheduled stale-lease sweep,
-bounded project and worker admission, crash/restart integration tests, and
-production operations.
+Recovery no longer depends on worker heartbeat or claim traffic. The dedicated
+`execution-recovery` process runs bounded lease and cancellation batches on a
+validated interval. A transaction-scoped PostgreSQL advisory lock makes
+multiple replicas single-winner, while `SKIP LOCKED` preserves safe concurrent
+row recovery. A process crash rolls back the entire batch; the next interval or
+replacement process can recover the same durable work.
+
+Migration `20260809_0018` adds singleton scheduler health and counters.
+`/health/recovery` exposes only operational status and aggregate counts, and
+API readiness degrades when the enabled scheduler has never succeeded, reports
+failure, or becomes stale.
+
+Remaining increments cover bounded project and worker admission, broader
+crash/restart scenarios, and production operations.
 
 See the [threat model](THREAT_MODEL.md) and [runbook](RUNBOOK.md).

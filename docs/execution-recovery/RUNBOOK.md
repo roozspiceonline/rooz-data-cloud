@@ -13,6 +13,9 @@ policies. Deploy the migration before the API and worker protocol change.
 Migration `20260809_0017` backfills cancellation deadlines for existing
 cancel-requested Runs, adds the cancellation deadline index, and prevents
 mutation of the first cancellation request or deadline.
+Migration `20260809_0018` creates the singleton
+`control.execution_recovery_state` row used for scheduler freshness, bounded
+batch counts, and failure counters.
 
 Monitor `execution.lease.expired`, `execution.lease.deadline_exceeded`, and
 `execution.lease.completed` audit events.
@@ -41,3 +44,28 @@ must have no ACTIVE execution lease or ISSUED secret grant, and must have no
 `LATE_RUN_START_COMPLETION`, and `CANCEL_DEADLINE_EXCEEDED`. Do not mutate the
 cancellation deadline or manually reactivate a fenced lease; create a new Run
 through the normal authorized API if execution is needed again.
+
+## Scheduled recovery service
+
+Run `python -m app.recovery_scheduler` as an independent service. Compose does
+this with the `execution-recovery` service. Configure:
+
+- `RDC_EXECUTION_RECOVERY_SWEEP_ENABLED` (normally `true`)
+- `RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS` (1–300, default 10)
+- `RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE` (1–500, default 100)
+- `RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS` (at least two intervals, at most
+  3600, default 60)
+
+Check `/health/recovery` or run
+`python -m app.recovery_scheduler --healthcheck`. Healthy output requires a
+recent successful sweep. Inspect aggregate `last_leases_reaped`,
+`last_cancellations_converged`, `total_sweeps`, and `total_failures`; no tenant,
+payload, token, or secret data is exposed.
+
+Multiple scheduler replicas are safe: only the replica holding
+`pg_try_advisory_xact_lock` performs a batch. Do not delete or manually rewrite
+the singleton state row. On a crash, restart the process normally; PostgreSQL
+rolls back partial batch mutations and releases the session lock. If health is
+stale, first verify PostgreSQL reachability and scheduler process availability,
+then inspect the bounded `last_error_code`. Do not bypass row locks or mutate
+leases directly during incident recovery.

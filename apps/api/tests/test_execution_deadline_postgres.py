@@ -19,6 +19,11 @@ from app.services.execution_plane import (
     reap_expired_leases,
     reap_overdue_cancellations,
 )
+from app.services.execution_recovery_sweeper import (
+    read_execution_recovery_health,
+    record_execution_recovery_failure,
+    run_execution_recovery_sweep,
+)
 from app.services.runs import cancel_run
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -375,6 +380,43 @@ async def test_postgres_overdue_cancellation_fences_and_aborts_run() -> None:
     assert audit == 1
 
 
+async def test_postgres_concurrent_cancellation_reapers_are_single_winner() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, run_id, _, _, _, _ = await _seed_deadline_lease(
+        work_kind="RUN_START",
+        now=now,
+        overdue=False,
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE control.runs SET status='ABORTING',cancel_requested_at=:requested,cancel_deadline_at=:deadline WHERE id=:run"),
+            {
+                "run": run_id,
+                "requested": now - timedelta(minutes=10),
+                "deadline": now - timedelta(minutes=5),
+            },
+        )
+
+    async def reap(request_id: str) -> int:
+        async with session_factory() as session:
+            count = await reap_overdue_cancellations(
+                session,
+                now=now,
+                request_id=request_id,
+                batch_size=1,
+            )
+            await session.commit()
+            return count
+
+    results = await asyncio.gather(
+        reap("cancellation-race-a"),
+        reap("cancellation-race-b"),
+    )
+    assert sorted(results) == [0, 1]
+
+
 async def test_postgres_lost_run_lease_converges_pending_cancellation() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL integration database is unavailable")
@@ -467,3 +509,152 @@ async def test_postgres_late_run_completion_cannot_override_cancellation() -> No
         )
     assert run_status == "ABORTED"
     assert event_count == 1
+
+
+async def test_postgres_recovery_sweep_is_singleton_and_restart_safe() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    lease_id, *_ = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=True,
+    )
+    first_session = session_factory()
+    second_session = session_factory()
+    try:
+        first = await run_execution_recovery_sweep(
+            first_session,
+            now=now,
+            owner_id="sweeper-before-crash",
+            batch_size=1,
+            request_id="sweep-before-crash",
+        )
+        assert first.acquired is True
+        assert first.leases_reaped == 1
+        competing = await run_execution_recovery_sweep(
+            second_session,
+            now=now,
+            owner_id="competing-sweeper",
+            batch_size=1,
+            request_id="competing-sweep",
+        )
+        assert competing.acquired is False
+        await second_session.rollback()
+        await first_session.rollback()
+    finally:
+        await second_session.close()
+        await first_session.close()
+
+    async with engine.connect() as connection:
+        status_after_crash = await connection.scalar(
+            text("SELECT status FROM control.execution_leases WHERE id=:lease"),
+            {"lease": lease_id},
+        )
+    assert status_after_crash == "ACTIVE"
+
+    async with session_factory() as restart_session:
+        restarted = await run_execution_recovery_sweep(
+            restart_session,
+            now=now,
+            owner_id="sweeper-after-restart",
+            batch_size=1,
+            request_id="sweep-after-restart",
+        )
+        await restart_session.commit()
+    assert restarted.acquired is True
+    assert restarted.leases_reaped == 1
+    health_session = session_factory()
+    try:
+        health = await read_execution_recovery_health(health_session)
+    finally:
+        await health_session.close()
+    assert health.status == "HEALTHY"
+    assert health.last_leases_reaped == 1
+    assert health.total_sweeps >= 1
+
+
+async def test_postgres_recovery_sweep_enforces_bounded_batches() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    first_lease, *_ = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=True,
+    )
+    second_lease, *_ = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=True,
+    )
+    async with session_factory() as session:
+        first = await run_execution_recovery_sweep(
+            session,
+            now=now,
+            owner_id="bounded-sweeper",
+            batch_size=1,
+            request_id="bounded-sweep-1",
+        )
+        await session.commit()
+    assert first.leases_reaped == 1
+    async with engine.connect() as connection:
+        active_after_first = await connection.scalar(
+            text(
+                "SELECT count(*) FROM control.execution_leases "
+                "WHERE id IN (:first,:second) AND status='ACTIVE'"
+            ),
+            {"first": first_lease, "second": second_lease},
+        )
+    assert active_after_first == 1
+    async with session_factory() as session:
+        second = await run_execution_recovery_sweep(
+            session,
+            now=now,
+            owner_id="bounded-sweeper",
+            batch_size=1,
+            request_id="bounded-sweep-2",
+        )
+        await session.commit()
+    assert second.leases_reaped == 1
+
+
+async def test_postgres_delayed_failure_cannot_overwrite_newer_health() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    async with session_factory() as session:
+        await record_execution_recovery_failure(
+            session,
+            now=now,
+            failed_started_at=now,
+            owner_id="failed-sweeper",
+            error_code="ExpectedTestFailure",
+        )
+        await session.commit()
+    async with session_factory() as session:
+        failed = await read_execution_recovery_health(session)
+    assert failed.status == "FAILED"
+    async with session_factory() as session:
+        recovered = await run_execution_recovery_sweep(
+            session,
+            now=now + timedelta(seconds=2),
+            owner_id="healthy-sweeper",
+            batch_size=1,
+            request_id="healthy-after-failure",
+        )
+        await session.commit()
+    assert recovered.acquired is True
+    async with session_factory() as session:
+        await record_execution_recovery_failure(
+            session,
+            now=now + timedelta(seconds=3),
+            failed_started_at=now + timedelta(seconds=1),
+            owner_id="delayed-failed-sweeper",
+            error_code="DelayedFailure",
+        )
+        await session.commit()
+    async with session_factory() as session:
+        final = await read_execution_recovery_health(session)
+    assert final.status == "HEALTHY"
+    assert final.total_failures == failed.total_failures

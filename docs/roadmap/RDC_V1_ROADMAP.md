@@ -21,7 +21,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Production Execution Lifecycle / Recovery | Active — retry, deadlines and cancellation convergence | Request Queue, Runs and worker leases |
+| Production Execution Lifecycle / Recovery | Active — scheduled recovery and admission controls | Request Queue, Runs and worker leases |
 
 The first recovery increment centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -30,8 +30,10 @@ lineage. The second increment persists server-derived immutable Build/Run
 deadlines, clamps renewals, and terminally times out overdue workloads under
 race-safe recovery. The third increment makes cancellation dispatch idempotent,
 persists an immutable convergence deadline, fences late/lost worker leases, and
-terminally aborts cancelled Runs. Periodic stale-lease sweeps and project/worker
-concurrency admission remain in this workstream.
+terminally aborts cancelled Runs. The fourth increment adds an independently
+scheduled recovery process with transaction-scoped singleton ownership, bounded
+`SKIP LOCKED` batches, crash-safe rollback/restart behavior, and durable health
+telemetry. Project/worker concurrency admission remains in this workstream.
 
 ## Remaining RDC v1 workstreams
 

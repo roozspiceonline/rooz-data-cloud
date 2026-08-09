@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     worker_retry_max_seconds: int = 300
     worker_cancel_convergence_seconds: int = 300
     worker_secret_envelope_seconds: int = 60
+    execution_recovery_sweep_enabled: bool = True
+    execution_recovery_sweep_interval_seconds: int = 10
+    execution_recovery_sweep_batch_size: int = 100
+    execution_recovery_stale_after_seconds: int = 60
 
     sandbox_execution_enabled: bool = False
     sandbox_required_profile: str = "rdc.sandbox/v1"
@@ -169,6 +173,23 @@ class Settings(BaseSettings):
             )
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
+        if not 1 <= self.execution_recovery_sweep_interval_seconds <= 300:
+            raise ValueError(
+                "Execution recovery sweep interval must be between 1 and 300 seconds."
+            )
+        if not 1 <= self.execution_recovery_sweep_batch_size <= 500:
+            raise ValueError(
+                "Execution recovery sweep batch size must be between 1 and 500."
+            )
+        if not (
+            2 * self.execution_recovery_sweep_interval_seconds
+            <= self.execution_recovery_stale_after_seconds
+            <= 3600
+        ):
+            raise ValueError(
+                "Execution recovery stale threshold must be at least two intervals "
+                "and no more than one hour."
+            )
         if self.sandbox_required_profile != "rdc.sandbox/v1":
             raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")
         if not 128 <= self.sandbox_max_memory_mb <= 32768:

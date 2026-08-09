@@ -18,3 +18,9 @@ def test_foundation_contract() -> None:
     assert payload["arbitrary_code_in_api"] is False
     assert payload["tenant_rls_required"] is True
     assert payload["write_only_secrets_required"] is True
+    assert payload["execution_recovery_scheduler_enabled"] is True
+    assert payload["execution_recovery_sweep_batch_size"] == 100
+    assert (
+        payload["execution_recovery_singleton_lock"]
+        == "postgresql-advisory-xact"
+    )
