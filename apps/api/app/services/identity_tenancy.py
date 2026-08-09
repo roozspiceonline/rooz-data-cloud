@@ -471,6 +471,9 @@ async def create_project(
         slug=payload.slug,
         description=payload.description,
         status="ACTIVE",
+        max_active_leases=(
+            settings.execution_project_default_max_active_leases
+        ),
         created_by_user_id=user_id,
         version=1,
     )
@@ -486,6 +489,7 @@ async def create_project(
         resource_type="project",
         resource_id=str(project.id),
         request_id=request_id,
+        details={"max_active_leases": project.max_active_leases},
     )
     return project
 

@@ -1,8 +1,8 @@
 # Phase 1P — Tenant-scoped Request Queue
 
-Phase 1P implements the durable Request Queue primitive tracked by #55. The
-increment is complete in the feature branch and remains release-blocked until
-its exact-head CI, security review, and merge gates pass.
+Phase 1P implements the durable Request Queue primitive tracked by #55. It is
+complete after PR #56 merged with exact-head RDC CI #189 green; the published
+feature branch remains preserved.
 
 ## Implemented increments
 

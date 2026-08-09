@@ -98,6 +98,7 @@ class ProjectSummary(ORMModel):
     slug: str
     description: str | None
     status: str
+    max_active_leases: int
     version: int
 
 

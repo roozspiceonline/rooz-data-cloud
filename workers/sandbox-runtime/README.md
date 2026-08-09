@@ -20,6 +20,21 @@ uploaded execution artifact.
 `RUN_CANCEL` remains available for cleanup even when execution is later
 disabled.
 
+## Loss and restart recovery
+
+The worker runs a lease watchdog during every claim. It sends an active
+heartbeat every `RDC_WORKER_HEARTBEAT_SECONDS` and renews by
+`RDC_WORKER_LEASE_RENEW_SECONDS`. Renewal failure force-cleans the managed
+runtime and terminates the worker so the service supervisor restarts it.
+
+Every RDC Run/browser container is created inside the dedicated rootless
+namespace with `io.rooz.rdc.managed=true`. Startup and shutdown list only that
+label, reject names outside `rdc-run-*`/`rdc-browser-*`, cap targets at 256, and
+force-remove exact targets. Workspace cleanup is limited to at most 256 real,
+non-symlink `run-*`/`build-*` directories under the configured workspace root.
+The worker reports only cleanup counts and a new startup UUID. The API rejects
+claims from a previously lost worker until that report is accepted.
+
 ## Host boundary
 
 A production worker host must remain non-root, must not expose a host Docker

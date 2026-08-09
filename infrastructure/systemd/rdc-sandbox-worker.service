@@ -1,0 +1,40 @@
+[Unit]
+Description=Rooz Data Cloud rootless sandbox worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rdc-worker
+Group=rdc-worker
+WorkingDirectory=/opt/rdc/current/workers/sandbox-runtime
+EnvironmentFile=/etc/rdc/production/worker.env
+ExecStartPre=/usr/bin/test ! -S /var/run/docker.sock
+ExecStartPre=/opt/rdc/current/apps/api/.venv/bin/python recovery_cli.py
+ExecStart=/opt/rdc/current/apps/api/.venv/bin/python worker.py
+ExecStopPost=/opt/rdc/current/apps/api/.venv/bin/python recovery_cli.py
+Restart=always
+RestartSec=5s
+TimeoutStartSec=60s
+TimeoutStopSec=45s
+KillSignal=SIGTERM
+FinalKillSignal=SIGKILL
+KillMode=control-group
+SendSIGKILL=true
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/rdc-sandbox
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=rdc.target

@@ -1,0 +1,38 @@
+groups:
+  - name: rdc-execution-recovery
+    rules:
+      - alert: RDCExecutionRecoveryUnavailable
+        expr: rdc_execution_recovery_enabled != 1 or rdc_execution_recovery_healthy != 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: RDC execution recovery is unavailable or stale
+      - alert: RDCExecutionRecoveryHeartbeatMissing
+        expr: time() - rdc_execution_recovery_last_heartbeat_timestamp_seconds > 120
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: RDC execution recovery has not completed a recent sweep
+      - alert: RDCWorkerRecoveryPending
+        expr: rdc_execution_recovery_pending_workers > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: One or more RDC workers require cleanup recovery
+      - alert: RDCWorkerLossBurst
+        expr: increase(rdc_execution_recovery_workers_lost_total[10m]) > 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: RDC detected an execution-worker loss burst
+      - alert: RDCRecoveryFailure
+        expr: increase(rdc_execution_recovery_failures_total[10m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: RDC execution recovery sweep failures increased

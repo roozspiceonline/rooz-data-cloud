@@ -652,6 +652,7 @@ queued_at timestamptz NOT NULL
 started_at timestamptz NULL
 finished_at timestamptz NULL
 cancel_requested_at timestamptz NULL
+cancel_deadline_at timestamptz NULL
 failure_code text NULL
 failure_summary text NULL
 estimated_cost_minor bigint NULL
@@ -690,7 +691,8 @@ Indexes:
 Rules:
 
 - Status transitions are explicit.
-- Cancellation is a command.
+- Cancellation is a unique durable command with an immutable bounded
+  convergence deadline.
 - Phase 1E accepts inline JSON object inputs up to 64 KiB; larger object-storage inputs remain deferred.
 - Runtime configuration is validated against both hard limits and immutable Agent-version limits.
 - Run creation and cancellation use a durable command outbox.
@@ -1032,6 +1034,8 @@ Destructive migration requires:
 ### `security.worker_identities`
 
 Stores worker metadata, public token prefix, last-four display, token digest, capabilities, concurrency, protocol/software versions, lifecycle state, heartbeat time, expiry, and revocation. Raw worker tokens are never stored.
+The persisted concurrency value is server-capped at 16 and independently
+constrained by PostgreSQL.
 
 ### `control.execution_leases`
 
@@ -1047,6 +1051,26 @@ Stores only encrypted worker envelopes and metadata. It binds one active `RUN_ST
 
 All Phase 1F tenant-owned tables use RLS and tenancy triggers. Worker access is based on transaction-local `rdc.current_worker_id` and active lease relationships.
 
+### Execution admission limits
+
+`control.projects.max_active_leases` persists a server-derived 1–1000 limit,
+defaulting to 20. Partial execution-lease indexes support derived counts of
+valid ACTIVE BUILD/RUN_START leases by Project and all valid ACTIVE leases by
+worker. Admission uses these lease rows as the source of truth; no mutable slot
+counter exists. Project and worker row locking plus a per-worker transaction
+advisory lock make the final claim-time recount atomic. Recovery state changes
+release capacity naturally, and RUN_CANCEL is excluded from Project slots.
+
+### Worker loss and cleanup recovery
+
+`security.worker_identities` persists the last loss, accepted recovery, and
+cleanup timestamps plus a monotonic cleanup generation. An unresolved loss is
+`last_lost_at > last_recovered_at` (or no recovery timestamp). Worker RLS
+authority requires no unresolved loss. `control.execution_recovery_state`
+stores last/cumulative lost-worker and fenced-lease counts; these are global
+operational aggregates without tenant payloads. Migration `0020` adds the
+columns, checks, partial loss-detection index, and RLS function update.
+
 
 ## Phase 1G storage tables
 
@@ -1061,3 +1085,11 @@ The migration initially permits null source references for pre-1G rows; all Phas
 
 `security.worker_identities` adds nullable `sandbox_profile`, nullable SHA-256 `sandbox_attestation_digest`, non-null `sandbox_execution_enabled` default false, and nullable `sandbox_attested_at`. A database check prevents an enabled worker without the required Phase 1H profile, digest, and attestation timestamp.
 
+## Execution recovery scheduler state
+
+`control.execution_recovery_state` is a global singleton (`id = 1`) containing
+the last scheduler status, bounded batch counts, successful sweep/failure
+counters, timestamps, and a bounded error code. It contains no tenant payloads
+or credentials. Scheduler ownership is coordinated separately with a
+transaction-scoped PostgreSQL advisory lock; the row is durable health evidence,
+not a mutex.

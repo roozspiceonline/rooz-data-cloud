@@ -237,6 +237,11 @@ class Project(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    max_active_leases: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=20,
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
@@ -666,6 +671,9 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True)
     )
     cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    cancel_deadline_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
     failure_code: Mapped[str | None] = mapped_column(String(80))
@@ -1424,6 +1432,20 @@ class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_lost_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_recovered_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    cleanup_generation: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -1543,6 +1565,9 @@ class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    deadline_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
     last_renewed_at: Mapped[datetime | None] = mapped_column(

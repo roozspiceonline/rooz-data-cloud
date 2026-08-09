@@ -44,6 +44,8 @@ class SandboxWorkerConfig:
     workspace_root: Path
     approved_base_images: tuple[str, ...]
     poll_seconds: float
+    heartbeat_seconds: float
+    lease_renew_seconds: int
     web_egress_enabled: bool
     web_egress_allowed_hosts: tuple[str, ...]
     web_egress_max_requests: int
@@ -66,7 +68,7 @@ class SandboxWorkerConfig:
     browser_runtime_timeout_seconds: int
 
     @classmethod
-    def from_env(cls) -> "SandboxWorkerConfig":
+    def from_env(cls) -> SandboxWorkerConfig:
         token = os.environ.get("RDC_WORKER_TOKEN", "").strip()
         if not token:
             raise RuntimeError("RDC_WORKER_TOKEN is required.")
@@ -84,6 +86,20 @@ class SandboxWorkerConfig:
         if not 1 <= browser_runtime_timeout_seconds <= 30:
             raise RuntimeError(
                 "RDC_BROWSER_RUNTIME_TIMEOUT_SECONDS must be between 1 and 30."
+            )
+        heartbeat_seconds = float(
+            os.environ.get("RDC_WORKER_HEARTBEAT_SECONDS", "10")
+        )
+        if not 5 <= heartbeat_seconds <= 30:
+            raise RuntimeError(
+                "RDC_WORKER_HEARTBEAT_SECONDS must be between 5 and 30."
+            )
+        lease_renew_seconds = int(
+            os.environ.get("RDC_WORKER_LEASE_RENEW_SECONDS", "30")
+        )
+        if not 15 <= lease_renew_seconds <= 300:
+            raise RuntimeError(
+                "RDC_WORKER_LEASE_RENEW_SECONDS must be between 15 and 300."
             )
         return cls(
             api_base_url=os.environ.get(
@@ -122,6 +138,8 @@ class SandboxWorkerConfig:
             poll_seconds=float(
                 os.environ.get("RDC_WORKER_POLL_SECONDS", "2")
             ),
+            heartbeat_seconds=heartbeat_seconds,
+            lease_renew_seconds=lease_renew_seconds,
             web_egress_enabled=_env_bool(
                 "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED",
                 False,

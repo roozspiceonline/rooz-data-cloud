@@ -91,6 +91,7 @@ services:
       context: ./apps/api
     environment:
       RDC_ENV: ${RDC_ENV:-development}
+      RDC_DEPLOYMENT_ID: ${RDC_DEPLOYMENT_ID:-}
       RDC_DATABASE_URL: ${RDC_DATABASE_URL:-postgresql+asyncpg://rdc_app:change-me-for-local-development@postgres:5432/rooz_data_cloud}
       RDC_REDIS_URL: ${RDC_REDIS_URL:-redis://redis:6379/0}
       RDC_S3_ENDPOINT: ${RDC_S3_ENDPOINT:-http://minio:9000}
@@ -123,7 +124,17 @@ services:
       RDC_WORKER_LEASE_SECONDS: ${RDC_WORKER_LEASE_SECONDS:-60}
       RDC_WORKER_LEASE_MAX_SECONDS: ${RDC_WORKER_LEASE_MAX_SECONDS:-300}
       RDC_WORKER_MAX_ATTEMPTS: ${RDC_WORKER_MAX_ATTEMPTS:-5}
+      RDC_WORKER_RETRY_BASE_SECONDS: ${RDC_WORKER_RETRY_BASE_SECONDS:-2}
+      RDC_WORKER_RETRY_MAX_SECONDS: ${RDC_WORKER_RETRY_MAX_SECONDS:-300}
+      RDC_WORKER_CANCEL_CONVERGENCE_SECONDS: ${RDC_WORKER_CANCEL_CONVERGENCE_SECONDS:-300}
       RDC_WORKER_SECRET_ENVELOPE_SECONDS: ${RDC_WORKER_SECRET_ENVELOPE_SECONDS:-60}
+      RDC_WORKER_REGISTRATION_MAX_CONCURRENCY: ${RDC_WORKER_REGISTRATION_MAX_CONCURRENCY:-16}
+      RDC_WORKER_LOST_AFTER_SECONDS: ${RDC_WORKER_LOST_AFTER_SECONDS:-45}
+      RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES: ${RDC_EXECUTION_PROJECT_DEFAULT_MAX_ACTIVE_LEASES:-20}
+      RDC_EXECUTION_RECOVERY_SWEEP_ENABLED: ${RDC_EXECUTION_RECOVERY_SWEEP_ENABLED:-true}
+      RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS: ${RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS:-10}
+      RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE: ${RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE:-100}
+      RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS: ${RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS:-60}
       RDC_SANDBOX_EXECUTION_ENABLED: ${RDC_SANDBOX_EXECUTION_ENABLED:-false}
       RDC_SANDBOX_REQUIRED_PROFILE: ${RDC_SANDBOX_REQUIRED_PROFILE:-rdc.sandbox/v1}
       RDC_SANDBOX_MAX_MEMORY_MB: ${RDC_SANDBOX_MAX_MEMORY_MB:-4096}
@@ -192,6 +203,34 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    restart: unless-stopped
+
+  execution-recovery:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.recovery_scheduler"]
+    environment:
+      RDC_ENV: ${RDC_ENV:-development}
+      RDC_DEPLOYMENT_ID: ${RDC_DEPLOYMENT_ID:-}
+      RDC_DATABASE_URL: ${RDC_DATABASE_URL:-postgresql+asyncpg://rdc_app:change-me-for-local-development@postgres:5432/rooz_data_cloud}
+      RDC_EXECUTION_RECOVERY_SWEEP_ENABLED: ${RDC_EXECUTION_RECOVERY_SWEEP_ENABLED:-true}
+      RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS: ${RDC_EXECUTION_RECOVERY_SWEEP_INTERVAL_SECONDS:-10}
+      RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE: ${RDC_EXECUTION_RECOVERY_SWEEP_BATCH_SIZE:-100}
+      RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS: ${RDC_EXECUTION_RECOVERY_STALE_AFTER_SECONDS:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.recovery_scheduler", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
     restart: unless-stopped
 
   console:

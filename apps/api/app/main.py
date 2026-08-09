@@ -189,6 +189,46 @@ async def foundation_status() -> dict[str, object]:
         "run_execution_enabled": settings.sandbox_execution_enabled,
         "internal_execution_protocol_enabled": True,
         "worker_leasing_enabled": True,
+        "execution_retry_policy_server_owned": True,
+        "execution_retry_base_seconds": settings.worker_retry_base_seconds,
+        "execution_retry_max_seconds": settings.worker_retry_max_seconds,
+        "execution_retry_requires_durable_source": True,
+        "execution_deadline_server_derived": True,
+        "execution_deadline_immutable": True,
+        "lease_renewal_deadline_clamped": True,
+        "run_cancellation_dispatch_idempotent": True,
+        "run_cancellation_convergence_seconds": (
+            settings.worker_cancel_convergence_seconds
+        ),
+        "run_cancellation_lease_fencing": True,
+        "execution_recovery_scheduler_enabled": (
+            settings.execution_recovery_sweep_enabled
+        ),
+        "execution_recovery_sweep_interval_seconds": (
+            settings.execution_recovery_sweep_interval_seconds
+        ),
+        "execution_recovery_sweep_batch_size": (
+            settings.execution_recovery_sweep_batch_size
+        ),
+        "execution_recovery_singleton_lock": "postgresql-advisory-xact",
+        "execution_project_concurrency_admission": True,
+        "execution_worker_concurrency_admission": True,
+        "execution_project_default_max_active_leases": (
+            settings.execution_project_default_max_active_leases
+        ),
+        "worker_registration_max_concurrency": (
+            settings.worker_registration_max_concurrency
+        ),
+        "worker_loss_detection": True,
+        "worker_lost_after_seconds": settings.worker_lost_after_seconds,
+        "worker_restart_cleanup_required": True,
+        "managed_runtime_forced_cleanup": True,
+        "production_environment_identity_guard": True,
+        "production_supervisor_contract": "systemd-control-group",
+        "database_restore_rollback_drill": True,
+        "object_version_recovery_drill": True,
+        "execution_recovery_slo_metrics": True,
+        "run_cancel_project_slot_exempt": True,
         "artifact_metadata_enabled": True,
         "lease_scoped_secret_envelopes_enabled": True,
         "secure_source_ingestion_enabled": True,

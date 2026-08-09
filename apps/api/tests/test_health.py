@@ -18,3 +18,17 @@ def test_foundation_contract() -> None:
     assert payload["arbitrary_code_in_api"] is False
     assert payload["tenant_rls_required"] is True
     assert payload["write_only_secrets_required"] is True
+    assert payload["execution_recovery_scheduler_enabled"] is True
+    assert payload["execution_recovery_sweep_batch_size"] == 100
+    assert (
+        payload["execution_recovery_singleton_lock"]
+        == "postgresql-advisory-xact"
+    )
+    assert payload["worker_loss_detection"] is True
+    assert payload["worker_lost_after_seconds"] == 45
+    assert payload["worker_restart_cleanup_required"] is True
+    assert payload["production_environment_identity_guard"] is True
+    assert payload["production_supervisor_contract"] == "systemd-control-group"
+    assert payload["database_restore_rollback_drill"] is True
+    assert payload["object_version_recovery_drill"] is True
+    assert payload["execution_recovery_slo_metrics"] is True

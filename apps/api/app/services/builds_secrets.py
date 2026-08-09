@@ -486,6 +486,17 @@ async def create_build(
             record.completed_at.isoformat() if record.completed_at else None
         ),
     }
+    manifest_resources = version.manifest.get("resources")
+    build_timeout_seconds = settings.sandbox_max_build_seconds
+    if isinstance(manifest_resources, dict):
+        manifest_timeout = manifest_resources.get("timeoutSeconds")
+        if isinstance(manifest_timeout, int) and not isinstance(
+            manifest_timeout, bool
+        ):
+            build_timeout_seconds = min(
+                manifest_timeout,
+                settings.sandbox_max_build_seconds,
+            )
     session.add(
         BuildDispatchOutbox(
             organization_id=record.organization_id,
@@ -500,6 +511,7 @@ async def create_build(
                 "agent_id": str(record.agent_id),
                 "agent_version_id": str(record.agent_version_id),
                 "manifest_digest": record.manifest_digest,
+                "timeout_seconds": build_timeout_seconds,
                 "source_object_id": str(record.source_object_id),
                 "source_sha256_digest": source_object.sha256_digest,
                 "source_size_bytes": source_object.size_bytes,

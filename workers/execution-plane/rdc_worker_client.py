@@ -94,6 +94,7 @@ class RdcWorkerClient:
         active_lease_count: int,
         draining: bool = False,
         sandbox: dict[str, object] | None = None,
+        recovery: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         response = self._request(
             "POST",
@@ -103,6 +104,7 @@ class RdcWorkerClient:
                 "software_version": software_version,
                 "active_lease_count": active_lease_count,
                 "sandbox": sandbox,
+                "recovery": recovery,
                 "metadata": {"reference_client": True},
             },
         )

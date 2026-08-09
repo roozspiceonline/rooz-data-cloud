@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import signal
 import time
 import zipfile
 from pathlib import Path
@@ -24,16 +25,22 @@ from browser_policy import (
 )
 from build_executor import LocalArtifact, build_agent
 from config import SandboxWorkerConfig
-from egress_broker import broker_web_requests
 from dataset_protocol import DatasetProtocolError, validate_dataset_append
+from egress_broker import broker_web_requests
 from egress_policy import EgressPolicy, EgressPolicyError
+from io_utils import (
+    cleanup_tree,
+    download_file,
+    private_temp_dir,
+    sha256_file,
+    upload_file,
+)
 from kv_worker_protocol import (
     KVWorkerBoundaryError,
     validate_kv_read_request,
     validate_kv_read_result,
     validate_kv_worker_output,
 )
-from io_utils import cleanup_tree, download_file, private_temp_dir, sha256_file, upload_file
 from policy import SandboxPolicyError, verify_host
 from rdc_worker_client import (
     RdcWorkerClient,
@@ -47,6 +54,14 @@ from web_fetch_contract import (
     phase1j_broker_adapter,
     phase1j_broker_result_adapter,
 )
+from worker_recovery import (
+    LeaseWatchdog,
+    force_startup_cleanup,
+)
+
+
+class WorkerShutdown(BaseException):
+    """Unwind active work immediately when the supervisor requests stop."""
 
 
 def _data(response: dict[str, Any]) -> dict[str, Any]:
@@ -1070,6 +1085,7 @@ def _run(
 def main() -> None:
     config = SandboxWorkerConfig.from_env()
     probe = verify_host(config)
+    cleanup_report = force_startup_cleanup(config)
     client = RdcWorkerClient(
         base_url=config.api_base_url,
         worker_token=config.worker_token,
@@ -1078,6 +1094,7 @@ def main() -> None:
         software_version=config.software_version,
         active_lease_count=0,
         sandbox=probe.attestation,
+        recovery=cleanup_report.as_protocol(),
     )
     worker = _data(client.worker())
     worker_name = str(worker["name"])
@@ -1085,31 +1102,61 @@ def main() -> None:
         raise SandboxPolicyError(
             "Phase 1J canary worker must have max_concurrency=1."
         )
-    while True:
-        claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
-        if claim is None:
-            time.sleep(config.poll_seconds)
-            client.heartbeat(
-                software_version=config.software_version,
-                active_lease_count=0,
+    stop_requested = False
+
+    def request_stop(_signum: int, _frame: object) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+        raise WorkerShutdown
+
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, request_stop)
+
+    try:
+        while not stop_requested:
+            claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
+            if claim is None:
+                time.sleep(config.poll_seconds)
+                client.heartbeat(
+                    software_version=config.software_version,
+                    active_lease_count=0,
+                    sandbox=probe.attestation,
+                )
+                continue
+            data = _data(claim)
+            with LeaseWatchdog(
+                client=client,
+                config=config,
+                lease_id=str(data["id"]),
+                lease_token=str(data["lease_token"]),
                 sandbox=probe.attestation,
-            )
-            continue
-        data = _data(claim)
-        if data["work_kind"] == "BUILD":
-            _build(
-                client,
-                config,
-                claim,
-                worker_name=worker_name,
-            )
-        else:
-            _run(
-                client,
-                config,
-                claim,
-                worker_name=worker_name,
-            )
+            ) as watchdog:
+                if data["work_kind"] == "BUILD":
+                    _build(
+                        client,
+                        config,
+                        claim,
+                        worker_name=worker_name,
+                    )
+                else:
+                    _run(
+                        client,
+                        config,
+                        claim,
+                        worker_name=worker_name,
+                    )
+                watchdog.mark_completed()
+    except WorkerShutdown:
+        pass
+    finally:
+        final_cleanup = force_startup_cleanup(config)
+        client.heartbeat(
+            software_version=config.software_version,
+            active_lease_count=0,
+            draining=True,
+            sandbox=probe.attestation,
+            recovery=final_cleanup.as_protocol(),
+        )
 
 
 if __name__ == "__main__":

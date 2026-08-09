@@ -3,6 +3,7 @@ import ipaddress
 import re
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     )
 
     env: Literal["development", "test", "staging", "production"] = "development"
+    deployment_id: str = ""
     database_url: str = "postgresql+asyncpg://rdc:rdc@localhost:5432/rdc"
     redis_url: str = "redis://localhost:6379/0"
 
@@ -62,7 +64,17 @@ class Settings(BaseSettings):
     worker_lease_seconds: int = 60
     worker_lease_max_seconds: int = 300
     worker_max_attempts: int = 5
+    worker_retry_base_seconds: int = 2
+    worker_retry_max_seconds: int = 300
+    worker_cancel_convergence_seconds: int = 300
     worker_secret_envelope_seconds: int = 60
+    worker_registration_max_concurrency: int = 16
+    worker_lost_after_seconds: int = 45
+    execution_project_default_max_active_leases: int = 20
+    execution_recovery_sweep_enabled: bool = True
+    execution_recovery_sweep_interval_seconds: int = 10
+    execution_recovery_sweep_batch_size: int = 100
+    execution_recovery_stale_after_seconds: int = 60
 
     sandbox_execution_enabled: bool = False
     sandbox_required_profile: str = "rdc.sandbox/v1"
@@ -156,8 +168,45 @@ class Settings(BaseSettings):
             raise ValueError("Worker lease maximum must exceed the default lease.")
         if not 1 <= self.worker_max_attempts <= 20:
             raise ValueError("Worker max attempts must be between 1 and 20.")
+        if not 1 <= self.worker_retry_base_seconds <= 60:
+            raise ValueError("Worker retry base must be between 1 and 60 seconds.")
+        if not self.worker_retry_base_seconds <= self.worker_retry_max_seconds <= 3600:
+            raise ValueError("Worker retry maximum must be between its base and one hour.")
+        if not 30 <= self.worker_cancel_convergence_seconds <= 3600:
+            raise ValueError(
+                "Worker cancellation convergence must be between 30 seconds and one hour."
+            )
         if not 15 <= self.worker_secret_envelope_seconds <= 300:
             raise ValueError("Secret envelopes must expire between 15 and 300 seconds.")
+        if not 1 <= self.worker_registration_max_concurrency <= 16:
+            raise ValueError(
+                "Worker registration concurrency must be between 1 and 16."
+            )
+        if not 15 <= self.worker_lost_after_seconds <= 300:
+            raise ValueError(
+                "Worker loss detection must be between 15 and 300 seconds."
+            )
+        if not 1 <= self.execution_project_default_max_active_leases <= 1000:
+            raise ValueError(
+                "Default project execution concurrency must be between 1 and 1000."
+            )
+        if not 1 <= self.execution_recovery_sweep_interval_seconds <= 300:
+            raise ValueError(
+                "Execution recovery sweep interval must be between 1 and 300 seconds."
+            )
+        if not 1 <= self.execution_recovery_sweep_batch_size <= 500:
+            raise ValueError(
+                "Execution recovery sweep batch size must be between 1 and 500."
+            )
+        if not (
+            2 * self.execution_recovery_sweep_interval_seconds
+            <= self.execution_recovery_stale_after_seconds
+            <= 3600
+        ):
+            raise ValueError(
+                "Execution recovery stale threshold must be at least two intervals "
+                "and no more than one hour."
+            )
         if self.sandbox_required_profile != "rdc.sandbox/v1":
             raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")
         if not 128 <= self.sandbox_max_memory_mb <= 32768:
@@ -442,6 +491,82 @@ class Settings(BaseSettings):
                 )
             if not self.session_cookie_secure:
                 raise ValueError("Secure session cookies are mandatory outside local environments")
+            if (
+                re.fullmatch(
+                    rf"{self.env}-[a-z0-9][a-z0-9-]{{2,62}}",
+                    self.deployment_id,
+                )
+                is None
+            ):
+                raise ValueError(
+                    "Deployment ID must be environment-prefixed and stable."
+                )
+            if not self.project_secret_master_key_version.startswith(
+                self.env + "-"
+            ):
+                raise ValueError(
+                    "Project-secret key version must match the deployment environment."
+                )
+            if not self.s3_bucket.startswith(f"rdc-{self.env}-"):
+                raise ValueError(
+                    "Object-storage bucket must be environment-prefixed."
+                )
+            parsed_origins = [urlsplit(origin) for origin in self.allowed_origins]
+            if not parsed_origins or any(
+                parsed.scheme != "https"
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+                for parsed in parsed_origins
+            ):
+                raise ValueError(
+                    "Credential-free HTTPS origins are mandatory outside "
+                    "local environments."
+                )
+            parsed_storage_endpoints = [
+                urlsplit(self.s3_endpoint),
+                urlsplit(self.s3_public_endpoint),
+            ]
+            if any(
+                parsed.scheme != "https"
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                for parsed in parsed_storage_endpoints
+            ):
+                raise ValueError(
+                    "Object-storage endpoints must be credential-free HTTPS."
+                )
+            local_defaults = {
+                "database_url": self.database_url,
+                "redis_url": self.redis_url,
+                "s3_endpoint": self.s3_endpoint,
+                "s3_access_key": self.s3_access_key,
+                "s3_secret_key": self.s3_secret_key,
+            }
+            unsafe = [
+                name
+                for name, value in local_defaults.items()
+                if "change-me" in value
+                or value in {
+                    "postgresql+asyncpg://rdc:rdc@localhost:5432/rdc",
+                    "redis://localhost:6379/0",
+                    "http://localhost:9000",
+                    "rdc_local",
+                    "rdc_local_only_change_me",
+                }
+            ]
+            if unsafe:
+                raise ValueError(
+                    "Local infrastructure settings are prohibited outside "
+                    "local environments: "
+                    + ", ".join(unsafe)
+                )
         return self
 
 

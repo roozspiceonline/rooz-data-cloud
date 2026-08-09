@@ -1,0 +1,7 @@
+[Unit]
+Description=Rooz Data Cloud production services
+Wants=rdc-api.service rdc-execution-recovery.service
+After=network-online.target
+
+[Install]
+WantedBy=multi-user.target

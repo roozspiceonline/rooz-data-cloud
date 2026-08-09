@@ -851,10 +851,19 @@ Phase 1E implementation rules:
 - Inline JSON input is limited to 64 KiB; large object-storage inputs are deferred.
 - Runtime overrides may reduce but cannot exceed immutable manifest resource limits.
 - Run creation writes a durable `START` command and an initial persisted status event.
-- Cancellation requires `Idempotency-Key`; queued Runs are aborted before dispatch, while active Runs receive a durable `CANCEL` command.
+- Cancellation requires `Idempotency-Key`; queued Runs are aborted before dispatch, while active Runs receive one durable `CANCEL` command and an immutable server-derived `cancel_deadline_at`.
 - The public API never executes Agent code or decrypts project secrets.
 
 Cancellation is a command, not a resource deletion.
+
+### Execution recovery health
+
+`GET /health/recovery` reports the independently scheduled recovery service as
+`ready`, `stale`, `failed`, `never_run`, `unavailable`, or `disabled`. It exposes
+successful sweep and failure counters plus last-success timestamps, but never
+scheduler owner identity, tenant identifiers, work payloads, exception text, or
+credentials. When scheduling is enabled, any non-ready recovery status also
+degrades `GET /health/ready`.
 
 ### 17.7 API keys
 
@@ -959,6 +968,27 @@ GET /api/v1/projects/{project_id}/execution-artifacts
 ```
 
 Claims MUST be transactionally leased, MUST prevent concurrent duplicate claims, MUST expire, and MUST have bounded retries. Secret envelopes MUST be limited to declared Agent-manifest names, matching project and environment, the active `RUN_START` lease, and a short expiry. Artifact registration MUST be digest-addressed and tenant-bound.
+
+BUILD and RUN_START claims MUST also enforce the persisted owning Project's
+server-derived active-lease limit and the claiming worker's server-capped limit
+inside the claim transaction. Capacity counts include only ACTIVE leases whose
+expiry and immutable deadline remain in the future. RUN_CANCEL MUST bypass the
+Project execution limit so cancellation can drain a saturated Project, while
+still consuming worker capacity. Claim payload admission metadata is
+informational; persisted locks, counts, and limits are authoritative.
+
+Workers executing a claim MUST heartbeat and renew below the server loss
+threshold. A worker marked lost MAY authenticate to submit a strict
+`rdc.worker-recovery/v1` heartbeat report, but MUST NOT claim or use
+lease-scoped authority until server acceptance. The report contains a startup
+UUID, forced-cleanup completion literal, and bounded container/workspace counts;
+it does not select tenancy, leases, or cleanup targets.
+
+`GET /metrics/recovery` is excluded from public OpenAPI and exposes only global
+low-cardinality recovery/admission metrics for a trusted monitoring network. It
+MUST NOT include organization, Project, worker, lease, payload, token, secret,
+or error-summary labels. A stale or unavailable enabled scheduler returns 503
+and `rdc_execution_recovery_healthy 0`.
 
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 

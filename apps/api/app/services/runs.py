@@ -86,6 +86,7 @@ def run_metadata(record: Run) -> dict[str, object]:
         "started_at": record.started_at,
         "finished_at": record.finished_at,
         "cancel_requested_at": record.cancel_requested_at,
+        "cancel_deadline_at": record.cancel_deadline_at,
         "failure_code": record.failure_code,
         "failure_summary": record.failure_summary,
         "created_at": record.created_at,
@@ -113,6 +114,11 @@ def json_run_snapshot(record: Run) -> dict[str, object]:
         "cancel_requested_at": (
             record.cancel_requested_at.isoformat()
             if record.cancel_requested_at
+            else None
+        ),
+        "cancel_deadline_at": (
+            record.cancel_deadline_at.isoformat()
+            if record.cancel_deadline_at
             else None
         ),
         "created_at": record.created_at.isoformat(),
@@ -867,6 +873,47 @@ async def create_run(
     return snapshot
 
 
+async def _ensure_cancel_command(
+    session: AsyncSession,
+    *,
+    record: Run,
+    now: datetime,
+) -> RunCommandOutbox:
+    existing = await session.scalar(
+        select(RunCommandOutbox)
+        .where(
+            RunCommandOutbox.run_id == record.id,
+            RunCommandOutbox.command == "CANCEL",
+        )
+        .with_for_update()
+    )
+    if existing is not None:
+        return existing
+    command = RunCommandOutbox(
+        organization_id=record.organization_id,
+        project_id=record.project_id,
+        run_id=record.id,
+        command="CANCEL",
+        topic="rdc.run.cancel.requested.v1",
+        payload={
+            "schema_version": "1",
+            "run_id": str(record.id),
+            "organization_id": str(record.organization_id),
+            "project_id": str(record.project_id),
+            "cancel_deadline_at": (
+                record.cancel_deadline_at.isoformat()
+                if record.cancel_deadline_at is not None
+                else None
+            ),
+        },
+        status="PENDING",
+        attempts=0,
+        available_at=now,
+    )
+    session.add(command)
+    return command
+
+
 async def cancel_run(
     session: AsyncSession,
     *,
@@ -909,12 +956,32 @@ async def cancel_run(
             )
         return dict(existing.response_snapshot)
 
+    locked_record = await session.scalar(
+        select(Run)
+        .where(
+            Run.id == record.id,
+            Run.organization_id == record.organization_id,
+            Run.project_id == record.project_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if locked_record is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+    record = locked_record
     now = datetime.now(UTC)
     previous_status = record.status
     if record.status in RUN_TERMINAL_STATUSES:
         pass
     elif record.status in {"DRAFT", "READY", "QUEUED"}:
         record.cancel_requested_at = now
+        record.cancel_deadline_at = now + timedelta(
+            seconds=get_settings().worker_cancel_convergence_seconds
+        )
         record.status = "ABORTED"
         record.finished_at = now
         record.version += 1
@@ -945,27 +1012,13 @@ async def cancel_run(
         )
     elif record.status in RUN_CANCELLABLE_ACTIVE_STATUSES:
         record.cancel_requested_at = now
+        record.cancel_deadline_at = now + timedelta(
+            seconds=get_settings().worker_cancel_convergence_seconds
+        )
         record.status = "ABORTING"
         record.version += 1
         record.updated_at = now
-        session.add(
-            RunCommandOutbox(
-                organization_id=record.organization_id,
-                project_id=record.project_id,
-                run_id=record.id,
-                command="CANCEL",
-                topic="rdc.run.cancel.requested.v1",
-                payload={
-                    "schema_version": "1",
-                    "run_id": str(record.id),
-                    "organization_id": str(record.organization_id),
-                    "project_id": str(record.project_id),
-                },
-                status="PENDING",
-                attempts=0,
-                available_at=now,
-            )
-        )
+        await _ensure_cancel_command(session, record=record, now=now)
         await append_run_event(
             session,
             run=record,
@@ -975,7 +1028,9 @@ async def cancel_run(
                 "status": "ABORTING",
             },
         )
-    elif record.status != "ABORTING":
+    elif record.status == "ABORTING":
+        await _ensure_cancel_command(session, record=record, now=now)
+    else:
         raise ApiError(
             status_code=409,
             code="RUN_STATE_CONFLICT",
@@ -1011,6 +1066,11 @@ async def cancel_run(
         details={
             "previous_status": previous_status,
             "resulting_status": record.status,
+            "cancel_deadline_at": (
+                record.cancel_deadline_at.isoformat()
+                if record.cancel_deadline_at is not None
+                else None
+            ),
         },
     )
     return snapshot

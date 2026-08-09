@@ -15,43 +15,56 @@ test gates pass on the exact merged commit.
 | Controlled web/browser canaries and egress boundaries | Complete baseline | Phase 1J–1M threat models and verifiers |
 | Tenant-scoped Datasets | Complete | Phase 1N, append receipts, RLS, signed pagination/export |
 | Tenant-scoped Key-Value Stores | Complete | Phase 1O, version history, RLS, controlled worker capability |
+| Tenant-scoped Request Queues | Complete | Phase 1P, PR #56, migration `0015`, RDC CI #189 |
 
 ## Active work
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Phase 1P: Request Queue | Implemented — final merge gate pending | Runs, worker leases, Dataset and KV controls |
+| Production Execution Lifecycle / Recovery | Implementation complete — final audit and merge gate | Request Queue, Runs and worker leases |
 
-Phase 1P supplies strict protocol validation; Queue/request/immutable-history
-persistence under command-specific tenant and lease-scoped worker RLS;
-race-safe claim/reclaim/terminal transitions; idempotency; a false-by-default
-worker path; authenticated bounded reads with filter-bound signed cursors;
-tenant-bound audit events; adversarial tests; threat model; and runbook. It
-becomes complete only after PR #56 is merged and the exact merged commit is
-verified.
+The first recovery increment centralizes server-owned retry eligibility and
+bounded exponential backoff, refuses to retry when the durable outbox source is
+missing, and records the scheduled retry time in immutable execution audit
+lineage. The second increment persists server-derived immutable Build/Run
+deadlines, clamps renewals, and terminally times out overdue workloads under
+race-safe recovery. The third increment makes cancellation dispatch idempotent,
+persists an immutable convergence deadline, fences late/lost worker leases, and
+terminally aborts cancelled Runs. The fourth increment adds an independently
+scheduled recovery process with transaction-scoped singleton ownership, bounded
+`SKIP LOCKED` batches, crash-safe rollback/restart behavior, and durable health
+telemetry. The fifth increment persists bounded server-owned project and worker
+limits and enforces them atomically at claim time with recovery-derived release;
+RUN_CANCEL remains available when project execution capacity is saturated.
+The sixth increment detects stale workers from server-observed activity, fences
+and retries their leases, renews healthy in-flight work, performs bounded
+label-scoped runtime cleanup on failure/restart/signal, and requires persisted
+cleanup recovery evidence before claims and RLS authority resume.
+The seventh increment adds hardened service supervision, environment identity
+separation, PostgreSQL backup/restore and migration rollback rehearsal,
+versioned-object recovery canaries, aggregate recovery metrics, and SLO alerts.
+The workstream is ready for its final exact-head security and merge gate.
 
 ## Remaining RDC v1 workstreams
 
-1. Production execution lifecycle: retries, timeouts, cancellation, stale lease
-   and crash recovery, bounded concurrency.
-2. Scheduler: one-time/recurring schedules, missed-run policy, duplicate
+1. Scheduler: one-time/recurring schedules, missed-run policy, duplicate
    prevention and audit history.
-3. Scraping runtime: reusable controlled HTTP/browser, queue, Dataset and KV
+2. Scraping runtime: reusable controlled HTTP/browser, queue, Dataset and KV
    primitives without expanding egress authority.
-4. Proxy/egress: tenant-scoped policy, credential isolation, rotation and audit.
-5. Events/webhooks: signed delivery, retry/idempotency, history and failure
+3. Proxy/egress: tenant-scoped policy, credential isolation, rotation and audit.
+4. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
-6. Observability: structured run/worker logs, diagnostics, metrics and safe
+5. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
-7. Usage controls: quotas, rate limits, concurrency and auditable failures.
-8. SDK/CLI and Console: API-backed operations for all major resources.
-9. Production operations: deployment, health/readiness, backups, restore,
-   migration rollback and environment separation.
-10. End-to-end acceptance and final release/security audit.
+6. Usage controls: quotas, rate limits, concurrency and auditable failures.
+7. SDK/CLI and Console: API-backed operations for all major resources.
+8. Platform-wide production operations: release automation, registry/SBOM,
+   capacity, disaster recovery, and environment promotion for all workstreams.
+9. End-to-end acceptance and final release/security audit.
 
 ## Dependency order
 
-`Request Queue → execution recovery → scheduler/runtime integration → egress and
+`execution recovery → scheduler/runtime integration → egress and
 webhooks → observability/usage controls → SDK/CLI/Console → production
 operations → end-to-end release audit`.
 
