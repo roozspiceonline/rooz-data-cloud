@@ -73,6 +73,17 @@ and lease-scoped RLS until a strict `rdc.worker-recovery/v1` cleanup report is
 accepted. Cleanup reports contain only counts and a startup identifier, never
 container output, tenant data, or credentials.
 
-Remaining increments cover production operational gates.
+The seventh increment adds the production operations gate: hardened systemd
+contracts for API, recovery, and sandbox worker; control-group termination plus
+supervisor cleanup; environment-identity validation; credential-safe PostgreSQL
+custom-format backup and disposable restore/Alembic rollback rehearsal; a
+bounded versioned-object restore canary; hidden aggregate Prometheus metrics;
+and recovery SLO alerts. Database backups carry a SHA-256 manifest and migration
+revision, never overwrite an existing archive, and keep connection credentials
+out of command arguments and output. Restore drills always remove their
+generated database, including after failure.
+
+The workstream implementation is complete pending its final exact-head security
+and merge gate.
 
 See the [threat model](THREAT_MODEL.md) and [runbook](RUNBOOK.md).

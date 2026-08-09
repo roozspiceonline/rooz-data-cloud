@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Rooz Data Cloud object recovery canary daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=10m
+Unit=rdc-object-recovery-drill.service
+
+[Install]
+WantedBy=timers.target

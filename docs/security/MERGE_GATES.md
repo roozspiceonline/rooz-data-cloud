@@ -537,3 +537,25 @@ A Phase 1I merge is blocked unless:
 - the reference canary uses no network or secrets.
 - all previous phase verifiers, the Phase 1I verifier, backend checks,
   frontend checks, and Compose validation pass.
+
+## Production execution recovery merge gate
+
+- Recovery scheduler ownership is singleton-safe, bounded, independently
+  supervised, readiness-checked, and continuously restarted.
+- Worker loss fences active leases and RLS before retry; recovery requires
+  accepted bounded cleanup evidence.
+- The sandbox worker and watchdog share control-group termination; supervisor
+  pre-start and post-stop cleanup is label/name/namespace/path bounded.
+- Staging and production deployment identity, bucket, key version, origins,
+  credentials, namespaces, and environment files remain separated.
+- PostgreSQL custom-format backup has a private SHA-256/revision manifest and
+  never exposes its URL in argv or output.
+- Restore rehearsal uses a generated database, validates the backup revision,
+  downgrades one migration, returns to current head, and always removes the
+  generated database.
+- Object recovery requires bucket versioning, restores one generated canary by
+  exact VersionId, bounds enumeration, and removes all canary versions.
+- Recovery metrics are global/low-cardinality and SLO alerts cover stale health,
+  failures, pending cleanup, and loss bursts.
+- Fresh migrations, adversarial tests, all verifiers, backend/frontend checks,
+  Compose, exact-head CI, mergeability, and review-thread gates pass.

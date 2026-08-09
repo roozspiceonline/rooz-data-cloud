@@ -1,0 +1,34 @@
+[Unit]
+Description=Rooz Data Cloud API
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rdc-api
+Group=rdc-api
+WorkingDirectory=/opt/rdc/current/apps/api
+EnvironmentFile=/etc/rdc/production/api.env
+ExecStart=/opt/rdc/current/apps/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+ExecStartPost=/opt/rdc/current/apps/api/.venv/bin/python /opt/rdc/current/scripts/check_production_readiness.py --base-url http://127.0.0.1:8000 --mode live --attempts 30 --allow-loopback-http
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=45s
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=rdc.target

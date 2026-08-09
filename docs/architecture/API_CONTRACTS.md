@@ -984,6 +984,12 @@ lease-scoped authority until server acceptance. The report contains a startup
 UUID, forced-cleanup completion literal, and bounded container/workspace counts;
 it does not select tenancy, leases, or cleanup targets.
 
+`GET /metrics/recovery` is excluded from public OpenAPI and exposes only global
+low-cardinality recovery/admission metrics for a trusted monitoring network. It
+MUST NOT include organization, Project, worker, lease, payload, token, secret,
+or error-summary labels. A stale or unavailable enabled scheduler returns 503
+and `rdc_execution_recovery_healthy 0`.
+
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 
 

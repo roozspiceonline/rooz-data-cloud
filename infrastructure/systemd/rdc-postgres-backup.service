@@ -1,0 +1,26 @@
+[Unit]
+Description=Rooz Data Cloud PostgreSQL custom-format backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rdc-backup
+Group=rdc-backup
+WorkingDirectory=/opt/rdc/current
+EnvironmentFile=/etc/rdc/production/backup.env
+ExecStart=/opt/rdc/current/apps/api/.venv/bin/python /opt/rdc/current/scripts/production_recovery_drill.py backup --archive-dir /var/backups/rdc/postgres --timeout-seconds 1800
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/backups/rdc/postgres
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -74,6 +74,11 @@ need(
     "worker_registration_max_concurrency",
     "execution_project_default_max_active_leases",
     "worker_lost_after_seconds",
+    "deployment_id",
+    "Deployment ID must be environment-prefixed",
+    "Object-storage bucket must be environment-prefixed",
+    "HTTPS origins are mandatory",
+    "Object-storage endpoints must be credential-free HTTPS",
 )
 need(
     ".env.example",
@@ -171,6 +176,74 @@ need(
     "recovery=final_cleanup.as_protocol()",
 )
 need(
+    "apps/api/app/api/routes/health.py",
+    'router.get("/metrics/recovery", include_in_schema=False)',
+    "rdc_execution_recovery_healthy",
+    "rdc_execution_recovery_workers_lost_total",
+    "rdc_execution_recovery_pending_workers",
+)
+need(
+    "scripts/production_recovery_drill.py",
+    "RDC_BACKUP_DATABASE_URL",
+    "RDC_RESTORE_DATABASE_URL",
+    '"pg_dump", "--format=custom"',
+    '"downgrade", "-1"',
+    '"upgrade", "head"',
+    '"dropdb", "--maintenance-db=postgres"',
+    "disposable_database_removed",
+)
+need(
+    "scripts/object_storage_recovery_drill.py",
+    '"Status") != "Enabled"',
+    "recovery-drill/{deployment_id}",
+    "VersionId=first_version",
+    "MAX_VERSION_RECORDS = 32",
+    "delete_objects",
+)
+need(
+    "scripts/check_production_readiness.py",
+    "RejectRedirects",
+    "MAX_RESPONSE_BYTES",
+    '"/health/recovery"',
+    '"/health/ready"',
+)
+need(
+    "infrastructure/systemd/rdc-sandbox-worker.service",
+    "KillMode=control-group",
+    "FinalKillSignal=SIGKILL",
+    "ExecStartPre=/usr/bin/test ! -S /var/run/docker.sock",
+    "ExecStopPost=",
+    "recovery_cli.py",
+)
+need(
+    "infrastructure/systemd/rdc-execution-recovery.service",
+    "Restart=always",
+    "ProtectSystem=strict",
+    "--mode recovery",
+)
+need(
+    "infrastructure/systemd/rdc-postgres-backup.timer",
+    "OnCalendar=*:0/15",
+    "Persistent=true",
+)
+need(
+    "infrastructure/systemd/rdc-object-recovery-drill.timer",
+    "OnCalendar=daily",
+    "Persistent=true",
+)
+need(
+    "infrastructure/systemd/rdc-object-recovery-drill.service",
+    "EnvironmentFile=/etc/rdc/production/object-recovery.env",
+)
+need(
+    "infrastructure/monitoring/rdc-execution-recovery.rules.yml",
+    "RDCExecutionRecoveryUnavailable",
+    "RDCExecutionRecoveryHeartbeatMissing",
+    "RDCWorkerRecoveryPending",
+    "RDCWorkerLossBurst",
+    "RDCRecoveryFailure",
+)
+need(
     "apps/api/tests/test_execution_recovery.py",
     "exponential_and_bounded",
     "durable_source",
@@ -203,6 +276,14 @@ need(
     "lease_watchdog_fails_closed_and_forces_runtime_cleanup",
 )
 need(
+    "apps/api/tests/test_production_operations_contracts.py",
+    "nonlocal_environment_identity_and_storage_are_separated",
+    "backup_uses_environment_credentials_and_writes_verified_manifest",
+    "restore_drill_rolls_migration_and_always_removes_database",
+    "object_storage_drill_restores_version_and_cleans_only_canary",
+    "production_supervisor_and_slo_contracts_are_fail_closed",
+)
+need(
     "docs/execution-recovery/THREAT_MODEL.md",
     "server",
     "outbox",
@@ -227,5 +308,8 @@ need(
     "20260809_0020",
     "WORKER_RECOVERY_REQUIRED",
     "io.rooz.rdc.managed=true",
+    "PostgreSQL backup and restore drill",
+    "Object-storage recovery drill",
+    "Recovery SLO response",
 )
-print("Execution recovery increment 6 verification passed")
+print("Execution recovery increment 7 verification passed")

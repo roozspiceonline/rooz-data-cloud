@@ -3,6 +3,7 @@ import ipaddress
 import re
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from pydantic import Field, model_validator
@@ -17,6 +18,7 @@ class Settings(BaseSettings):
     )
 
     env: Literal["development", "test", "staging", "production"] = "development"
+    deployment_id: str = ""
     database_url: str = "postgresql+asyncpg://rdc:rdc@localhost:5432/rdc"
     redis_url: str = "redis://localhost:6379/0"
 
@@ -489,6 +491,82 @@ class Settings(BaseSettings):
                 )
             if not self.session_cookie_secure:
                 raise ValueError("Secure session cookies are mandatory outside local environments")
+            if (
+                re.fullmatch(
+                    rf"{self.env}-[a-z0-9][a-z0-9-]{{2,62}}",
+                    self.deployment_id,
+                )
+                is None
+            ):
+                raise ValueError(
+                    "Deployment ID must be environment-prefixed and stable."
+                )
+            if not self.project_secret_master_key_version.startswith(
+                self.env + "-"
+            ):
+                raise ValueError(
+                    "Project-secret key version must match the deployment environment."
+                )
+            if not self.s3_bucket.startswith(f"rdc-{self.env}-"):
+                raise ValueError(
+                    "Object-storage bucket must be environment-prefixed."
+                )
+            parsed_origins = [urlsplit(origin) for origin in self.allowed_origins]
+            if not parsed_origins or any(
+                parsed.scheme != "https"
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or parsed.path not in {"", "/"}
+                for parsed in parsed_origins
+            ):
+                raise ValueError(
+                    "Credential-free HTTPS origins are mandatory outside "
+                    "local environments."
+                )
+            parsed_storage_endpoints = [
+                urlsplit(self.s3_endpoint),
+                urlsplit(self.s3_public_endpoint),
+            ]
+            if any(
+                parsed.scheme != "https"
+                or parsed.hostname is None
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                for parsed in parsed_storage_endpoints
+            ):
+                raise ValueError(
+                    "Object-storage endpoints must be credential-free HTTPS."
+                )
+            local_defaults = {
+                "database_url": self.database_url,
+                "redis_url": self.redis_url,
+                "s3_endpoint": self.s3_endpoint,
+                "s3_access_key": self.s3_access_key,
+                "s3_secret_key": self.s3_secret_key,
+            }
+            unsafe = [
+                name
+                for name, value in local_defaults.items()
+                if "change-me" in value
+                or value in {
+                    "postgresql+asyncpg://rdc:rdc@localhost:5432/rdc",
+                    "redis://localhost:6379/0",
+                    "http://localhost:9000",
+                    "rdc_local",
+                    "rdc_local_only_change_me",
+                }
+            ]
+            if unsafe:
+                raise ValueError(
+                    "Local infrastructure settings are prohibited outside "
+                    "local environments: "
+                    + ", ".join(unsafe)
+                )
         return self
 
 

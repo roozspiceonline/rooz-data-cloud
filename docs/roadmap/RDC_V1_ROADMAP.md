@@ -21,7 +21,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Production Execution Lifecycle / Recovery | Active — scheduled recovery and admission controls | Request Queue, Runs and worker leases |
+| Production Execution Lifecycle / Recovery | Implementation complete — final audit and merge gate | Request Queue, Runs and worker leases |
 
 The first recovery increment centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -39,8 +39,11 @@ RUN_CANCEL remains available when project execution capacity is saturated.
 The sixth increment detects stale workers from server-observed activity, fences
 and retries their leases, renews healthy in-flight work, performs bounded
 label-scoped runtime cleanup on failure/restart/signal, and requires persisted
-cleanup recovery evidence before claims and RLS authority resume. Production
-operational gates remain in this workstream.
+cleanup recovery evidence before claims and RLS authority resume.
+The seventh increment adds hardened service supervision, environment identity
+separation, PostgreSQL backup/restore and migration rollback rehearsal,
+versioned-object recovery canaries, aggregate recovery metrics, and SLO alerts.
+The workstream is ready for its final exact-head security and merge gate.
 
 ## Remaining RDC v1 workstreams
 
@@ -55,8 +58,8 @@ operational gates remain in this workstream.
    correlation identifiers.
 6. Usage controls: quotas, rate limits, concurrency and auditable failures.
 7. SDK/CLI and Console: API-backed operations for all major resources.
-8. Production operations: deployment, health/readiness, backups, restore,
-   migration rollback and environment separation.
+8. Platform-wide production operations: release automation, registry/SBOM,
+   capacity, disaster recovery, and environment promotion for all workstreams.
 9. End-to-end acceptance and final release/security audit.
 
 ## Dependency order

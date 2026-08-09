@@ -110,3 +110,68 @@ rolls back partial batch mutations and releases the session lock. If health is
 stale, first verify PostgreSQL reachability and scheduler process availability,
 then inspect the bounded `last_error_code`. Do not bypass row locks or mutate
 leases directly during incident recovery.
+
+## Production supervision and readiness
+
+Install the units in `infrastructure/systemd` on immutable Linux releases.
+Start `rdc.target` on the control-plane host and enable the sandbox-worker unit
+only on its dedicated rootless execution host. Before every rollout, run
+`systemd-analyze verify`, confirm environment-file permissions, then execute:
+
+```text
+python scripts/check_production_readiness.py --base-url https://api.example.com
+```
+
+API, scheduler, and worker services must run as their dedicated non-root users.
+Do not remove control-group termination, final cleanup, capability bounding,
+filesystem protection, readiness probes, or restart policy during incidents.
+If a worker is killed, `ExecStopPost` must complete label/name-scoped cleanup;
+keep the unit failed if cleanup cannot prove completion.
+
+## PostgreSQL backup and restore drill
+
+Set `RDC_ENV` and `RDC_DEPLOYMENT_ID` in a protected operator environment. Set
+the read-only `RDC_BACKUP_DATABASE_URL` for backup and the distinct
+`RDC_RESTORE_DATABASE_URL` only for the restore drill. The latter must point to
+the isolated drill cluster and may create/drop disposable databases. URLs are
+read only from the environment and converted to libpq child variables; they are
+never placed in argv or output.
+
+```text
+python scripts/production_recovery_drill.py backup \
+  --archive-dir /var/backups/rdc/postgres
+python scripts/production_recovery_drill.py restore-drill \
+  --archive /var/backups/rdc/postgres/<verified-archive>.dump
+```
+
+The backup must have mode `0600`, a matching `.manifest.json`, SHA-256, size,
+environment/deployment identity, and Alembic revision. Copy both files to
+immutable off-host storage. The restore drill creates a random bounded database,
+verifies the backed-up revision, downgrades one migration, upgrades to current
+head, verifies the final revision, and drops the database in success and failure
+paths. A missing cleanup confirmation is a failed drill. Run a restore drill at
+least monthly and before a migration-bearing release; retain its nonsensitive
+JSON result with release evidence.
+
+## Object-storage recovery drill
+
+Enable bucket versioning, then run the canary using a dedicated credential
+limited to bucket-version inspection and the generated recovery-drill prefix:
+
+```text
+python scripts/object_storage_recovery_drill.py
+```
+
+The script permits HTTPS and the exact environment bucket only. It writes one
+generated `recovery-drill/<deployment>/...` key, creates two versions and a
+delete marker, reads the original exact version, verifies its bytes, and removes
+only those bounded versions. Never point it at a shared or mismatched bucket.
+The daily systemd timer makes failure visible without touching tenant keys.
+
+## Recovery SLO response
+
+Scrape `/metrics/recovery` only from the monitoring network and load
+`infrastructure/monitoring/rdc-execution-recovery.rules.yml`. A stale/unavailable
+scheduler or new sweep failure is critical. A cleanup-pending worker beyond five
+minutes or a worker-loss burst requires sandbox-host investigation. The metrics
+are global aggregates; do not add tenant or runtime identifiers as labels.

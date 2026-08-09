@@ -80,10 +80,31 @@ dedicated rootless namespace and RDC managed label, names must match an exact
 RDC prefix, target counts are bounded, and workspaces must be non-symlink
 directories with generated prefixes. Signal and restart forced cleanup are
 idempotent. Unlabeled or ambiguously named resources cause startup failure
-instead of broad deletion. BuildKit/containerd must remain within the worker
-service cgroup so the production supervisor terminates child processes with
-the worker.
+instead of broad deletion. The production supervisor terminates worker and
+watchdog processes as one control group and independently runs the same bounded
+cleanup contract after every stop, including forced termination. Rootless
+containerd and BuildKit remain dedicated to the worker identity and namespace.
 
-This increment completes the planned application-level process/container
-restart foundation; production deployment, supervisor, backup/restore, and
-environment-separation gates remain.
+Production environment identity is explicit and server-validated. Staging and
+production cannot share deployment IDs, bucket prefixes, encryption key-version
+prefixes, insecure browser origins, local credentials, or insecure session
+cookies. Unit files contain no credentials and load root-owned environment
+files outside immutable releases.
+
+PostgreSQL credentials remain in environment variables and are converted to
+libpq child variables, never argv or output. The periodic backup identity is
+read-only; a separate operator-held restore identity may create/drop databases
+only on the drill cluster. Backups use exclusive paths, mode `0600`, custom
+format, SHA-256 manifests, bounded size, and recorded migration revision.
+Restore and downgrade/upgrade rehearsal happens only in a random disposable
+database that is removed on success and failure. Object recovery uses another
+dedicated prefix-scoped identity, touches one server-generated deployment
+canary key, requires versioning, restores by exact VersionId, bounds version
+enumeration, rejects unexpected keys, and removes every canary version/delete
+marker.
+
+Recovery metrics are global low-cardinality aggregates without tenant, Project,
+worker, lease, payload, token, or secret labels. Alerts cover scheduler staleness,
+failure growth, cleanup-pending workers, and loss bursts. These controls complete
+the Production Execution Lifecycle / Recovery implementation; exact-head review,
+CI, and merge gates remain authoritative.

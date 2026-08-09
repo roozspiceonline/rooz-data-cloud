@@ -2,12 +2,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from ...core.config import get_settings
 from ...core.database import check_database, session_factory
 from ...core.redis_client import check_redis
 from ...services.execution_recovery_sweeper import (
+    ExecutionAdmissionHealth,
+    ExecutionRecoveryHealth,
     execution_recovery_is_fresh,
     read_execution_admission_health,
     read_execution_recovery_health,
@@ -15,6 +17,45 @@ from ...services.execution_recovery_sweeper import (
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
+PROMETHEUS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
+
+
+def recovery_metrics_payload(
+    health: ExecutionRecoveryHealth,
+    admission: ExecutionAdmissionHealth,
+    *,
+    now: datetime,
+) -> str:
+    fresh = execution_recovery_is_fresh(
+        health,
+        now=now,
+        stale_after_seconds=settings.execution_recovery_stale_after_seconds,
+    )
+    heartbeat_timestamp = (
+        health.last_heartbeat_at.timestamp()
+        if health.last_heartbeat_at is not None
+        else 0.0
+    )
+    values: tuple[tuple[str, int | float], ...] = (
+        ("rdc_execution_recovery_enabled", 1),
+        ("rdc_execution_recovery_healthy", int(fresh)),
+        ("rdc_execution_recovery_last_heartbeat_timestamp_seconds", heartbeat_timestamp),
+        ("rdc_execution_recovery_sweeps_total", health.total_sweeps),
+        ("rdc_execution_recovery_failures_total", health.total_failures),
+        ("rdc_execution_recovery_workers_lost_total", health.total_workers_lost),
+        (
+            "rdc_execution_recovery_worker_leases_fenced_total",
+            health.total_worker_leases_fenced,
+        ),
+        ("rdc_execution_active_leases", admission.active_leases),
+        ("rdc_execution_saturated_projects", admission.saturated_projects),
+        ("rdc_execution_saturated_workers", admission.saturated_workers),
+        (
+            "rdc_execution_recovery_pending_workers",
+            admission.recovery_pending_workers,
+        ),
+    )
+    return "".join(f"{name} {value}\n" for name, value in values)
 
 
 @router.get("/health/live")
@@ -125,6 +166,45 @@ async def recovery_health() -> JSONResponse:
                 "service": "rdc-execution-recovery",
                 "status": "unavailable",
             },
+        )
+
+
+@router.get("/metrics/recovery", include_in_schema=False)
+async def recovery_metrics() -> PlainTextResponse:
+    if not settings.execution_recovery_sweep_enabled:
+        return PlainTextResponse(
+            "rdc_execution_recovery_enabled 0\n"
+            "rdc_execution_recovery_healthy 1\n",
+            media_type=PROMETHEUS_CONTENT_TYPE,
+        )
+    try:
+        async with session_factory() as session:
+            health = await read_execution_recovery_health(session)
+            admission = await read_execution_admission_health(session)
+        now = datetime.now(UTC)
+        payload = recovery_metrics_payload(health, admission, now=now)
+        status_code = (
+            200
+            if execution_recovery_is_fresh(
+                health,
+                now=now,
+                stale_after_seconds=(
+                    settings.execution_recovery_stale_after_seconds
+                ),
+            )
+            else 503
+        )
+        return PlainTextResponse(
+            payload,
+            status_code=status_code,
+            media_type=PROMETHEUS_CONTENT_TYPE,
+        )
+    except Exception:
+        return PlainTextResponse(
+            "rdc_execution_recovery_enabled 1\n"
+            "rdc_execution_recovery_healthy 0\n",
+            status_code=503,
+            media_type=PROMETHEUS_CONTENT_TYPE,
         )
 
 
