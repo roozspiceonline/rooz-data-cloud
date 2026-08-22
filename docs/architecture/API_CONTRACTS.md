@@ -1055,8 +1055,9 @@ activation object and expected source/image lineage.
 `request_queue` object with `schema_version=rdc.run-queue/v1` and `queue_id`.
 The Queue ID is resolved against the immutable Agent version's server-derived
 organization and Project. Cross-tenant or missing Queues return the same 404.
-The field cannot be combined with web-fetch or browser intent, and caller input
-cannot set the reserved `_rdc_queue` key.
+The field cannot be combined with web-fetch or browser intent. Caller input
+cannot set `_rdc_queue`, `_rdc_queue_http`, `_rdc_web_requests`, or
+`_rdc_web_fetch_result`.
 
 Eligible execution claims carry immutable Queue binding and worker-capability
 receipts. The hidden internal routes are:
@@ -1072,3 +1073,12 @@ most one item. The trusted worker removes `claim_token` before injecting the
 normalized claim into Agent input and retains `--network none`. Completion is
 claim-token/worker/expiry bound and uses the existing immutable Queue transition
 and audit lineage.
+
+When the immutable Agent version declares `network=web-egress`, the API emits
+`rdc.request-queue-binding-receipt/v2`, binding `brokered-http`, the current
+`rdc.egress/v1` policy digest, dispatch state, and networkless Agent boundary.
+The lease carries `rdc.request-queue-worker-capability/v2`. The trusted worker
+derives exactly one GET from the claimed URL, uses only the existing bounded
+HTTPS broker, validates its result, and injects `_rdc_queue_http` without the
+claim token. This mode is false by default and cannot be combined with browser,
+Dataset, KV, caller web-fetch, or legacy web-request input.

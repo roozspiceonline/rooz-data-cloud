@@ -116,6 +116,7 @@ class Settings(BaseSettings):
     sandbox_canary_dataset_writes_enabled: bool = False
     sandbox_canary_key_value_store_enabled: bool = False
     sandbox_canary_request_queue_enabled: bool = False
+    sandbox_canary_request_queue_http_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -421,6 +422,20 @@ class Settings(BaseSettings):
                 "Request Queue worker access requires the sandbox "
                 "master gate and canary mode."
             )
+
+        if self.sandbox_canary_request_queue_http_enabled:
+            if not self.sandbox_canary_request_queue_enabled:
+                raise ValueError(
+                    "Queue HTTP acquisition requires the Request Queue gate."
+                )
+            if not self.sandbox_canary_web_egress_enabled:
+                raise ValueError(
+                    "Queue HTTP acquisition requires the web-egress gate."
+                )
+            if not self.sandbox_canary_web_egress_allowed_hosts:
+                raise ValueError(
+                    "Queue HTTP acquisition requires an operator allowlist."
+                )
 
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:
             raise ValueError("Canary browser page limit is outside the safe range.")

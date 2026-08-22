@@ -9,9 +9,11 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.core.config import Settings
 from app.core.errors import ApiError
 from app.core.security import canonical_fingerprint
-from app.models import Run
+from app.execution_schemas import SandboxActivation
+from app.models import Run, RunCommandOutbox
 from app.run_schemas import CreateRunRequest
 from app.services.runs import create_run
 from app.services.worker_request_queue import request_queue_capability
@@ -30,10 +32,10 @@ def _queue_protocol_module():  # type: ignore[no-untyped-def]
     return module
 
 
-def _manifest() -> dict[str, object]:
+def _manifest(*, network: str = "none") -> dict[str, object]:
     return {
         "capabilities": {
-            "network": "none",
+            "network": network,
             "browser": False,
             "dataset": False,
             "keyValueStore": False,
@@ -75,6 +77,15 @@ def test_run_queue_binding_is_strict_and_reserved() -> None:
                 "request_queue": _binding_payload(queue_id),
             }
         )
+    for reserved in ("_rdc_queue_http", "_rdc_web_requests"):
+        with pytest.raises(ValidationError, match="reserved _rdc_queue"):
+            CreateRunRequest.model_validate(
+                {
+                    "build_id": str(uuid4()),
+                    "input": {reserved: {}},
+                    "request_queue": _binding_payload(queue_id),
+                }
+            )
     with pytest.raises(ValidationError, match="only one"):
         CreateRunRequest.model_validate(
             {
@@ -94,6 +105,21 @@ def test_run_queue_binding_is_strict_and_reserved() -> None:
         )
 
 
+def test_queue_http_gates_are_independent_and_fail_closed() -> None:
+    assert Settings().sandbox_canary_request_queue_http_enabled is False
+    with pytest.raises(ValueError, match="requires the Request Queue gate"):
+        Settings(sandbox_canary_request_queue_http_enabled=True)
+    with pytest.raises(ValidationError, match="requires Queue access"):
+        SandboxActivation(
+            agent_version_id=uuid4(),
+            worker_name="scraping-worker",
+            attestation_digest="a" * 64,
+            sandbox_policy_digest="b" * 64,
+            constraints_digest="c" * 64,
+            capability_profile="brokered-web-egress",
+            egress_policy_digest="d" * 64,
+            request_queue_http_enabled=True,
+        )
 def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
     protocol = _queue_protocol_module()
     queue_id = str(uuid4())
@@ -132,6 +158,73 @@ def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
                 {**value, "url": url},
                 expected_queue_id=queue_id,
             )
+
+
+def test_queue_http_protocol_is_claim_derived_and_token_free() -> None:
+    protocol = _queue_protocol_module()
+    claim = {
+        "schema_version": "rdc.queue-worker-claim/v1",
+        "request_id": str(uuid4()),
+        "queue_id": str(uuid4()),
+        "url": "https://example.com/items/1",
+        "user_data": {"page": 1},
+        "attempt_count": 1,
+        "claim_token": str(uuid4()),
+    }
+    envelope = protocol.queue_http_fetch_envelope(claim)
+    assert envelope == {
+        "schema_version": "rdc.web-fetch/v1",
+        "requests": [
+            {
+                "id": "queue-request",
+                "method": "GET",
+                "url": claim["url"],
+            }
+        ],
+    }
+    request_digest = canonical_fingerprint(envelope)
+    result = protocol.queue_http_agent_result(
+        claim,
+        {
+            "schema_version": "rdc.web-fetch-result/v1",
+            "request_digest": request_digest,
+            "results": [
+                {
+                    "id": "queue-request",
+                    "method": "GET",
+                    "url": claim["url"],
+                    "status": 200,
+                    "headers": {"content-type": "text/plain"},
+                    "body": {
+                        "encoding": "text",
+                        "value": "ok",
+                        "size_bytes": 2,
+                        "sha256": "2" * 64,
+                    },
+                }
+            ],
+            "budget": {
+                "bytes_received": 2,
+                "max_requests": 8,
+                "max_total_bytes": 4_194_304,
+                "requests_used": 1,
+            },
+        },
+    )
+    assert result["schema_version"] == "rdc.queue-http-result/v1"
+    assert result["request_id"] == claim["request_id"]
+    assert "claim_token" not in result
+
+    with pytest.raises(protocol.QueueWorkerBoundaryError, match="invalid"):
+        protocol.queue_http_agent_result(
+            claim,
+            {
+                "schema_version": "rdc.web-fetch-result/v1",
+                "request_digest": "0" * 64,
+                "results": [],
+                "budget": {},
+            },
+        )
 
 
 def test_queue_capability_is_exact_run_worker_and_queue_bound(
@@ -198,6 +291,88 @@ def test_queue_capability_is_exact_run_worker_and_queue_bound(
     )
 
 
+def test_queue_http_capability_binds_egress_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import worker_request_queue as service
+
+    queue_id, run_id, version_id = uuid4(), uuid4(), uuid4()
+    worker = SimpleNamespace(
+        name="scraping-worker",
+        capabilities=["RUN_START", "REQUEST_QUEUE_ACCESS"],
+    )
+    binding = _binding_payload(queue_id)
+    egress_policy = {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_hosts": ["example.com"],
+    }
+    egress_digest = canonical_fingerprint(egress_policy)
+    receipt = {
+        "schema_version": "rdc.request-queue-binding-receipt/v2",
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "acquisition_mode": "brokered-http",
+        "egress_policy_digest": egress_digest,
+        "dispatch_enabled": True,
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    payload = {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": str(version_id),
+        "manifest": _manifest(network="web-egress"),
+        "input_reference": {
+            "value": {},
+            "request_queue": binding,
+            "queue_binding_receipt": receipt,
+            "request_queue_egress_policy": egress_policy,
+            "request_queue_egress_policy_digest": egress_digest,
+        },
+    }
+    monkeypatch.setattr(service.settings, "sandbox_canary_request_queue_enabled", True)
+    monkeypatch.setattr(
+        service.settings, "sandbox_canary_request_queue_http_enabled", True
+    )
+    monkeypatch.setattr(service.settings, "sandbox_canary_web_egress_enabled", True)
+    monkeypatch.setattr(service.settings, "sandbox_canary_worker_name", worker.name)
+    monkeypatch.setattr(
+        service.settings,
+        "sandbox_canary_agent_version_id",
+        str(version_id),
+    )
+    capability = request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_http_enabled=True,
+        egress_policy_digest=egress_digest,
+    )
+    assert capability is not None
+    assert capability["schema_version"] == (
+        "rdc.request-queue-worker-capability/v2"
+    )
+    assert capability["acquisition_mode"] == "brokered-http"
+    assert capability["egress_policy_digest"] == egress_digest
+
+    payload["input_reference"]["request_queue_egress_policy_digest"] = (  # type: ignore[index]
+        "0" * 64
+    )
+    assert (
+        request_queue_capability(
+            worker,  # type: ignore[arg-type]
+            payload,
+            request_queue_enabled=True,
+            request_queue_http_enabled=True,
+            egress_policy_digest=egress_digest,
+        )
+        is None
+    )
+
+
 @pytest.mark.asyncio
 async def test_create_run_derives_queue_tenancy_and_persists_receipt() -> None:
     organization_id, project_id, agent_id = uuid4(), uuid4(), uuid4()
@@ -256,6 +431,101 @@ async def test_create_run_derives_queue_tenancy_and_persists_receipt() -> None:
     assert isinstance(receipt, dict)
     assert receipt["queue_id"] == str(queue_id)
     assert result["organization_id"] == str(organization_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dispatch_enabled", "expected_status"),
+    [(True, "QUEUED"), (False, "DRAFT")],
+)
+async def test_create_run_persists_brokered_queue_http_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    dispatch_enabled: bool,
+    expected_status: str,
+) -> None:
+    from app.services import runs as run_service
+
+    organization_id, project_id, agent_id = uuid4(), uuid4(), uuid4()
+    version_id, build_id, user_id, queue_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    version = SimpleNamespace(
+        id=version_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        agent_id=agent_id,
+        manifest=_manifest(network="web-egress"),
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        status="SUCCEEDED",
+        artifact_digest="sha256:" + "c" * 64,
+    )
+    queue = SimpleNamespace(
+        id=queue_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    egress_policy = {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_hosts": ["example.com"],
+    }
+    monkeypatch.setattr(
+        run_service,
+        "_request_queue_http_canary_enabled",
+        lambda _version: dispatch_enabled,
+    )
+    monkeypatch.setattr(
+        run_service,
+        "_web_egress_policy_payload",
+        lambda: egress_policy,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    result = await create_run(
+        session,  # type: ignore[arg-type]
+        version=version,  # type: ignore[arg-type]
+        user_id=user_id,
+        idempotency_key="queue-http-run-1",
+        payload=CreateRunRequest(
+            build_id=build_id,
+            input={"job": "fetch-and-parse"},
+            request_queue=_binding_payload(queue_id),  # type: ignore[arg-type]
+        ),
+        request_id="queue-http-run-create",
+    )
+    added_runs = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], Run)
+    ]
+    assert len(added_runs) == 1
+    run = added_runs[0]
+    assert run.status == expected_status
+    assert result["status"] == expected_status
+    receipt = run.input_reference["queue_binding_receipt"]
+    assert isinstance(receipt, dict)
+    assert receipt["schema_version"] == (
+        "rdc.request-queue-binding-receipt/v2"
+    )
+    assert receipt["acquisition_mode"] == "brokered-http"
+    assert receipt["dispatch_enabled"] is dispatch_enabled
+    assert receipt["agent_container_network"] == "none"
+    assert run.input_reference["request_queue_egress_policy"] == egress_policy
+    outboxes = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], RunCommandOutbox)
+    ]
+    assert len(outboxes) == (1 if dispatch_enabled else 0)
 
 
 @pytest.mark.asyncio

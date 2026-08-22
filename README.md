@@ -35,8 +35,10 @@ persists tenant-scoped one-time and fixed-interval Run schedules, bounded
 missed-run policies, immutable trigger history and duplicate-safe singleton
 dispatch. See [the Scheduler documentation](docs/scheduler/README.md).
 
-The active scraping-runtime workstream now binds one offline Run to one
-server-verified tenant Queue through an exact lease capability. The trusted
-worker validates and injects one claim without exposing its claim token or any
-control-plane credential to the Agent. See
+The active scraping-runtime workstream now binds one Run to one server-verified
+tenant Queue through an exact lease capability. The trusted worker validates
+and injects one claim without exposing its claim token or any control-plane
+credential to the Agent. An independently gated mode derives one GET from the
+claimed URL through the existing brokered HTTPS policy while the Agent remains
+networkless. See
 [the Scraping Runtime documentation](docs/scraping-runtime/README.md).

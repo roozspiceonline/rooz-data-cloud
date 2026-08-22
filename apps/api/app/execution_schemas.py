@@ -83,6 +83,7 @@ class SandboxActivation(StrictModel):
     dataset_write_enabled: bool = False
     key_value_store_enabled: bool = False
     request_queue_enabled: bool = False
+    request_queue_http_enabled: bool = False
     max_concurrency: Literal[1] = 1
 
     @model_validator(mode="after")
@@ -119,6 +120,14 @@ class SandboxActivation(StrictModel):
                 raise ValueError(
                     "Offline-minimal activation cannot carry a browser-policy digest."
                 )
+        if self.request_queue_http_enabled and (
+            not self.request_queue_enabled
+            or self.capability_profile != "brokered-web-egress"
+            or self.egress_policy_digest is None
+        ):
+            raise ValueError(
+                "Queue HTTP acquisition requires Queue access and brokered egress."
+            )
         return self
 
 

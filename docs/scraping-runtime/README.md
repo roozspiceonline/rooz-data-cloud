@@ -1,6 +1,6 @@
 # Scraping Runtime
 
-The first RDC v1 scraping-runtime increment connects a Run to exactly one
+The RDC v1 scraping-runtime foundation connects a Run to exactly one
 tenant Request Queue without giving Agent code direct control-plane authority.
 A caller supplies only a Queue resource ID in the strict `rdc.run-queue/v1`
 Run input. The API resolves that Queue against the immutable Agent version's
@@ -14,13 +14,24 @@ read-only input as `_rdc_queue`, and complete that claim after the Agent exits.
 The claim token is retained by the trusted worker and never enters the Agent
 container.
 
-This increment intentionally remains offline. Queue-enabled Agent versions
-must declare `network=none`, `browser=false`, `dataset=false`, and
-`keyValueStore=false`. Controlled HTTP/browser fetching and composed
-Dataset/KV output are the next scraping-runtime increments; they must reuse
-the existing broker/browser and storage protocols without widening egress.
+The second increment permits an independently gated `network=web-egress`
+Queue mode. After claiming one item, the trusted worker derives one GET from
+the claimed URL and sends it through the existing pinned-address HTTPS broker.
+The worker injects the normalized response as `_rdc_queue_http`; it never gives
+the Agent direct networking. Operator host allowlists, public-DNS validation,
+redirect revalidation, header stripping, timeouts, and byte/request budgets all
+remain authoritative. The v2 binding and worker capability receipts bind the
+current egress-policy digest and `brokered-http` acquisition mode.
+
+Queue Runs still cannot combine browser, Dataset, KV, caller-supplied web-fetch,
+or legacy `_rdc_web_requests` intent. Composed Dataset/KV output and controlled
+Queue-bound browser acquisition remain later scraping-runtime increments.
 
 The feature remains disabled unless both API and worker use
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=true`, the sandbox master gate and
 canary activation are enabled, and the exact worker has
 `REQUEST_QUEUE_ACCESS`.
+
+Brokered Queue HTTP additionally requires
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=true` and the existing web-egress
+gate and exact hostname allowlist in both the API and worker environments.

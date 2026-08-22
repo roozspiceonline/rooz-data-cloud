@@ -314,10 +314,18 @@ class CreateRunRequest(StrictModel):
             raise ValueError(
                 "A Run may use only one external or Queue intent surface."
             )
-        if self.request_queue is not None and "_rdc_queue" in self.input:
-            raise ValueError(
-                "Run input cannot populate the reserved _rdc_queue key."
-            )
+        if self.request_queue is not None:
+            reserved_queue_keys = {
+                "_rdc_queue",
+                "_rdc_queue_http",
+                "_rdc_web_requests",
+                "_rdc_web_fetch_result",
+            }
+            if reserved_queue_keys.intersection(self.input):
+                raise ValueError(
+                    "Run input cannot populate reserved _rdc_queue or other "
+                    "Queue runtime keys."
+                )
         return self
 
 

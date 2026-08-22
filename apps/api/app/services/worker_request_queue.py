@@ -27,6 +27,8 @@ def request_queue_capability(
     payload: dict[str, object],
     *,
     request_queue_enabled: bool,
+    request_queue_http_enabled: bool = False,
+    egress_policy_digest: str | None = None,
 ) -> dict[str, object] | None:
     if (
         not request_queue_enabled
@@ -46,10 +48,16 @@ def request_queue_capability(
     capabilities = manifest.get("capabilities")
     binding = input_reference.get("request_queue")
     receipt = input_reference.get("queue_binding_receipt")
+    network = (
+        capabilities.get("network")
+        if isinstance(capabilities, dict)
+        else None
+    )
+    http_acquisition = network == "web-egress"
     if (
         not isinstance(capabilities, dict)
         or capabilities.get("requestQueue") is not True
-        or capabilities.get("network") != "none"
+        or network not in {"none", "web-egress"}
         or capabilities.get("browser") is not False
         or capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
@@ -67,18 +75,52 @@ def request_queue_capability(
         "schema_version": "rdc.run-queue/v1",
         "queue_id": str(queue_id),
     }
-    expected_receipt = {
-        "schema_version": "rdc.request-queue-binding-receipt/v1",
-        "binding_digest": canonical_fingerprint(normalized_binding),
-        "queue_id": str(queue_id),
-        "agent_version_id": str(payload["agent_version_id"]),
-        "direct_database_access": False,
-        "direct_object_storage_access": False,
-    }
+    if http_acquisition:
+        stored_policy = input_reference.get("request_queue_egress_policy")
+        stored_digest = input_reference.get(
+            "request_queue_egress_policy_digest"
+        )
+        if (
+            not request_queue_http_enabled
+            or not settings.sandbox_canary_request_queue_http_enabled
+            or not settings.sandbox_canary_web_egress_enabled
+            or not isinstance(stored_policy, dict)
+            or not isinstance(stored_digest, str)
+            or stored_digest != egress_policy_digest
+            or canonical_fingerprint(stored_policy) != stored_digest
+        ):
+            return None
+        expected_receipt = {
+            "schema_version": "rdc.request-queue-binding-receipt/v2",
+            "binding_digest": canonical_fingerprint(normalized_binding),
+            "queue_id": str(queue_id),
+            "agent_version_id": str(payload["agent_version_id"]),
+            "acquisition_mode": "brokered-http",
+            "egress_policy_digest": stored_digest,
+            "dispatch_enabled": True,
+            "agent_container_network": "none",
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
+    else:
+        if request_queue_http_enabled or egress_policy_digest is not None:
+            return None
+        expected_receipt = {
+            "schema_version": "rdc.request-queue-binding-receipt/v1",
+            "binding_digest": canonical_fingerprint(normalized_binding),
+            "queue_id": str(queue_id),
+            "agent_version_id": str(payload["agent_version_id"]),
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
     if receipt != expected_receipt:
         return None
-    return {
-        "schema_version": "rdc.request-queue-worker-capability/v1",
+    capability: dict[str, object] = {
+        "schema_version": (
+            "rdc.request-queue-worker-capability/v2"
+            if http_acquisition
+            else "rdc.request-queue-worker-capability/v1"
+        ),
         "queue_id": str(queue_id),
         "run_id": str(payload.get("run_id", "")),
         "agent_version_id": str(payload["agent_version_id"]),
@@ -89,6 +131,15 @@ def request_queue_capability(
         "direct_object_storage_access": False,
         "enabled": True,
     }
+    if http_acquisition:
+        capability.update(
+            {
+                "acquisition_mode": "brokered-http",
+                "egress_policy_digest": egress_policy_digest,
+                "agent_container_network": "none",
+            }
+        )
+    return capability
 
 
 def _enabled(
@@ -107,6 +158,16 @@ def _enabled(
         worker,
         snapshot,
         request_queue_enabled=enabled,
+        request_queue_http_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_http_enabled") is True
+        ),
+        egress_policy_digest=(
+            str(activation["egress_policy_digest"])
+            if isinstance(activation, dict)
+            and isinstance(activation.get("egress_policy_digest"), str)
+            else None
+        ),
     )
     if (
         lease.work_kind != "RUN_START"
