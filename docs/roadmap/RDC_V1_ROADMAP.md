@@ -18,12 +18,13 @@ test gates pass on the exact merged commit.
 | Tenant-scoped Request Queues | Complete | Phase 1P, PR #56, migration `0015`, RDC CI #189 |
 | Production Execution Lifecycle / Recovery | Complete | PR #57, migrations `0016`–`0020`, RDC CI #198 |
 | Scheduler | Complete | PR #66, migration `0021`, RDC CI #206 |
+| Scraping runtime | Complete baseline | PR #76, RDC CI #220 and main CI #221; Queue-bound offline/HTTP/browser acquisition with Dataset/KV composition |
 
 ## Active work
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scraping runtime | Queue-bound offline, brokered HTTP, controlled-browser acquisition, Dataset persistence, and KV composition implemented | Scheduler, execution recovery, Queue, Dataset and KV protocols |
+| Proxy/egress | Tenant policy metadata, immutable revisions, activation/disable lifecycle, credential references and RLS implemented | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -52,7 +53,7 @@ trigger history, tenant RLS and a singleton-safe dispatch service.
 The first scraping-runtime increment binds a Run to one server-verified tenant
 Queue, issues an exact lease-scoped capability, independently validates the
 claim in the worker, withholds claim tokens from Agent input, and completes one
-request per Run. It remains offline and false-by-default. The second increment
+request per Run. It remains false-by-default. The second increment
 derives one Queue-claimed GET through the existing bounded
 HTTPS egress broker, binds its policy digest into v2 Run/lease receipts, rejects
 caller web-intent injection, and keeps Agent networking disabled. The third
@@ -61,12 +62,24 @@ derives one bounded navigation from the validated Queue claim, runs Chromium
 behind the Unix egress gateway, withholds the claim token, and then executes the
 Agent with networking disabled. The fourth increment composes the existing
 idempotent Dataset append boundary with every Queue acquisition mode and
-requires Dataset persistence before Queue HANDLED completion. Composed KV
-persistence remains active work.
+requires Dataset persistence before Queue HANDLED completion. The fifth
+increment composes KV reads and idempotent mutations with all Queue acquisition
+modes and requires KV persistence before Queue HANDLED completion.
+
+The first proxy/egress increment persists server-owned Project policy metadata
+and immutable revisions containing exact normalized HTTPS hosts, GET/HEAD
+methods and bounded request/byte/redirect/timeout budgets. Optimistic,
+row-locked activation and disable transitions select an exact revision;
+credential material remains in write-only Project secrets and API responses
+expose only whether a reference is configured. PostgreSQL RLS and reference
+triggers independently enforce organization, Project, revision and secret
+tenancy. Live Run/worker binding, credential delivery/rotation and broker
+enforcement remain active work and the existing canary allowlist is unchanged.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: tenant-scoped policy, credential isolation, rotation and audit.
+1. Proxy/egress: bind active revisions to Runs/workers and broker enforcement;
+   implement credential delivery/rotation without plaintext exposure.
 2. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
 3. Observability: structured run/worker logs, diagnostics, metrics and safe

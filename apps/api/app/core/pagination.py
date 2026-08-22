@@ -47,6 +47,11 @@ class QueueTransitionCursorPosition:
     resource_id: UUID
 
 
+@dataclass(frozen=True)
+class EgressPolicyRevisionCursorPosition:
+    revision_number: int
+
+
 def normalize_limit(limit: int) -> int:
     if not 1 <= limit <= 200:
         raise ApiError(
@@ -344,6 +349,39 @@ def decode_schedule_list_cursor(
             resource_id=UUID(str(data["id"])),
         )
     except (KeyError, TypeError, ValueError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_egress_policy_list_cursor(*, project_id: UUID, status: str | None, created_at: datetime, resource_id: UUID) -> str:
+    return _encode_queue_cursor({"created_at": created_at.isoformat(), "id": str(resource_id), "kind": "egress-policy-list", "project_id": str(project_id), "status": status, "v": 1})
+
+
+def decode_egress_policy_list_cursor(value: str | None, *, project_id: UUID, status: str | None) -> CursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        if set(data) != {"created_at", "id", "kind", "project_id", "status", "v"} or data.get("v") != 1 or data.get("kind") != "egress-policy-list" or data.get("project_id") != str(project_id) or data.get("status") != status:
+            raise ValueError("cursor binding is invalid")
+        return CursorPosition(created_at=datetime.fromisoformat(str(data["created_at"])), resource_id=UUID(str(data["id"])))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _invalid_cursor() from exc
+
+
+def encode_egress_policy_revision_cursor(*, policy_id: UUID, revision_number: int) -> str:
+    return _encode_queue_cursor({"kind": "egress-policy-revisions", "policy_id": str(policy_id), "revision_number": revision_number, "v": 1})
+
+
+def decode_egress_policy_revision_cursor(value: str | None, *, policy_id: UUID) -> EgressPolicyRevisionCursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        raw_revision = data.get("revision_number")
+        if set(data) != {"kind", "policy_id", "revision_number", "v"} or data.get("v") != 1 or data.get("kind") != "egress-policy-revisions" or data.get("policy_id") != str(policy_id) or not isinstance(raw_revision, int) or isinstance(raw_revision, bool) or raw_revision < 1:
+            raise ValueError("cursor binding is invalid")
+        return EgressPolicyRevisionCursorPosition(revision_number=raw_revision)
+    except (TypeError, ValueError) as exc:
         raise _invalid_cursor() from exc
 
 
