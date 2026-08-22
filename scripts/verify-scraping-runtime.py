@@ -33,7 +33,9 @@ need(
     "_request_queue_http_canary_enabled",
     "_request_queue_browser_canary_enabled",
     "_request_queue_dataset_canary_enabled",
+    "_request_queue_key_value_store_canary_enabled",
     '"rdc.request-queue-dataset-receipt/v1"',
+    '"rdc.request-queue-key-value-store-receipt/v1"',
     '"direct_database_access": False',
 )
 need(
@@ -47,9 +49,11 @@ need(
     '"rdc.request-queue-worker-capability/v2"',
     '"rdc.request-queue-worker-capability/v3"',
     '"rdc.request-queue-worker-capability/v4"',
+    '"rdc.request-queue-worker-capability/v5"',
     "request_queue_http_enabled",
     "request_queue_browser_enabled",
     "request_queue_dataset_enabled",
+    "request_queue_key_value_store_enabled",
     "egress_policy_digest",
 )
 need(
@@ -58,6 +62,7 @@ need(
     "activation.request_queue_enabled",
     "activation.request_queue_browser_enabled",
     "activation.request_queue_dataset_enabled",
+    "activation.request_queue_key_value_store_enabled",
     '"rdc.dataset-worker-capability/v2"',
 )
 need(
@@ -74,6 +79,7 @@ need(
     '"QUEUE_BROWSER_NAVIGATION_FAILED"',
     'failure_code="DATASET_APPEND_FAILED"',
     '"dataset-before-queue-handled"',
+    '"kv-before-queue-handled"',
 )
 need(
     "workers/sandbox-runtime/queue_worker_protocol.py",
@@ -82,6 +88,7 @@ need(
     "expected_queue_id",
     "queue_completion_payload(",
     "queue_dataset_idempotency_key(",
+    "queue_kv_idempotency_key(",
     "queue_http_fetch_envelope(",
     "queue_http_agent_result(",
     "queue_browser_navigation_plan(",
@@ -106,6 +113,11 @@ need(
     "test_queue_dataset_idempotency_is_server_derived_and_token_free",
     "test_queue_dataset_persists_before_handled_completion",
     "test_create_run_persists_gated_queue_dataset_composition",
+    "test_queue_kv_capabilities_are_exact_and_fail_closed",
+    "test_queue_kv_composition_preserves_web_acquisition_mode",
+    "test_queue_kv_idempotency_is_server_derived_and_token_free",
+    "test_queue_kv_persists_before_handled_completion",
+    "test_create_run_persists_gated_queue_kv_composition",
 )
 need(
     ".env.example",
@@ -113,6 +125,7 @@ need(
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED=false",
+    "RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED=false",
 )
 for path in (
     "infrastructure/environments/staging/api.env.example",
@@ -126,6 +139,7 @@ for path in (
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED=false",
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED=false",
     )
 for path in (
     "docs/scraping-runtime/README.md",

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.s3_storage import StorageBackendError, object_storage
+from ..core.security import canonical_fingerprint
 from ..kv_mutation_protocol import (
     MAX_VALUE_BYTES,
     KVProtocolError,
@@ -48,6 +49,7 @@ def key_value_store_capability(
     payload: dict[str, object],
     *,
     key_value_store_enabled: bool,
+    request_queue_key_value_store_enabled: bool = False,
 ) -> dict[str, object] | None:
     if (
         not key_value_store_enabled
@@ -66,11 +68,23 @@ def key_value_store_capability(
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         return None
+    request_queue = capabilities.get("requestQueue")
+    browser = capabilities.get("browser")
     if (
         capabilities.get("keyValueStore") is not True
         or capabilities.get("dataset") is not False
-        or capabilities.get("browser") is not False
-        or capabilities.get("requestQueue") is not False
+        or not isinstance(browser, bool)
+        or not isinstance(request_queue, bool)
+        or request_queue is not request_queue_key_value_store_enabled
+        or (browser and not request_queue_key_value_store_enabled)
+        or (
+            request_queue_key_value_store_enabled
+            and not settings.sandbox_canary_request_queue_enabled
+        )
+        or (
+            request_queue_key_value_store_enabled
+            and not settings.sandbox_canary_request_queue_key_value_store_enabled
+        )
     ):
         return None
 
@@ -96,8 +110,12 @@ def key_value_store_capability(
         except KVWorkerProtocolError:
             return None
 
-    return {
-        "schema_version": "rdc.kv-worker-capability/v1",
+    capability: dict[str, object] = {
+        "schema_version": (
+            "rdc.kv-worker-capability/v2"
+            if request_queue_key_value_store_enabled
+            else "rdc.kv-worker-capability/v1"
+        ),
         "write_schema_version": "rdc.kv-write/v1",
         "read_schema_version": "rdc.kv-worker-read/v1",
         "output_schema_version": "rdc.kv-worker-output/v1",
@@ -115,6 +133,46 @@ def key_value_store_capability(
         "direct_object_storage_access": False,
         "enabled": True,
     }
+    if request_queue_key_value_store_enabled:
+        binding = input_reference.get("request_queue")
+        queue_receipt = input_reference.get("queue_binding_receipt")
+        composition_receipt = input_reference.get(
+            "request_queue_key_value_store_receipt"
+        )
+        if (
+            not isinstance(binding, dict)
+            or binding.get("schema_version") != "rdc.run-queue/v1"
+            or not isinstance(binding.get("queue_id"), str)
+            or not isinstance(queue_receipt, dict)
+            or composition_receipt
+            != {
+                "schema_version": (
+                    "rdc.request-queue-key-value-store-receipt/v1"
+                ),
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload["agent_version_id"]),
+                "queue_binding_receipt_digest": canonical_fingerprint(
+                    queue_receipt
+                ),
+                "store_name": "default",
+                "read_request_digest": read_request_digest,
+                "mutation_idempotency_scope": "queue-request-index",
+                "dispatch_enabled": True,
+                "completion_order": "kv-before-queue-handled",
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+        ):
+            return None
+        capability.update(
+            {
+                "queue_id": binding["queue_id"],
+                "mutation_idempotency_scope": "queue-request-index",
+                "completion_order": "kv-before-queue-handled",
+            }
+        )
+    return capability
 
 
 async def _worker_run_context(
@@ -150,6 +208,10 @@ async def _worker_run_context(
         worker,
         snapshot,
         key_value_store_enabled=kv_enabled,
+        request_queue_key_value_store_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_key_value_store_enabled") is True
+        ),
     )
     if (
         expected is None

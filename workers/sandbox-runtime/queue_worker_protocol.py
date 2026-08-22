@@ -162,6 +162,23 @@ def queue_dataset_idempotency_key(claim: dict[str, object]) -> str:
     return f"queue:{request_id}"
 
 
+def queue_kv_idempotency_key(
+    claim: dict[str, object], mutation_index: int
+) -> str:
+    if claim.get("schema_version") != "rdc.queue-worker-claim/v1":
+        _fail("Queue KV persistence requires a validated claim.")
+    request_id = str(claim.get("request_id", ""))
+    try:
+        UUID(request_id)
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue KV persistence scope is invalid."
+        ) from exc
+    if not 0 <= mutation_index < 4:
+        _fail("Queue KV mutation index is invalid.")
+    return f"queue:{request_id}:kv:{mutation_index}"
+
+
 def queue_http_fetch_envelope(
     claim: dict[str, object],
 ) -> dict[str, object]:

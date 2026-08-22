@@ -67,13 +67,14 @@ def _manifest(
     network: str = "none",
     browser: bool = False,
     dataset: bool = False,
+    key_value_store: bool = False,
 ) -> dict[str, object]:
     return {
         "capabilities": {
             "network": network,
             "browser": browser,
             "dataset": dataset,
-            "keyValueStore": False,
+            "keyValueStore": key_value_store,
             "requestQueue": True,
         },
         "resources": {
@@ -187,6 +188,24 @@ def test_queue_http_gates_are_independent_and_fail_closed() -> None:
             dataset_write_enabled=True,
             request_queue_enabled=True,
         )
+    assert (
+        Settings().sandbox_canary_request_queue_key_value_store_enabled
+        is False
+    )
+    with pytest.raises(ValueError, match="requires Queue and Key-Value Store"):
+        Settings(
+            sandbox_canary_request_queue_key_value_store_enabled=True
+        )
+    with pytest.raises(ValidationError, match="explicit composition receipt"):
+        SandboxActivation(
+            agent_version_id=uuid4(),
+            worker_name="scraping-worker",
+            attestation_digest="a" * 64,
+            sandbox_policy_digest="b" * 64,
+            constraints_digest="c" * 64,
+            key_value_store_enabled=True,
+            request_queue_enabled=True,
+        )
 
 
 def test_worker_queue_browser_gate_requires_all_dependencies(
@@ -233,6 +252,24 @@ def test_worker_queue_dataset_gate_requires_both_dependencies(
     monkeypatch.setenv("RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED", "true")
     config = config_module.SandboxWorkerConfig.from_env()
     assert config.request_queue_dataset_enabled is True
+
+
+def test_worker_queue_kv_gate_requires_both_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_module = _worker_config_module()
+    monkeypatch.setenv("RDC_WORKER_TOKEN", "worker-token")
+    monkeypatch.setenv(
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED", "true"
+    )
+    with pytest.raises(RuntimeError, match="requires Queue and Key-Value Store"):
+        config_module.SandboxWorkerConfig.from_env()
+    monkeypatch.setenv("RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED", "true")
+    monkeypatch.setenv(
+        "RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED", "true"
+    )
+    config = config_module.SandboxWorkerConfig.from_env()
+    assert config.request_queue_key_value_store_enabled is True
 
 
 def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
@@ -305,6 +342,33 @@ def test_queue_dataset_persists_before_handled_completion() -> None:
     )
     assert 'failure_code="DATASET_APPEND_FAILED"' in segment
     assert "queue_dataset_idempotency_key(queue_claim)" in segment
+
+
+def test_queue_kv_idempotency_is_server_derived_and_token_free() -> None:
+    protocol = _queue_protocol_module()
+    request_id = uuid4()
+    claim = {
+        "schema_version": "rdc.queue-worker-claim/v1",
+        "request_id": str(request_id),
+        "queue_id": str(uuid4()),
+        "claim_token": "secret-claim-token",
+    }
+    first = protocol.queue_kv_idempotency_key(claim, 0)
+    assert first == f"queue:{request_id}:kv:0"
+    assert "secret-claim-token" not in first
+    with pytest.raises(protocol.QueueWorkerBoundaryError):
+        protocol.queue_kv_idempotency_key(claim, 4)
+
+
+def test_queue_kv_persists_before_handled_completion() -> None:
+    worker = (WORKER_ROOT / "worker.py").read_text(encoding="utf-8")
+    segment = worker.split("if kv_enabled and code == 0:", 1)[1]
+    segment = segment.split("image_digest = (", 1)[0]
+    assert segment.index("client.kv_mutate(") < segment.rindex(
+        "client.queue_complete("
+    )
+    assert 'failure_code="KV_MUTATION_FAILED"' in segment
+    assert "queue_kv_idempotency_key(" in segment
 
 
 def test_queue_http_protocol_is_claim_derived_and_token_free() -> None:
@@ -1014,7 +1078,8 @@ def test_queue_browser_worker_independently_validates_v3_receipts() -> None:
         "request_queue_enabled": True,
         "request_queue_http_enabled": False,
         "request_queue_browser_enabled": True,
-        "request_queue_dataset_enabled": False,
+            "request_queue_dataset_enabled": False,
+            "request_queue_key_value_store_enabled": False,
         "max_concurrency": 1,
     }
     capability = {
@@ -1602,6 +1667,375 @@ async def test_create_run_persists_gated_queue_dataset_composition(
     assert receipt["completion_order"] == (
         "dataset-before-queue-handled"
     )
+    outboxes = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], RunCommandOutbox)
+    ]
+    assert len(outboxes) == (1 if dispatch_enabled else 0)
+
+
+def test_queue_kv_capabilities_are_exact_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import execution_plane as execution_service
+    from app.services import worker_key_value_store as kv_service
+    from app.services import worker_request_queue as queue_service
+
+    queue_id, run_id, version_id = uuid4(), uuid4(), uuid4()
+    binding = _binding_payload(queue_id)
+    queue_receipt = {
+        "schema_version": "rdc.request-queue-binding-receipt/v1",
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    read_request = {
+        "schema_version": "rdc.kv-worker-read/v1",
+        "keys": ["cursor"],
+    }
+    composition_receipt = {
+        "schema_version": "rdc.request-queue-key-value-store-receipt/v1",
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "queue_binding_receipt_digest": canonical_fingerprint(queue_receipt),
+        "store_name": "default",
+        "read_request_digest": canonical_fingerprint(read_request),
+        "mutation_idempotency_scope": "queue-request-index",
+        "dispatch_enabled": True,
+        "completion_order": "kv-before-queue-handled",
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    payload = {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": str(version_id),
+        "manifest": _manifest(key_value_store=True),
+        "input_reference": {
+            "kind": "inline",
+            "value": {"_rdc_kv_read": read_request},
+            "request_queue": binding,
+            "queue_binding_receipt": queue_receipt,
+            "request_queue_key_value_store_receipt": composition_receipt,
+        },
+    }
+    worker = SimpleNamespace(
+        name="scraping-worker",
+        max_concurrency=1,
+        capabilities=["RUN_START", "REQUEST_QUEUE_ACCESS", "KV_ACCESS"],
+    )
+    for current in (
+        execution_service.settings,
+        kv_service.settings,
+        queue_service.settings,
+    ):
+        for name in (
+            "sandbox_execution_enabled",
+            "sandbox_canary_request_queue_enabled",
+            "sandbox_canary_key_value_store_enabled",
+            "sandbox_canary_request_queue_key_value_store_enabled",
+        ):
+            monkeypatch.setattr(current, name, True)
+        monkeypatch.setattr(current, "sandbox_activation_mode", "canary")
+        monkeypatch.setattr(
+            current, "sandbox_canary_agent_version_id", str(version_id)
+        )
+        monkeypatch.setattr(current, "sandbox_canary_worker_name", worker.name)
+
+    activation = execution_service._canary_activation(
+        worker,  # type: ignore[arg-type]
+        payload,
+        {"attestation_digest": "a" * 64},
+    )
+    assert activation is not None
+    assert activation.request_queue_key_value_store_enabled is True
+    queue_capability = queue_service.request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_key_value_store_enabled=True,
+    )
+    kv_capability = kv_service.key_value_store_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        key_value_store_enabled=True,
+        request_queue_key_value_store_enabled=True,
+    )
+    assert queue_capability is not None
+    assert queue_capability["schema_version"] == (
+        "rdc.request-queue-worker-capability/v5"
+    )
+    assert queue_capability["completion_order"] == "kv-before-queue-handled"
+    assert kv_capability is not None
+    assert kv_capability["schema_version"] == "rdc.kv-worker-capability/v2"
+
+    worker_module = _worker_module()
+    sandbox = {"attestation_digest": "a" * 64}
+    worker_payload = {
+        **payload,
+        "sandbox": sandbox,
+        "activation": activation.model_dump(mode="json"),
+        "request_queue_capability": queue_capability,
+        "key_value_store_capability": kv_capability,
+    }
+    result = worker_module._require_canary_activation(
+        worker_payload,
+        worker_name=worker.name,
+        egress_policy=None,
+        browser_policy=None,
+        browser_live_navigation_enabled=False,
+        dataset_writes_enabled=False,
+        key_value_store_enabled=True,
+        request_queue_enabled=True,
+        request_queue_http_enabled=False,
+        request_queue_browser_enabled=False,
+        request_queue_key_value_store_enabled=True,
+    )
+    assert result["request_queue_key_value_store_enabled"] is True
+
+    composition_receipt["completion_order"] = "queue-before-kv"
+    assert (
+        queue_service.request_queue_capability(
+            worker,  # type: ignore[arg-type]
+            payload,
+            request_queue_enabled=True,
+            request_queue_key_value_store_enabled=True,
+        )
+        is None
+    )
+    assert (
+        kv_service.key_value_store_capability(
+            worker,  # type: ignore[arg-type]
+            payload,
+            key_value_store_enabled=True,
+            request_queue_key_value_store_enabled=True,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("browser", [False, True])
+def test_queue_kv_composition_preserves_web_acquisition_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    browser: bool,
+) -> None:
+    from app.services import runs as run_service
+    from app.services import worker_request_queue as queue_service
+
+    queue_id, run_id, version_id = uuid4(), uuid4(), uuid4()
+    binding = _binding_payload(queue_id)
+    egress_policy = (
+        run_service._browser_egress_policy_payload()
+        if browser
+        else run_service._web_egress_policy_payload()
+    )
+    egress_digest = canonical_fingerprint(egress_policy)
+    browser_policy = run_service._browser_policy_payload() if browser else None
+    browser_digest = (
+        canonical_fingerprint(browser_policy)
+        if browser_policy is not None
+        else None
+    )
+    queue_receipt = {
+        "schema_version": (
+            "rdc.request-queue-binding-receipt/v3"
+            if browser
+            else "rdc.request-queue-binding-receipt/v2"
+        ),
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "acquisition_mode": (
+            "controlled-browser" if browser else "brokered-http"
+        ),
+        **(
+            {
+                "browser_policy_digest": browser_digest,
+                "browser_egress_policy_digest": egress_digest,
+            }
+            if browser
+            else {"egress_policy_digest": egress_digest}
+        ),
+        "dispatch_enabled": True,
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    input_reference = {
+        "kind": "inline",
+        "value": {},
+        "request_queue": binding,
+        "queue_binding_receipt": queue_receipt,
+        "request_queue_key_value_store_receipt": {
+            "schema_version": (
+                "rdc.request-queue-key-value-store-receipt/v1"
+            ),
+            "queue_id": str(queue_id),
+            "agent_version_id": str(version_id),
+            "queue_binding_receipt_digest": canonical_fingerprint(
+                queue_receipt
+            ),
+            "store_name": "default",
+            "read_request_digest": None,
+            "mutation_idempotency_scope": "queue-request-index",
+            "dispatch_enabled": True,
+            "completion_order": "kv-before-queue-handled",
+            "agent_container_network": "none",
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        },
+    }
+    if browser:
+        input_reference.update(
+            {
+                "request_queue_browser_policy": browser_policy,
+                "request_queue_browser_policy_digest": browser_digest,
+                "request_queue_browser_egress_policy": egress_policy,
+                "request_queue_browser_egress_policy_digest": egress_digest,
+            }
+        )
+    else:
+        input_reference.update(
+            {
+                "request_queue_egress_policy": egress_policy,
+                "request_queue_egress_policy_digest": egress_digest,
+            }
+        )
+    payload = {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": str(version_id),
+        "manifest": _manifest(
+            network="web-egress",
+            browser=browser,
+            key_value_store=True,
+        ),
+        "input_reference": input_reference,
+    }
+    worker = SimpleNamespace(
+        name="scraping-worker",
+        capabilities=["RUN_START", "REQUEST_QUEUE_ACCESS", "KV_ACCESS"],
+    )
+    for name in (
+        "sandbox_canary_request_queue_enabled",
+        "sandbox_canary_key_value_store_enabled",
+        "sandbox_canary_request_queue_key_value_store_enabled",
+        "sandbox_canary_web_egress_enabled",
+        "sandbox_canary_request_queue_http_enabled",
+        "sandbox_canary_request_queue_browser_enabled",
+        "sandbox_canary_browser_enabled",
+        "sandbox_canary_browser_live_navigation_enabled",
+    ):
+        monkeypatch.setattr(queue_service.settings, name, True)
+    monkeypatch.setattr(
+        queue_service.settings, "sandbox_canary_worker_name", worker.name
+    )
+    monkeypatch.setattr(
+        queue_service.settings,
+        "sandbox_canary_agent_version_id",
+        str(version_id),
+    )
+    capability = queue_service.request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_http_enabled=not browser,
+        egress_policy_digest=egress_digest if not browser else None,
+        request_queue_browser_enabled=browser,
+        browser_policy_digest=browser_digest,
+        browser_egress_policy_digest=egress_digest if browser else None,
+        request_queue_key_value_store_enabled=True,
+    )
+    assert capability is not None
+    assert capability["schema_version"] == (
+        "rdc.request-queue-worker-capability/v5"
+    )
+    assert capability["acquisition_mode"] == (
+        "controlled-browser" if browser else "brokered-http"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dispatch_enabled", "expected_status"),
+    [(False, "DRAFT"), (True, "QUEUED")],
+)
+async def test_create_run_persists_gated_queue_kv_composition(
+    monkeypatch: pytest.MonkeyPatch,
+    dispatch_enabled: bool,
+    expected_status: str,
+) -> None:
+    from app.services import runs as run_service
+
+    organization_id, project_id, agent_id = uuid4(), uuid4(), uuid4()
+    version_id, build_id, user_id, queue_id = (
+        uuid4(), uuid4(), uuid4(), uuid4()
+    )
+    version = SimpleNamespace(
+        id=version_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        agent_id=agent_id,
+        manifest=_manifest(key_value_store=True),
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        status="SUCCEEDED",
+        artifact_digest="sha256:" + "e" * 64,
+    )
+    queue = SimpleNamespace(
+        id=queue_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    monkeypatch.setattr(
+        run_service,
+        "_request_queue_key_value_store_canary_enabled",
+        lambda _version: dispatch_enabled,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    read_request = {
+        "schema_version": "rdc.kv-worker-read/v1",
+        "keys": ["cursor"],
+    }
+    result = await create_run(
+        session,  # type: ignore[arg-type]
+        version=version,  # type: ignore[arg-type]
+        user_id=user_id,
+        idempotency_key="queue-kv-intent-1",
+        payload=CreateRunRequest(
+            build_id=build_id,
+            input={"_rdc_kv_read": read_request},
+            request_queue=_binding_payload(queue_id),  # type: ignore[arg-type]
+        ),
+        request_id="queue-kv-intent-create",
+    )
+    runs = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], Run)
+    ]
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == expected_status
+    assert result["status"] == expected_status
+    receipt = run.input_reference[
+        "request_queue_key_value_store_receipt"
+    ]
+    assert receipt["dispatch_enabled"] is dispatch_enabled
+    assert receipt["read_request_digest"] == canonical_fingerprint(
+        read_request
+    )
+    assert receipt["completion_order"] == "kv-before-queue-handled"
     outboxes = [
         call.args[0]
         for call in session.add.call_args_list

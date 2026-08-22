@@ -25,14 +25,23 @@ encoding, bounded response bytes, and bounded timeouts. The v2 Run binding and
 lease capability bind the current egress-policy digest. Caller input cannot add
 legacy or versioned web requests, and the Agent container remains networkless.
 
-Queue capability composition remains deliberately narrow. KV cannot accompany
-Queue access. Dataset access requires a separate false-by-default composition
+Queue capability composition remains deliberately narrow. Dataset access
+requires a separate false-by-default composition
 receipt and exact v4 Queue/v2 Dataset capabilities. A successful Agent output
 is validated and persisted under a server-derived request idempotency key before
 the claim becomes HANDLED; a
 Dataset failure marks the claim FAILED with a generic code. If persistence
 succeeds but Queue completion is interrupted, a retry is safe because Dataset
 idempotency and digest conflict checks prevent duplicate or divergent writes.
+KV access requires its own false-by-default composition gate and exact v5
+Queue/v2 KV capabilities. The API validates and digests read intent; the worker
+never exposes lease or claim tokens, derives mutation idempotency from the
+validated Queue request UUID and bounded mutation index, and persists mutations
+before HANDLED. A retry therefore replays the same keys, while the existing KV
+request-fingerprint and optimistic-version checks reject divergent or racing
+writes. Read and mutation failures complete the claim as FAILED with generic
+codes before the Run terminal transition. Queue, Run, and Run-scoped store
+tenancy are independently rechecked by the internal APIs.
 Web egress is valid only for independently
 gated one-claim Queue HTTP or Queue/browser acquisition. Queue/browser uses a
 fixed claim-derived plan, independently reconstructed browser and egress-policy

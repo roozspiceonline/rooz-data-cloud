@@ -23,7 +23,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scraping runtime | Queue-bound offline, brokered HTTP, controlled-browser acquisition, and Dataset persistence implemented; KV composition remains | Scheduler, execution recovery, Queue, Dataset and KV protocols |
+| Scraping runtime | Queue-bound offline, brokered HTTP, controlled-browser acquisition, Dataset persistence, and KV composition implemented | Scheduler, execution recovery, Queue, Dataset and KV protocols |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is

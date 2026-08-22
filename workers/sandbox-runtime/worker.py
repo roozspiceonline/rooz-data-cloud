@@ -50,6 +50,7 @@ from queue_worker_protocol import (
     queue_dataset_idempotency_key,
     queue_http_agent_result,
     queue_http_fetch_envelope,
+    queue_kv_idempotency_key,
     validate_queue_claim_result,
 )
 from rdc_worker_client import (
@@ -224,6 +225,7 @@ def _require_canary_activation(
     request_queue_http_enabled: bool,
     request_queue_browser_enabled: bool,
     request_queue_dataset_enabled: bool = False,
+    request_queue_key_value_store_enabled: bool = False,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -298,6 +300,7 @@ def _require_canary_activation(
         request_queue and payload.get("work_kind") == "RUN_START"
     )
     queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
+    queue_kv_runtime_enabled = queue_runtime_enabled and kv_runtime_enabled
     network = capabilities.get("network")
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
@@ -311,13 +314,20 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Dataset and Key-Value Store cannot be combined."
         )
-    if browser and kv_runtime_enabled:
+    if browser and kv_runtime_enabled and not queue_kv_runtime_enabled:
         raise SandboxPolicyError(
             "Canary browser and Key-Value Store cannot be combined."
         )
-    if queue_runtime_enabled and key_value_store:
+    if queue_kv_runtime_enabled and not request_queue_key_value_store_enabled:
         raise SandboxPolicyError(
-            "Canary Request Queue access cannot combine with Key-Value Store."
+            "Worker Queue Key-Value Store composition gate is disabled."
+        )
+    if (
+        activation.get("request_queue_key_value_store_enabled")
+        is not queue_kv_runtime_enabled
+    ):
+        raise SandboxPolicyError(
+            "Queue Key-Value Store activation does not match the manifest."
         )
     if queue_dataset_runtime_enabled and not request_queue_dataset_enabled:
         raise SandboxPolicyError(
@@ -417,7 +427,11 @@ def _require_canary_activation(
                     "KV read request is invalid."
                 ) from exc
         expected_kv_capability = {
-            "schema_version": "rdc.kv-worker-capability/v1",
+            "schema_version": (
+                "rdc.kv-worker-capability/v2"
+                if queue_kv_runtime_enabled
+                else "rdc.kv-worker-capability/v1"
+            ),
             "write_schema_version": "rdc.kv-write/v1",
             "read_schema_version": "rdc.kv-worker-read/v1",
             "output_schema_version": "rdc.kv-worker-output/v1",
@@ -435,6 +449,19 @@ def _require_canary_activation(
             "direct_object_storage_access": False,
             "enabled": True,
         }
+        if queue_kv_runtime_enabled:
+            binding = input_reference.get("request_queue")
+            if not isinstance(binding, dict) or not isinstance(
+                binding.get("queue_id"), str
+            ):
+                raise SandboxPolicyError("Queue KV binding is invalid.")
+            expected_kv_capability.update(
+                {
+                    "queue_id": binding["queue_id"],
+                    "mutation_idempotency_scope": "queue-request-index",
+                    "completion_order": "kv-before-queue-handled",
+                }
+            )
         if payload.get("key_value_store_capability") != expected_kv_capability:
             raise SandboxPolicyError(
                 "Canary Key-Value Store capability receipt is invalid."
@@ -596,17 +623,71 @@ def _require_canary_activation(
             raise SandboxPolicyError(
                 "Dataset-disabled Queue work cannot carry a composition receipt."
             )
+        if queue_kv_runtime_enabled:
+            input_value = input_reference.get("value")
+            read_request = (
+                input_value.get("_rdc_kv_read")
+                if isinstance(input_value, dict)
+                else None
+            )
+            read_digest = None
+            if read_request is not None:
+                try:
+                    read_digest = str(
+                        validate_kv_read_request(read_request)[
+                            "request_digest"
+                        ]
+                    )
+                except KVWorkerBoundaryError as exc:
+                    raise SandboxPolicyError(
+                        "Queue KV read request is invalid."
+                    ) from exc
+            expected_composition_receipt = {
+                "schema_version": (
+                    "rdc.request-queue-key-value-store-receipt/v1"
+                ),
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload.get("agent_version_id", "")),
+                "queue_binding_receipt_digest": _canonical_digest(receipt),
+                "store_name": "default",
+                "read_request_digest": read_digest,
+                "mutation_idempotency_scope": "queue-request-index",
+                "dispatch_enabled": True,
+                "completion_order": "kv-before-queue-handled",
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+            if (
+                input_reference.get(
+                    "request_queue_key_value_store_receipt"
+                )
+                != expected_composition_receipt
+            ):
+                raise SandboxPolicyError(
+                    "Queue Key-Value Store composition receipt is invalid."
+                )
+        elif input_reference.get(
+            "request_queue_key_value_store_receipt"
+        ) is not None:
+            raise SandboxPolicyError(
+                "KV-disabled Queue work cannot carry a composition receipt."
+            )
         expected_queue_capability = {
             "schema_version": (
-                "rdc.request-queue-worker-capability/v4"
-                if queue_dataset_runtime_enabled
+                "rdc.request-queue-worker-capability/v5"
+                if queue_kv_runtime_enabled
                 else (
-                    "rdc.request-queue-worker-capability/v3"
-                    if queue_browser_runtime_enabled
+                    "rdc.request-queue-worker-capability/v4"
+                    if queue_dataset_runtime_enabled
                     else (
-                        "rdc.request-queue-worker-capability/v2"
-                        if queue_http_runtime_enabled
-                        else "rdc.request-queue-worker-capability/v1"
+                        "rdc.request-queue-worker-capability/v3"
+                        if queue_browser_runtime_enabled
+                        else (
+                            "rdc.request-queue-worker-capability/v2"
+                            if queue_http_runtime_enabled
+                            else "rdc.request-queue-worker-capability/v1"
+                        )
                     )
                 )
             ),
@@ -645,6 +726,15 @@ def _require_canary_activation(
                     "dataset_write_enabled": True,
                     "dataset_name": "default",
                     "completion_order": "dataset-before-queue-handled",
+                }
+            )
+        if queue_kv_runtime_enabled:
+            expected_queue_capability.update(
+                {
+                    "key_value_store_enabled": True,
+                    "store_name": "default",
+                    "mutation_idempotency_scope": "queue-request-index",
+                    "completion_order": "kv-before-queue-handled",
                 }
             )
         if payload.get("request_queue_capability") != expected_queue_capability:
@@ -917,6 +1007,9 @@ def _build(
             request_queue_dataset_enabled=(
                 config.request_queue_dataset_enabled
             ),
+            request_queue_key_value_store_enabled=(
+                config.request_queue_key_value_store_enabled
+            ),
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -1018,6 +1111,9 @@ def _run(
             ),
             request_queue_dataset_enabled=(
                 config.request_queue_dataset_enabled
+            ),
+            request_queue_key_value_store_enabled=(
+                config.request_queue_key_value_store_enabled
             ),
         )
         if (
@@ -1386,6 +1482,34 @@ def _run(
                         expected_keys=expected_keys,
                     )
             except (KVWorkerBoundaryError, WorkerProtocolError):
+                if queue_claim is not None:
+                    try:
+                        client.queue_complete(
+                            lease_id,
+                            token,
+                            queue_completion_payload(
+                                queue_claim,
+                                handled=False,
+                                failure_code="KV_READ_FAILED",
+                                failure_summary=(
+                                    "Queue-bound Key-Value Store read failed."
+                                ),
+                            ),
+                        )
+                    except WorkerProtocolError:
+                        client.complete(
+                            lease_id,
+                            token,
+                            {
+                                "outcome": "FAILED",
+                                "retryable": False,
+                                "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
+                                "error_summary": (
+                                    "Queue KV read failure completion failed closed."
+                                ),
+                            },
+                        )
+                        return
                 client.complete(
                     lease_id,
                     token,
@@ -1514,10 +1638,17 @@ def _run(
                 mutations = normalized_kv["mutations"]
                 if not isinstance(mutations, list):
                     raise KVWorkerBoundaryError("KV mutations are invalid.")
-                for mutation in mutations:
+                for mutation_index, mutation in enumerate(mutations):
                     if not isinstance(mutation, dict):
                         raise KVWorkerBoundaryError("KV mutation is invalid.")
-                    client.kv_mutate(lease_id, token, mutation)
+                    persisted_mutation = dict(mutation)
+                    if queue_claim is not None:
+                        persisted_mutation["idempotency_key"] = (
+                            queue_kv_idempotency_key(
+                                queue_claim, mutation_index
+                            )
+                        )
+                    client.kv_mutate(lease_id, token, persisted_mutation)
                 result_bytes = json.dumps(
                     normalized_kv["result"],
                     ensure_ascii=False,
@@ -1534,6 +1665,34 @@ def _run(
                 TypeError,
                 ValueError,
             ):
+                if queue_claim is not None:
+                    try:
+                        client.queue_complete(
+                            lease_id,
+                            token,
+                            queue_completion_payload(
+                                queue_claim,
+                                handled=False,
+                                failure_code="KV_MUTATION_FAILED",
+                                failure_summary=(
+                                    "Queue-bound Key-Value Store mutation failed."
+                                ),
+                            ),
+                        )
+                    except WorkerProtocolError:
+                        client.complete(
+                            lease_id,
+                            token,
+                            {
+                                "outcome": "FAILED",
+                                "retryable": False,
+                                "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
+                                "error_summary": (
+                                    "Queue KV mutation failure completion failed closed."
+                                ),
+                            },
+                        )
+                        return
                 client.complete(
                     lease_id,
                     token,

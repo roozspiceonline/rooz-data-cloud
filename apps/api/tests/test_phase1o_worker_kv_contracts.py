@@ -156,7 +156,7 @@ def test_phase1o_increment4_worker_validates_before_forwarding() -> None:
         assert forbidden not in run_call
 
 
-def test_phase1o_increment4_composition_is_conservative() -> None:
+def test_phase1o_increment4_composition_remains_explicit() -> None:
     service = Path(
         "app/services/execution_plane.py"
     ).read_text(encoding="utf-8")
@@ -165,6 +165,8 @@ def test_phase1o_increment4_composition_is_conservative() -> None:
     ).read_text(encoding="utf-8")
 
     assert "dataset and kv_runtime_enabled" in service
-    assert "browser and kv_runtime_enabled" in service
+    assert "and not queue_kv_runtime_enabled" in service
+    assert "sandbox_canary_request_queue_key_value_store_enabled" in service
     assert "dataset and kv_runtime_enabled" in worker
     assert "browser and kv_runtime_enabled" in worker
+    assert "request_queue_key_value_store_enabled" in worker

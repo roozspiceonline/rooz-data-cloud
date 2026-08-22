@@ -39,6 +39,16 @@ dispatch-enabled and both lease capabilities bind the exact Queue and default
 Dataset with `dataset-before-queue-handled`. Disable the composition gate first
 during a persistence incident; do not manually mark claims HANDLED.
 
+For Queue plus KV, set `keyValueStore=true` and `dataset=false`, register the
+exact worker with `REQUEST_QUEUE_ACCESS` and `KV_ACCESS`, and enable
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED=true` together with
+the Queue and KV gates in both API and worker environments. Confirm the
+composition receipt is dispatch-enabled, its optional read digest matches the
+validated `_rdc_kv_read` request, and the v5 Queue/v2 KV capabilities bind the
+default Run store and `kv-before-queue-handled`. Disable the composition gate
+first for a KV incident. Do not reuse Agent-supplied mutation keys for manual
+replay; the worker-derived Queue request keys are authoritative.
+
 The Run succeeds without starting Agent code when the Queue is empty. A claimed
 request becomes `HANDLED` on exit code zero and `FAILED` with the generic
 `AGENT_EXIT_NONZERO` code otherwise. A denied or failed Queue HTTP acquisition
@@ -49,8 +59,9 @@ the existing bounded expiry/reclaim lifecycle.
 
 Disable `RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED` first for an acquisition
 incident, `RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED` for a composed
-persistence incident, or `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` to stop all
-Queue work.
+persistence incident,
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED` for a Queue/KV
+incident, or `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` to stop all Queue work.
 Drain or stop the worker, inspect immutable Queue transitions, Run events,
 execution leases, and audit events by safe identifiers, then allow expired
 claims to reclaim. Reduce or rotate the exact allowlist before re-enabling.
