@@ -16,6 +16,7 @@ from ..models import (
     AgentVersion,
     Build,
     Dataset,
+    EgressPolicy,
     KeyValueStore,
     OrganizationMembership,
     Project,
@@ -83,6 +84,12 @@ class RequestQueueAccess:
 
 
 @dataclass(frozen=True)
+class EgressPolicyAccess:
+    context: AuthContext
+    policy: EgressPolicy
+
+
+@dataclass(frozen=True)
 class ScheduleAccess:
     context: AuthContext
     schedule: Schedule
@@ -110,6 +117,7 @@ async def _resolved_organization_id(
         "rdc_dataset_org",
         "rdc_key_value_store_org",
         "rdc_request_queue_org",
+        "rdc_egress_policy_org",
         "rdc_schedule_org",
         "rdc_storage_object_org",
     }
@@ -489,6 +497,24 @@ def require_request_queue_permission(
         if record is None:
             raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
         return RequestQueueAccess(context=context, queue=record)
+
+    return dependency
+
+
+def require_egress_policy_permission(
+    permission: str,
+) -> Callable[..., Awaitable[EgressPolicyAccess]]:
+    async def dependency(
+        policy_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> EgressPolicyAccess:
+        organization_id = await _resolved_organization_id(db, function_name="rdc_egress_policy_org", resource_id=policy_id)
+        await _authorize_organization(db, context=context, organization_id=organization_id, permission=permission)
+        record = await db.scalar(select(EgressPolicy).where(EgressPolicy.id == policy_id, EgressPolicy.organization_id == organization_id))
+        if record is None:
+            raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
+        return EgressPolicyAccess(context=context, policy=record)
 
     return dependency
 

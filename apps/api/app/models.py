@@ -844,6 +844,41 @@ class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class EgressPolicy(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "egress_policies"
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_egress_policies_project_name"), {"schema": "control"})
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="DRAFT")
+    active_revision_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.egress_policy_revisions.id", ondelete="RESTRICT"))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class EgressPolicyRevision(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "egress_policy_revisions"
+    __table_args__ = (UniqueConstraint("policy_id", "revision_number", name="uq_egress_policy_revision_number"), {"schema": "control"})
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    policy_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.egress_policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    revision_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    allowed_hosts: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    allowed_methods: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    max_requests: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_response_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    max_redirects: Mapped[int] = mapped_column(Integer, nullable=False)
+    connect_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    credential_secret_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.project_secrets.id", ondelete="RESTRICT"))
+    policy_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RequestQueue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "request_queues"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_request_queues_project_name"), {"schema": "control"})

@@ -10,6 +10,7 @@ from starlette.responses import Response
 from .api.routes.agents import router as agents_router
 from .api.routes.builds_secrets import router as builds_secrets_router
 from .api.routes.datasets import router as datasets_router
+from .api.routes.egress_policies import router as egress_policies_router
 from .api.routes.execution import router as execution_router
 from .api.routes.health import router as health_router
 from .api.routes.identity_tenancy import router as identity_router
@@ -126,6 +127,7 @@ v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
 v1_router.include_router(datasets_router)
+v1_router.include_router(egress_policies_router)
 v1_router.include_router(key_value_stores_router)
 v1_router.include_router(request_queues_router)
 v1_router.include_router(runs_router)
@@ -186,6 +188,11 @@ async def foundation_status() -> dict[str, object]:
         "schedule_dispatch_enabled": settings.schedule_dispatch_enabled,
         "schedule_dispatch_singleton_lock": "postgresql-advisory-xact",
         "schedule_missed_run_policies": ["SKIP", "FIRE_ONCE"],
+        "egress_policy_metadata_persistence_enabled": True,
+        "egress_policy_revisions_immutable": True,
+        "egress_policy_rls_enabled": True,
+        "egress_policy_live_binding_enabled": False,
+        "egress_policy_plaintext_credentials_exposed": False,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,

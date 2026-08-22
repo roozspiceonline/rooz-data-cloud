@@ -35,10 +35,17 @@ persists tenant-scoped one-time and fixed-interval Run schedules, bounded
 missed-run policies, immutable trigger history and duplicate-safe singleton
 dispatch. See [the Scheduler documentation](docs/scheduler/README.md).
 
-The active scraping-runtime workstream now binds one Run to one server-verified
+The scraping-runtime baseline now binds one Run to one server-verified
 tenant Queue through an exact lease capability. The trusted worker validates
 and injects one claim without exposing its claim token or any control-plane
 credential to the Agent. An independently gated mode derives one GET from the
 claimed URL through the existing brokered HTTPS policy while the Agent remains
 networkless. See
 [the Scraping Runtime documentation](docs/scraping-runtime/README.md).
+
+The active proxy/egress workstream now persists tenant-scoped Project policy
+metadata and immutable exact-host revisions with bounded methods and budgets.
+Activation and disable operations are race-safe, credentials remain references
+to write-only Project secrets, and PostgreSQL RLS plus tenancy triggers enforce
+the boundary independently. Live worker/broker binding remains disabled. See
+[the Proxy/Egress documentation](docs/proxy-egress/README.md).

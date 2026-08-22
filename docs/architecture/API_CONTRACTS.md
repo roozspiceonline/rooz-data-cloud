@@ -1098,3 +1098,14 @@ Dataset with `dataset-before-queue-handled`. The trusted worker validates and
 idempotently appends the Agent's bounded `rdc.dataset-append/v1` output before
 completing the Queue claim. No Agent or Chromium database/object credentials
 are introduced.
+
+## Egress policy metadata
+
+Authenticated Project routes create and list tenant policies; policy routes
+read metadata, append immutable revisions, activate an exact revision and
+disable a policy. Creation requires `Idempotency-Key`. Mutation requests use an
+`expected_version` and return 409 on stale state. Policy specifications admit
+exact normalized HTTPS hostnames, `GET`/`HEAD`, bounded budgets and an optional
+same-Project secret reference. Revision responses expose
+`credential_configured`, never a secret identifier or value. Live worker and
+broker consumption is not part of this contract increment.

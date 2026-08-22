@@ -1108,3 +1108,13 @@ unique `(schedule_id, scheduled_for)` constraint prevents duplicate outcomes.
 Each row is `FIRED` with a same-tenant Run, `SKIPPED` without a Run, or `FAILED`
 with a bounded error code. RLS, schedule/Run lineage triggers and an update/delete
 rejection trigger protect the history. Migration `0021` creates both tables.
+
+## Egress policy tables
+
+`control.egress_policies` stores server-derived organization and Project,
+immutable name/creator ownership, DRAFT/ACTIVE/DISABLED state, an exact active
+revision reference, lifecycle timestamps and an optimistic version.
+`control.egress_policy_revisions` stores immutable normalized host/method
+allowlists, bounded request/byte/redirect/timeout limits, a canonical digest and
+an optional same-tenant `security.project_secrets` reference. Migration `0022`
+adds RLS plus Project, policy, secret and active-revision tenancy triggers.
