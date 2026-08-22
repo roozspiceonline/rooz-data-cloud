@@ -564,8 +564,8 @@ def main() -> None:
         '"browser_egress_policy_digest": browser_egress_policy_digest',
         '"browser_egress_transport_wired": True',
         "browser_navigation_live_canary",
-        "if navigation_receipt_only or queue_http_receipt_only",
-        "if not navigation_receipt_only and not queue_http_receipt_only:",
+        "or queue_http_receipt_only",
+        "and not queue_http_receipt_only",
         '"run.browser_navigation_intent_recorded"',
     ]:
         require(

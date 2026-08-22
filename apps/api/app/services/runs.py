@@ -727,6 +727,10 @@ async def create_run(
     queue_binding_receipt: dict[str, object] | None = None
     request_queue_egress_policy: dict[str, object] | None = None
     request_queue_egress_policy_digest: str | None = None
+    request_queue_browser_policy: dict[str, object] | None = None
+    request_queue_browser_policy_digest: str | None = None
+    request_queue_browser_egress_policy: dict[str, object] | None = None
+    request_queue_browser_egress_policy_digest: str | None = None
     request_queue_http_live_canary = False
     if request_queue is not None:
         capabilities = version.manifest.get("capabilities")
@@ -735,11 +739,17 @@ async def create_run(
             if isinstance(capabilities, dict)
             else None
         )
+        queue_browser = (
+            capabilities.get("browser")
+            if isinstance(capabilities, dict)
+            else None
+        )
         if (
             not isinstance(capabilities, dict)
             or capabilities.get("requestQueue") is not True
             or queue_network not in {"none", "web-egress"}
-            or capabilities.get("browser") is not False
+            or not isinstance(queue_browser, bool)
+            or (queue_browser and queue_network != "web-egress")
             or capabilities.get("dataset") is not False
             or capabilities.get("keyValueStore") is not False
         ):
@@ -764,7 +774,33 @@ async def create_run(
                 code="RESOURCE_NOT_FOUND",
                 message="The requested resource was not found.",
             )
-        if queue_network == "web-egress":
+        if queue_browser:
+            request_queue_browser_policy = _browser_policy_payload()
+            request_queue_browser_policy_digest = canonical_fingerprint(
+                request_queue_browser_policy
+            )
+            request_queue_browser_egress_policy = (
+                _browser_egress_policy_payload()
+            )
+            request_queue_browser_egress_policy_digest = (
+                canonical_fingerprint(request_queue_browser_egress_policy)
+            )
+            queue_binding_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v3",
+                "binding_digest": canonical_fingerprint(request_queue),
+                "queue_id": str(queue.id),
+                "agent_version_id": str(version.id),
+                "acquisition_mode": "controlled-browser",
+                "browser_policy_digest": request_queue_browser_policy_digest,
+                "browser_egress_policy_digest": (
+                    request_queue_browser_egress_policy_digest
+                ),
+                "dispatch_enabled": False,
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+        elif queue_network == "web-egress":
             request_queue_egress_policy = _web_egress_policy_payload()
             request_queue_egress_policy_digest = canonical_fingerprint(
                 request_queue_egress_policy
@@ -849,6 +885,12 @@ async def create_run(
             "request_queue_egress_policy_digest": (
                 request_queue_egress_policy_digest
             ),
+            "request_queue_browser_policy_digest": (
+                request_queue_browser_policy_digest
+            ),
+            "request_queue_browser_egress_policy_digest": (
+                request_queue_browser_egress_policy_digest
+            ),
             "runtime": runtime,
         }
     )
@@ -916,6 +958,19 @@ async def create_run(
             input_reference["request_queue_egress_policy_digest"] = (
                 request_queue_egress_policy_digest
             )
+        if request_queue_browser_policy is not None:
+            input_reference["request_queue_browser_policy"] = (
+                request_queue_browser_policy
+            )
+            input_reference["request_queue_browser_policy_digest"] = (
+                request_queue_browser_policy_digest
+            )
+            input_reference["request_queue_browser_egress_policy"] = (
+                request_queue_browser_egress_policy
+            )
+            input_reference["request_queue_browser_egress_policy_digest"] = (
+                request_queue_browser_egress_policy_digest
+            )
 
     navigation_receipt_only = (
         browser_navigation is not None
@@ -925,9 +980,14 @@ async def create_run(
         request_queue_egress_policy is not None
         and not request_queue_http_live_canary
     )
+    queue_browser_receipt_only = request_queue_browser_policy is not None
     initial_status = (
         "DRAFT"
-        if navigation_receipt_only or queue_http_receipt_only
+        if (
+            navigation_receipt_only
+            or queue_http_receipt_only
+            or queue_browser_receipt_only
+        )
         else "QUEUED"
     )
 
@@ -952,7 +1012,11 @@ async def create_run(
     )
     session.add(record)
     await session.flush()
-    if not navigation_receipt_only and not queue_http_receipt_only:
+    if (
+        not navigation_receipt_only
+        and not queue_http_receipt_only
+        and not queue_browser_receipt_only
+    ):
         session.add(
             RunCommandOutbox(
                 organization_id=record.organization_id,
@@ -1009,7 +1073,11 @@ async def create_run(
             else (
                 "run.request_queue_http_intent_recorded"
                 if queue_http_receipt_only
-                else "run.queued"
+                else (
+                    "run.request_queue_browser_intent_recorded"
+                    if queue_browser_receipt_only
+                    else "run.queued"
+                )
             )
         ),
         resource_type="run",
@@ -1047,6 +1115,12 @@ async def create_run(
             ),
             "request_queue_egress_policy_digest": (
                 request_queue_egress_policy_digest
+            ),
+            "request_queue_browser_policy_digest": (
+                request_queue_browser_policy_digest
+            ),
+            "request_queue_browser_egress_policy_digest": (
+                request_queue_browser_egress_policy_digest
             ),
         },
     )

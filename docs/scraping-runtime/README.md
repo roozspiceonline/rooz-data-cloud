@@ -27,6 +27,13 @@ Queue Runs still cannot combine browser, Dataset, KV, caller-supplied web-fetch,
 or legacy `_rdc_web_requests` intent. Composed Dataset/KV output and controlled
 Queue-bound browser acquisition remain later scraping-runtime increments.
 
+A strict `rdc.request-queue-binding-receipt/v3` intent is also available for an
+Agent version declaring `requestQueue=true`, `browser=true`, and
+`network=web-egress`. It binds the Queue, Agent version, browser policy, and
+browser-egress policy but always persists as DRAFT with
+`dispatch_enabled=false`; no worker capability or live browser execution is
+issued by this foundation.
+
 The feature remains disabled unless both API and worker use
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=true`, the sandbox master gate and
 canary activation are enabled, and the exact worker has

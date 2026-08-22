@@ -25,7 +25,10 @@ need(
     "RequestQueue.project_id == version.project_id",
     '"rdc.request-queue-binding-receipt/v1"',
     '"rdc.request-queue-binding-receipt/v2"',
+    '"rdc.request-queue-binding-receipt/v3"',
     '"acquisition_mode": "brokered-http"',
+    '"acquisition_mode": "controlled-browser"',
+    '"dispatch_enabled": False',
     '"agent_container_network": "none"',
     "_request_queue_http_canary_enabled",
     '"direct_database_access": False',
@@ -77,6 +80,7 @@ need(
     "test_queue_http_gates_are_independent_and_fail_closed",
     "test_queue_http_capability_binds_egress_policy",
     "test_create_run_persists_brokered_queue_http_receipt",
+    "test_create_run_persists_non_dispatching_queue_browser_receipt",
 )
 need(
     ".env.example",

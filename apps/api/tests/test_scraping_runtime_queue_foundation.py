@@ -32,11 +32,13 @@ def _queue_protocol_module():  # type: ignore[no-untyped-def]
     return module
 
 
-def _manifest(*, network: str = "none") -> dict[str, object]:
+def _manifest(
+    *, network: str = "none", browser: bool = False
+) -> dict[str, object]:
     return {
         "capabilities": {
             "network": network,
-            "browser": False,
+            "browser": browser,
             "dataset": False,
             "keyValueStore": False,
             "requestQueue": True,
@@ -526,6 +528,94 @@ async def test_create_run_persists_brokered_queue_http_receipt(
         if isinstance(call.args[0], RunCommandOutbox)
     ]
     assert len(outboxes) == (1 if dispatch_enabled else 0)
+
+
+@pytest.mark.asyncio
+async def test_create_run_persists_non_dispatching_queue_browser_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import runs as run_service
+
+    organization_id, project_id, agent_id = uuid4(), uuid4(), uuid4()
+    version_id, build_id, user_id, queue_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    version = SimpleNamespace(
+        id=version_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        agent_id=agent_id,
+        manifest=_manifest(network="web-egress", browser=True),
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        status="SUCCEEDED",
+        artifact_digest="sha256:" + "d" * 64,
+    )
+    queue = SimpleNamespace(
+        id=queue_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    browser_policy = {
+        "schema_version": "rdc.browser-policy/v1",
+        "enabled": False,
+        "allowed_hosts": ["example.com"],
+    }
+    browser_egress_policy = {
+        "schema_version": "rdc.browser-egress-policy/v1",
+        "mode": "gateway-live-canary",
+        "allowed_hosts": ["example.com"],
+    }
+    monkeypatch.setattr(
+        run_service, "_browser_policy_payload", lambda: browser_policy
+    )
+    monkeypatch.setattr(
+        run_service,
+        "_browser_egress_policy_payload",
+        lambda: browser_egress_policy,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    result = await create_run(
+        session,  # type: ignore[arg-type]
+        version=version,  # type: ignore[arg-type]
+        user_id=user_id,
+        idempotency_key="queue-browser-intent-1",
+        payload=CreateRunRequest(
+            build_id=build_id,
+            request_queue=_binding_payload(queue_id),  # type: ignore[arg-type]
+        ),
+        request_id="queue-browser-intent-create",
+    )
+    runs = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], Run)
+    ]
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == "DRAFT"
+    assert result["status"] == "DRAFT"
+    receipt = run.input_reference["queue_binding_receipt"]
+    assert isinstance(receipt, dict)
+    assert receipt["schema_version"] == (
+        "rdc.request-queue-binding-receipt/v3"
+    )
+    assert receipt["acquisition_mode"] == "controlled-browser"
+    assert receipt["dispatch_enabled"] is False
+    assert receipt["agent_container_network"] == "none"
+    assert not any(
+        isinstance(call.args[0], RunCommandOutbox)
+        for call in session.add.call_args_list
+    )
 
 
 @pytest.mark.asyncio

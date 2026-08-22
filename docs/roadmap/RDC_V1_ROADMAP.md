@@ -23,7 +23,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scraping runtime | Queue-bound offline and brokered HTTP primitives implemented — browser and Dataset/KV composition remain | Scheduler, execution recovery, Queue, Dataset and KV protocols |
+| Scraping runtime | Queue-bound offline and brokered HTTP primitives implemented; controlled-browser DRAFT receipts started — live browser and Dataset/KV composition remain | Scheduler, execution recovery, Queue, Dataset and KV protocols |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -57,6 +57,9 @@ derives one Queue-claimed GET through the existing bounded
 HTTPS egress broker, binds its policy digest into v2 Run/lease receipts, rejects
 caller web-intent injection, and keeps Agent networking disabled. Queue-bound
 browser acquisition and composed Dataset/KV persistence remain active work.
+The next branch adds a non-dispatching v3 Queue/browser binding receipt so the
+Queue, immutable Agent version, browser policy, and browser-egress policy can be
+reviewed together before any live claim-derived browser execution is enabled.
 
 ## Remaining RDC v1 workstreams
 
