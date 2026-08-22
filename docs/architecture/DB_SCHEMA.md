@@ -1093,3 +1093,18 @@ counters, timestamps, and a bounded error code. It contains no tenant payloads
 or credentials. Scheduler ownership is coordinated separately with a
 transaction-scoped PostgreSQL advisory lock; the row is durable health evidence,
 not a mutex.
+
+## Scheduler tables
+
+`control.schedules` stores server-derived organization, Project, Agent, immutable
+Agent version and successful Build lineage; a strict Run request template;
+one-time or bounded interval cadence; missed-run policy; next/last fire times;
+aggregate outcome counts; lifecycle state and creator. Ownership, cadence,
+policy and template are immutable after insert. Tenant reads/writes use RLS;
+the trusted dispatcher receives only transaction-local selection/update access.
+
+`control.schedule_triggers` is immutable history for one scheduled instant. A
+unique `(schedule_id, scheduled_for)` constraint prevents duplicate outcomes.
+Each row is `FIRED` with a same-tenant Run, `SKIPPED` without a Run, or `FAILED`
+with a bounded error code. RLS, schedule/Run lineage triggers and an update/delete
+rejection trigger protect the history. Migration `0021` creates both tables.

@@ -685,6 +685,116 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
 
+class Schedule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "schedules"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "name",
+            name="uq_schedules_project_name",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    agent_version_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.agent_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    build_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.builds.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="ACTIVE")
+    cadence_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    interval_seconds: Mapped[int | None] = mapped_column(Integer)
+    missed_run_policy: Mapped[str] = mapped_column(String(16), nullable=False)
+    misfire_grace_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    next_fire_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), index=True
+    )
+    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fired_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.users.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class ScheduleTrigger(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "schedule_triggers"
+    __table_args__ = (
+        UniqueConstraint(
+            "schedule_id",
+            "scheduled_for",
+            name="uq_schedule_triggers_schedule_instant",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    schedule_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.schedules.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    run_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.runs.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    scheduled_for: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str] = mapped_column(String(80), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "key_value_stores"
     __table_args__ = {"schema": "control"}

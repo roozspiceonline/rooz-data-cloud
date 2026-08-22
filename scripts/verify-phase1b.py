@@ -28,6 +28,18 @@ SECRET_PATTERNS = [
     re.compile(r"AIza[A-Za-z0-9_-]{20,}"),
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
 ]
+IGNORED_PARTS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".next",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".turbo",
+        ".venv",
+        "node_modules",
+    }
+)
 
 
 def fail(message: str) -> None:
@@ -56,6 +68,8 @@ def main() -> None:
 
     scanned = 0
     for path in ROOT.rglob("*"):
+        if IGNORED_PARTS.intersection(path.relative_to(ROOT).parts):
+            continue
         if not path.is_file() or path.suffix in {".pyc", ".zip"}:
             continue
         try:

@@ -22,6 +22,7 @@ from ..models import (
     ProjectSecret,
     RequestQueue,
     Run,
+    Schedule,
     StorageObject,
 )
 from .dependencies import AuthContext, resolve_auth_context
@@ -82,6 +83,12 @@ class RequestQueueAccess:
 
 
 @dataclass(frozen=True)
+class ScheduleAccess:
+    context: AuthContext
+    schedule: Schedule
+
+
+@dataclass(frozen=True)
 class StorageObjectAccess:
     context: AuthContext
     storage_object: StorageObject
@@ -103,6 +110,7 @@ async def _resolved_organization_id(
         "rdc_dataset_org",
         "rdc_key_value_store_org",
         "rdc_request_queue_org",
+        "rdc_schedule_org",
         "rdc_storage_object_org",
     }
     if function_name not in allowed:
@@ -481,6 +489,40 @@ def require_request_queue_permission(
         if record is None:
             raise ApiError(status_code=404, code="RESOURCE_NOT_FOUND", message="The requested resource was not found.")
         return RequestQueueAccess(context=context, queue=record)
+
+    return dependency
+
+
+def require_schedule_permission(
+    permission: str,
+) -> Callable[..., Awaitable[ScheduleAccess]]:
+    async def dependency(
+        schedule_id: Annotated[UUID, Path()],
+        context: Annotated[AuthContext, Depends(resolve_auth_context)],
+        db: Annotated[AsyncSession, Depends(get_db)],
+    ) -> ScheduleAccess:
+        organization_id = await _resolved_organization_id(
+            db, function_name="rdc_schedule_org", resource_id=schedule_id
+        )
+        await _authorize_organization(
+            db,
+            context=context,
+            organization_id=organization_id,
+            permission=permission,
+        )
+        record = await db.scalar(
+            select(Schedule).where(
+                Schedule.id == schedule_id,
+                Schedule.organization_id == organization_id,
+            )
+        )
+        if record is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        return ScheduleAccess(context=context, schedule=record)
 
     return dependency
 

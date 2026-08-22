@@ -1,0 +1,34 @@
+[Unit]
+Description=Rooz Data Cloud Run schedule dispatcher
+Wants=network-online.target
+After=network-online.target rdc-api.service
+Requires=rdc-api.service
+
+[Service]
+Type=simple
+User=rdc-api
+Group=rdc-api
+WorkingDirectory=/opt/rdc/current/apps/api
+EnvironmentFile=/etc/rdc/production/api.env
+ExecStart=/opt/rdc/current/apps/api/.venv/bin/python -m app.schedule_dispatcher
+Restart=always
+RestartSec=5s
+TimeoutStartSec=45s
+TimeoutStopSec=30s
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=rdc.target
