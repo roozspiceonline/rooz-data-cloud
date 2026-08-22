@@ -23,12 +23,23 @@ redirect revalidation, header stripping, timeouts, and byte/request budgets all
 remain authoritative. The v2 binding and worker capability receipts bind the
 current egress-policy digest and `brokered-http` acquisition mode.
 
-Queue Runs still cannot combine KV, caller-supplied web-fetch, or legacy
-`_rdc_web_requests` intent. Dataset composition is independently gated: the
+Queue Runs still cannot combine Dataset and KV, caller-supplied web-fetch, or
+legacy `_rdc_web_requests` intent. Dataset composition is independently gated: the
 control plane binds the Queue receipt to the default Dataset, and the worker
 must persist the validated `rdc.dataset-append/v1` output under an idempotency
 key derived from the Queue request before it may mark the claim HANDLED. KV
-composition remains a later scraping-runtime increment.
+composition uses a dedicated capability receipt.
+
+Queue plus Key-Value Store composition is also implemented behind an
+independent false-by-default gate. The API validates an optional
+`_rdc_kv_read` request and binds its digest, the default Run-scoped store, the
+Queue receipt, and `kv-before-queue-handled` ordering into
+`rdc.request-queue-key-value-store-receipt/v1`. The worker claims first, reads
+KV state through the lease-scoped API, runs the networkless Agent, and replaces
+Agent-supplied mutation replay keys with `queue:<request-id>:kv:<index>` before
+persistence. KV read or mutation failure marks the claim FAILED before the Run
+failure is recorded; a successful claim cannot become HANDLED until every KV
+mutation is durable.
 
 A strict `rdc.request-queue-binding-receipt/v3` intent is also available for an
 Agent version declaring `requestQueue=true`, `browser=true`, and
@@ -70,3 +81,10 @@ write gate in both API and worker environments. The v4 Queue capability and v2
 Dataset capability bind the same Queue, Run, Agent version, worker and
 `dataset-before-queue-handled` ordering; Agent and Chromium remain credential-
 free and networkless at the persistence boundary.
+
+Queue plus KV requires
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_KEY_VALUE_STORE_ENABLED=true`, the Queue and
+KV gates, and `KV_ACCESS` on the exact worker. The v5 Queue capability and v2 KV
+capability bind the same Queue, Run, Agent version, worker, default store,
+server-derived mutation replay scope, and completion ordering. The composition
+gate can be disabled without disabling standalone Queue or KV canaries.

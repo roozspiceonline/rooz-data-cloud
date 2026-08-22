@@ -86,6 +86,7 @@ class SandboxActivation(StrictModel):
     request_queue_http_enabled: bool = False
     request_queue_browser_enabled: bool = False
     request_queue_dataset_enabled: bool = False
+    request_queue_key_value_store_enabled: bool = False
     max_concurrency: Literal[1] = 1
 
     @model_validator(mode="after")
@@ -154,6 +155,22 @@ class SandboxActivation(StrictModel):
         ):
             raise ValueError(
                 "Queue and Dataset access require an explicit composition receipt."
+            )
+        if self.request_queue_key_value_store_enabled and (
+            not self.request_queue_enabled or not self.key_value_store_enabled
+        ):
+            raise ValueError(
+                "Queue Key-Value Store composition requires Queue and "
+                "Key-Value Store access."
+            )
+        if (
+            self.request_queue_enabled
+            and self.key_value_store_enabled
+            and not self.request_queue_key_value_store_enabled
+        ):
+            raise ValueError(
+                "Queue and Key-Value Store access require an explicit "
+                "composition receipt."
             )
         return self
 

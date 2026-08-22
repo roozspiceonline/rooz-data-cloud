@@ -13,6 +13,10 @@ from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.pagination import CursorPosition
 from ..core.security import canonical_fingerprint
+from ..kv_worker_protocol import (
+    KVWorkerProtocolError,
+    validate_kv_read_request,
+)
 from ..models import (
     AgentVersion,
     Build,
@@ -377,6 +381,37 @@ def _request_queue_dataset_canary_enabled(version: AgentVersion) -> bool:
         or not settings.sandbox_canary_request_queue_enabled
         or not settings.sandbox_canary_dataset_writes_enabled
         or not settings.sandbox_canary_request_queue_dataset_enabled
+        or not settings.sandbox_canary_worker_name.strip()
+        or str(version.id) != settings.sandbox_canary_agent_version_id.strip()
+    ):
+        return False
+    try:
+        return (
+            _manifest_resource(version, "memoryMb")
+            <= settings.sandbox_canary_max_memory_mb
+            and _manifest_resource(version, "cpuUnits")
+            <= settings.sandbox_canary_max_cpu_millis
+            and _manifest_resource(version, "maxProcesses")
+            <= settings.sandbox_canary_max_pids
+            and _manifest_resource(version, "ephemeralDiskMb")
+            <= settings.sandbox_canary_max_ephemeral_disk_mb
+            and _manifest_resource(version, "timeoutSeconds")
+            <= settings.sandbox_canary_max_run_seconds
+        )
+    except ApiError:
+        return False
+
+
+def _request_queue_key_value_store_canary_enabled(
+    version: AgentVersion,
+) -> bool:
+    settings = get_settings()
+    if (
+        not settings.sandbox_execution_enabled
+        or settings.sandbox_activation_mode != "canary"
+        or not settings.sandbox_canary_request_queue_enabled
+        or not settings.sandbox_canary_key_value_store_enabled
+        or not settings.sandbox_canary_request_queue_key_value_store_enabled
         or not settings.sandbox_canary_worker_name.strip()
         or str(version.id) != settings.sandbox_canary_agent_version_id.strip()
     ):
@@ -793,9 +828,11 @@ async def create_run(
     request_queue_browser_egress_policy: dict[str, object] | None = None
     request_queue_browser_egress_policy_digest: str | None = None
     request_queue_dataset_receipt: dict[str, object] | None = None
+    request_queue_key_value_store_receipt: dict[str, object] | None = None
     request_queue_http_live_canary = False
     request_queue_browser_live_canary = False
     request_queue_dataset_live_canary = False
+    request_queue_key_value_store_live_canary = False
     if request_queue is not None:
         capabilities = version.manifest.get("capabilities")
         queue_network = (
@@ -813,21 +850,27 @@ async def create_run(
             if isinstance(capabilities, dict)
             else None
         )
+        queue_key_value_store = (
+            capabilities.get("keyValueStore")
+            if isinstance(capabilities, dict)
+            else None
+        )
         if (
             not isinstance(capabilities, dict)
             or capabilities.get("requestQueue") is not True
             or queue_network not in {"none", "web-egress"}
             or not isinstance(queue_browser, bool)
             or not isinstance(queue_dataset, bool)
+            or not isinstance(queue_key_value_store, bool)
             or (queue_browser and queue_network != "web-egress")
-            or capabilities.get("keyValueStore") is not False
+            or (queue_dataset and queue_key_value_store)
         ):
             raise ApiError(
                 status_code=422,
                 code="REQUEST_QUEUE_CAPABILITY_REQUIRED",
                 message=(
                     "Queue-bound Runs require requestQueue=true and cannot "
-                    "combine with Key-Value Store access."
+                    "combine Dataset and Key-Value Store access."
                 ),
             )
         queue = await session.scalar(
@@ -942,6 +985,64 @@ async def create_run(
                 "direct_database_access": False,
                 "direct_object_storage_access": False,
             }
+        if queue_key_value_store:
+            read_request = payload.input.get("_rdc_kv_read")
+            read_request_digest: str | None = None
+            if read_request is not None:
+                try:
+                    read_request_digest = validate_kv_read_request(
+                        read_request
+                    ).request_digest
+                except KVWorkerProtocolError as exc:
+                    raise ApiError(
+                        status_code=422,
+                        code="KV_WORKER_READ_PROTOCOL_INVALID",
+                        message="Queue KV read request is invalid.",
+                    ) from exc
+            request_queue_key_value_store_live_canary = (
+                _request_queue_key_value_store_canary_enabled(version)
+            )
+            if queue_browser:
+                request_queue_browser_live_canary = (
+                    request_queue_browser_live_canary
+                    and request_queue_key_value_store_live_canary
+                )
+                queue_binding_receipt["dispatch_enabled"] = (
+                    request_queue_browser_live_canary
+                )
+            elif queue_network == "web-egress":
+                request_queue_http_live_canary = (
+                    request_queue_http_live_canary
+                    and request_queue_key_value_store_live_canary
+                )
+                queue_binding_receipt["dispatch_enabled"] = (
+                    request_queue_http_live_canary
+                )
+            request_queue_key_value_store_receipt = {
+                "schema_version": (
+                    "rdc.request-queue-key-value-store-receipt/v1"
+                ),
+                "queue_id": str(queue.id),
+                "agent_version_id": str(version.id),
+                "queue_binding_receipt_digest": canonical_fingerprint(
+                    queue_binding_receipt
+                ),
+                "store_name": "default",
+                "read_request_digest": read_request_digest,
+                "mutation_idempotency_scope": "queue-request-index",
+                "dispatch_enabled": (
+                    request_queue_key_value_store_live_canary
+                    and (
+                        queue_network == "none"
+                        or request_queue_http_live_canary
+                        or request_queue_browser_live_canary
+                    )
+                ),
+                "completion_order": "kv-before-queue-handled",
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
 
     browser_policy: dict[str, object] | None = None
     browser_policy_digest: str | None = None
@@ -1005,6 +1106,9 @@ async def create_run(
                 request_queue_browser_egress_policy_digest
             ),
             "request_queue_dataset_receipt": request_queue_dataset_receipt,
+            "request_queue_key_value_store_receipt": (
+                request_queue_key_value_store_receipt
+            ),
             "runtime": runtime,
         }
     )
@@ -1069,6 +1173,10 @@ async def create_run(
             input_reference["request_queue_dataset_receipt"] = (
                 request_queue_dataset_receipt
             )
+        if request_queue_key_value_store_receipt is not None:
+            input_reference["request_queue_key_value_store_receipt"] = (
+                request_queue_key_value_store_receipt
+            )
         if request_queue_egress_policy is not None:
             input_reference["request_queue_egress_policy"] = (
                 request_queue_egress_policy
@@ -1106,6 +1214,11 @@ async def create_run(
         request_queue_dataset_receipt is not None
         and request_queue_dataset_receipt.get("dispatch_enabled") is not True
     )
+    queue_key_value_store_receipt_only = (
+        request_queue_key_value_store_receipt is not None
+        and request_queue_key_value_store_receipt.get("dispatch_enabled")
+        is not True
+    )
     initial_status = (
         "DRAFT"
         if (
@@ -1113,6 +1226,7 @@ async def create_run(
             or queue_http_receipt_only
             or queue_browser_receipt_only
             or queue_dataset_receipt_only
+            or queue_key_value_store_receipt_only
         )
         else "QUEUED"
     )
@@ -1143,6 +1257,7 @@ async def create_run(
         and not queue_http_receipt_only
         and not queue_browser_receipt_only
         and not queue_dataset_receipt_only
+        and not queue_key_value_store_receipt_only
     ):
         session.add(
             RunCommandOutbox(
@@ -1201,12 +1316,16 @@ async def create_run(
                 "run.request_queue_dataset_intent_recorded"
                 if queue_dataset_receipt_only
                 else (
-                    "run.request_queue_http_intent_recorded"
-                    if queue_http_receipt_only
+                    "run.request_queue_key_value_store_intent_recorded"
+                    if queue_key_value_store_receipt_only
                     else (
-                        "run.request_queue_browser_intent_recorded"
-                        if queue_browser_receipt_only
-                        else "run.queued"
+                        "run.request_queue_http_intent_recorded"
+                        if queue_http_receipt_only
+                        else (
+                            "run.request_queue_browser_intent_recorded"
+                            if queue_browser_receipt_only
+                            else "run.queued"
+                        )
                     )
                 )
             )
@@ -1254,6 +1373,18 @@ async def create_run(
             "request_queue_dataset_receipt_digest": (
                 canonical_fingerprint(request_queue_dataset_receipt)
                 if request_queue_dataset_receipt is not None
+                else None
+            ),
+            "request_queue_key_value_store_dispatch_enabled": (
+                request_queue_key_value_store_receipt is not None
+                and request_queue_key_value_store_receipt.get(
+                    "dispatch_enabled"
+                )
+                is True
+            ),
+            "request_queue_key_value_store_receipt_digest": (
+                canonical_fingerprint(request_queue_key_value_store_receipt)
+                if request_queue_key_value_store_receipt is not None
                 else None
             ),
             "request_queue_egress_policy_digest": (

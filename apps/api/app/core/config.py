@@ -119,6 +119,7 @@ class Settings(BaseSettings):
     sandbox_canary_request_queue_http_enabled: bool = False
     sandbox_canary_request_queue_browser_enabled: bool = False
     sandbox_canary_request_queue_dataset_enabled: bool = False
+    sandbox_canary_request_queue_key_value_store_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -465,6 +466,15 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "Queue Dataset composition requires Queue and Dataset gates."
+            )
+
+        if self.sandbox_canary_request_queue_key_value_store_enabled and (
+            not self.sandbox_canary_request_queue_enabled
+            or not self.sandbox_canary_key_value_store_enabled
+        ):
+            raise ValueError(
+                "Queue Key-Value Store composition requires Queue and "
+                "Key-Value Store gates."
             )
 
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:

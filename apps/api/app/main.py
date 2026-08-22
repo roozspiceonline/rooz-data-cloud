@@ -337,6 +337,18 @@ async def foundation_status() -> dict[str, object]:
         "key_value_store_record_cursor_signed": True,
         "key_value_store_worker_capability_contract": "rdc.kv-worker-capability/v1",
         "key_value_store_worker_gate_enabled": settings.sandbox_canary_key_value_store_enabled,
+        "request_queue_key_value_store_composition_gate_enabled": (
+            settings.sandbox_canary_request_queue_key_value_store_enabled
+        ),
+        "request_queue_key_value_store_receipt_contract": (
+            "rdc.request-queue-key-value-store-receipt/v1"
+        ),
+        "request_queue_key_value_store_queue_capability_contract": (
+            "rdc.request-queue-worker-capability/v5"
+        ),
+        "request_queue_key_value_store_kv_capability_contract": (
+            "rdc.kv-worker-capability/v2"
+        ),
         "key_value_store_worker_canary_enabled": _key_value_store_worker_canary_enabled(),
         "key_value_store_rls_enabled": True,
         "key_value_store_public_access_enabled": False,

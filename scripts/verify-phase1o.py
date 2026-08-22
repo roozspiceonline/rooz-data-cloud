@@ -528,7 +528,8 @@ def verify_increment4() -> None:
         "key_value_store_capability(",
         "key_value_store_enabled=kv_runtime_enabled",
         "dataset and kv_runtime_enabled",
-        "browser and kv_runtime_enabled",
+        "and not queue_kv_runtime_enabled",
+        "sandbox_canary_request_queue_key_value_store_enabled",
     ]:
         require(marker in execution, "Increment 4 claim control missing: " + marker)
 
@@ -698,7 +699,8 @@ def main() -> None:
     print("  worker KV post-run mutations: <=4")
     print("  authenticated current-value reads/listing: ENABLED")
     print("  KV record pagination: SIGNED + STORE-BOUND")
-    print("  Dataset+KV / browser+KV composition: PROHIBITED")
+    print("  Dataset+KV composition: PROHIBITED")
+    print("  browser+KV composition: QUEUE-BOUND / FALSE-BY-DEFAULT")
     print("  Agent/Chromium DB or object credentials: PROHIBITED")
 
 

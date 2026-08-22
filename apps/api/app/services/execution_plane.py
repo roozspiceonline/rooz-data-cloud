@@ -188,6 +188,7 @@ def _canary_constraints(
     request_queue_http: bool = False,
     request_queue_browser: bool = False,
     request_queue_dataset: bool = False,
+    request_queue_key_value_store: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -208,6 +209,7 @@ def _canary_constraints(
         "request_queue_http": request_queue_http,
         "request_queue_browser": request_queue_browser,
         "request_queue_dataset": request_queue_dataset,
+        "request_queue_key_value_store": request_queue_key_value_store,
         "secrets": False,
         "max_concurrency": 1,
     }
@@ -277,6 +279,7 @@ def _canary_activation(
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
     queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
+    queue_kv_runtime_enabled = queue_runtime_enabled and kv_runtime_enabled
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
     )
@@ -292,7 +295,12 @@ def _canary_activation(
     )
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
-    if work_kind == "RUN_START" and browser and kv_runtime_enabled:
+    if (
+        work_kind == "RUN_START"
+        and browser
+        and kv_runtime_enabled
+        and not queue_kv_runtime_enabled
+    ):
         return None
     current_browser_policy_digest = (
         canonical_fingerprint(_browser_policy_payload())
@@ -305,8 +313,14 @@ def _canary_activation(
         else None
     )
     if queue_runtime_enabled and (
-        key_value_store
-        or not settings.sandbox_canary_request_queue_enabled
+        not settings.sandbox_canary_request_queue_enabled
+        or (
+            queue_kv_runtime_enabled
+            and (
+                not settings.sandbox_canary_key_value_store_enabled
+                or not settings.sandbox_canary_request_queue_key_value_store_enabled
+            )
+        )
         or (
             queue_dataset_runtime_enabled
             and (
@@ -334,6 +348,7 @@ def _canary_activation(
             browser_policy_digest=current_browser_policy_digest,
             browser_egress_policy_digest=current_browser_egress_digest,
             request_queue_dataset_enabled=queue_dataset_runtime_enabled,
+            request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
         )
         is None
     ):
@@ -349,6 +364,7 @@ def _canary_activation(
         worker,
         payload,
         key_value_store_enabled=True,
+        request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
     ) is None:
         return None
 
@@ -421,6 +437,7 @@ def _canary_activation(
         request_queue_http=queue_http_runtime_enabled,
         request_queue_browser=queue_browser_runtime_enabled,
         request_queue_dataset=queue_dataset_runtime_enabled,
+        request_queue_key_value_store=queue_kv_runtime_enabled,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -445,6 +462,7 @@ def _canary_activation(
         request_queue_http_enabled=queue_http_runtime_enabled,
         request_queue_browser_enabled=queue_browser_runtime_enabled,
         request_queue_dataset_enabled=queue_dataset_runtime_enabled,
+        request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
     )
 
 
@@ -610,6 +628,7 @@ def _sandbox_claim_policy(
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
     queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
+    queue_kv_runtime_enabled = queue_runtime_enabled and kv_runtime_enabled
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
     )
@@ -625,7 +644,12 @@ def _sandbox_claim_policy(
     )
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
-    if work_kind == "RUN_START" and browser and kv_runtime_enabled:
+    if (
+        work_kind == "RUN_START"
+        and browser
+        and kv_runtime_enabled
+        and not queue_kv_runtime_enabled
+    ):
         return None
     current_browser_policy_digest = (
         canonical_fingerprint(_browser_policy_payload())
@@ -638,8 +662,14 @@ def _sandbox_claim_policy(
         else None
     )
     if queue_runtime_enabled and (
-        key_value_store
-        or not settings.sandbox_canary_request_queue_enabled
+        not settings.sandbox_canary_request_queue_enabled
+        or (
+            queue_kv_runtime_enabled
+            and (
+                not settings.sandbox_canary_key_value_store_enabled
+                or not settings.sandbox_canary_request_queue_key_value_store_enabled
+            )
+        )
         or (
             queue_dataset_runtime_enabled
             and (
@@ -667,6 +697,7 @@ def _sandbox_claim_policy(
             browser_policy_digest=current_browser_policy_digest,
             browser_egress_policy_digest=current_browser_egress_digest,
             request_queue_dataset_enabled=queue_dataset_runtime_enabled,
+            request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
         )
         is None
     ):
@@ -682,6 +713,7 @@ def _sandbox_claim_policy(
         worker,
         payload,
         key_value_store_enabled=True,
+        request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
     ) is None:
         return None
     if browser:
@@ -2082,6 +2114,10 @@ async def claim_work(
                     activation is not None
                     and activation.key_value_store_enabled
                 ),
+                request_queue_key_value_store_enabled=(
+                    activation is not None
+                    and activation.request_queue_key_value_store_enabled
+                ),
             )
         )
         claim_payload["request_queue_capability"] = request_queue_capability(
@@ -2119,6 +2155,10 @@ async def claim_work(
             request_queue_dataset_enabled=(
                 activation is not None
                 and activation.request_queue_dataset_enabled
+            ),
+            request_queue_key_value_store_enabled=(
+                activation is not None
+                and activation.request_queue_key_value_store_enabled
             ),
         )
         lease.payload_digest = canonical_fingerprint(claim_payload)

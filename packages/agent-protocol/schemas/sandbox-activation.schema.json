@@ -21,6 +21,7 @@
     "request_queue_http_enabled",
     "request_queue_browser_enabled",
     "request_queue_dataset_enabled",
+    "request_queue_key_value_store_enabled",
     "max_concurrency"
   ],
   "properties": {
@@ -89,6 +90,9 @@
       "type": "boolean"
     },
     "request_queue_dataset_enabled": {
+      "type": "boolean"
+    },
+    "request_queue_key_value_store_enabled": {
       "type": "boolean"
     },
     "max_concurrency": {

@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.security import canonical_fingerprint
+from ..kv_worker_protocol import (
+    KVWorkerProtocolError,
+    validate_kv_read_request,
+)
 from ..models import (
     ExecutionLease,
     RequestQueue,
@@ -33,6 +37,7 @@ def request_queue_capability(
     browser_policy_digest: str | None = None,
     browser_egress_policy_digest: str | None = None,
     request_queue_dataset_enabled: bool = False,
+    request_queue_key_value_store_enabled: bool = False,
 ) -> dict[str, object] | None:
     if (
         not request_queue_enabled
@@ -69,14 +74,21 @@ def request_queue_capability(
         if isinstance(capabilities, dict)
         else None
     )
+    key_value_store = (
+        capabilities.get("keyValueStore")
+        if isinstance(capabilities, dict)
+        else None
+    )
     if (
         not isinstance(capabilities, dict)
         or capabilities.get("requestQueue") is not True
         or network not in {"none", "web-egress"}
         or not isinstance(browser, bool)
         or not isinstance(dataset, bool)
+        or not isinstance(key_value_store, bool)
         or (browser and not browser_acquisition)
-        or capabilities.get("keyValueStore") is not False
+        or key_value_store is not request_queue_key_value_store_enabled
+        or (dataset and key_value_store)
         or not isinstance(binding, dict)
         or set(binding) != {"schema_version", "queue_id"}
         or binding.get("schema_version") != "rdc.run-queue/v1"
@@ -211,17 +223,68 @@ def request_queue_capability(
         or input_reference.get("request_queue_dataset_receipt") is not None
     ):
         return None
+    if key_value_store:
+        composition_receipt = input_reference.get(
+            "request_queue_key_value_store_receipt"
+        )
+        input_value = input_reference.get("value")
+        read_request = (
+            input_value.get("_rdc_kv_read")
+            if isinstance(input_value, dict)
+            else None
+        )
+        read_request_digest: str | None = None
+        if read_request is not None:
+            try:
+                read_request_digest = validate_kv_read_request(
+                    read_request
+                ).request_digest
+            except KVWorkerProtocolError:
+                return None
+        expected_composition_receipt = {
+            "schema_version": (
+                "rdc.request-queue-key-value-store-receipt/v1"
+            ),
+            "queue_id": str(queue_id),
+            "agent_version_id": str(payload["agent_version_id"]),
+            "queue_binding_receipt_digest": canonical_fingerprint(receipt),
+            "store_name": "default",
+            "read_request_digest": read_request_digest,
+            "mutation_idempotency_scope": "queue-request-index",
+            "dispatch_enabled": True,
+            "completion_order": "kv-before-queue-handled",
+            "agent_container_network": "none",
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
+        if (
+            not request_queue_key_value_store_enabled
+            or not settings.sandbox_canary_request_queue_key_value_store_enabled
+            or not settings.sandbox_canary_key_value_store_enabled
+            or composition_receipt != expected_composition_receipt
+        ):
+            return None
+    elif (
+        request_queue_key_value_store_enabled
+        or input_reference.get("request_queue_key_value_store_receipt")
+        is not None
+    ):
+        return None
     capability: dict[str, object] = {
         "schema_version": (
-            "rdc.request-queue-worker-capability/v4"
-            if dataset
+            "rdc.request-queue-worker-capability/v5"
+            if key_value_store
             else (
-                "rdc.request-queue-worker-capability/v3"
-                if browser_acquisition
+                "rdc.request-queue-worker-capability/v4"
+                if dataset
                 else (
-                    "rdc.request-queue-worker-capability/v2"
-                    if http_acquisition
-                    else "rdc.request-queue-worker-capability/v1"
+                    "rdc.request-queue-worker-capability/v3"
+                    if browser_acquisition
+                    else (
+                        "rdc.request-queue-worker-capability/v2"
+                        if http_acquisition
+                        else "rdc.request-queue-worker-capability/v1"
+                    )
                 )
             )
         ),
@@ -260,6 +323,15 @@ def request_queue_capability(
                 "dataset_write_enabled": True,
                 "dataset_name": "default",
                 "completion_order": "dataset-before-queue-handled",
+            }
+        )
+    if key_value_store:
+        capability.update(
+            {
+                "key_value_store_enabled": True,
+                "store_name": "default",
+                "mutation_idempotency_scope": "queue-request-index",
+                "completion_order": "kv-before-queue-handled",
             }
         )
     return capability
@@ -318,6 +390,10 @@ def _enabled(
         request_queue_dataset_enabled=(
             isinstance(activation, dict)
             and activation.get("request_queue_dataset_enabled") is True
+        ),
+        request_queue_key_value_store_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_key_value_store_enabled") is True
         ),
     )
     if (
