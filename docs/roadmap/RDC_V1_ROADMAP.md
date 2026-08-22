@@ -23,7 +23,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scraping runtime | Queue-bound offline, brokered HTTP, and controlled-browser acquisition implemented; Dataset/KV composition remains | Scheduler, execution recovery, Queue, Dataset and KV protocols |
+| Scraping runtime | Queue-bound offline, brokered HTTP, controlled-browser acquisition, and Dataset persistence implemented; KV composition remains | Scheduler, execution recovery, Queue, Dataset and KV protocols |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -59,8 +59,10 @@ caller web-intent injection, and keeps Agent networking disabled. The third
 increment adds gated v3 Queue/browser receipts and exact worker capabilities,
 derives one bounded navigation from the validated Queue claim, runs Chromium
 behind the Unix egress gateway, withholds the claim token, and then executes the
-Agent with networking disabled. Composed Dataset/KV persistence remains active
-work.
+Agent with networking disabled. The fourth increment composes the existing
+idempotent Dataset append boundary with every Queue acquisition mode and
+requires Dataset persistence before Queue HANDLED completion. Composed KV
+persistence remains active work.
 
 ## Remaining RDC v1 workstreams
 

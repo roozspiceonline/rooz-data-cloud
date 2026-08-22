@@ -1081,7 +1081,7 @@ The lease carries `rdc.request-queue-worker-capability/v2`. The trusted worker
 derives exactly one GET from the claimed URL, uses only the existing bounded
 HTTPS broker, validates its result, and injects `_rdc_queue_http` without the
 claim token. This mode is false by default and cannot be combined with browser,
-Dataset, KV, caller web-fetch, or legacy web-request input.
+KV, caller web-fetch, or legacy web-request input.
 
 When the immutable version also declares `browser=true`, the independently
 gated live canary emits `rdc.request-queue-binding-receipt/v3` and
@@ -1089,3 +1089,12 @@ gated live canary emits `rdc.request-queue-binding-receipt/v3` and
 digests. The trusted worker derives one bounded v2 navigation plan from the
 claimed HTTPS URL, validates the browser result, and injects the token-free
 `_rdc_queue_browser` envelope before running the Agent with network disabled.
+
+When the immutable version also declares `dataset=true`, the separate
+`rdc.request-queue-dataset-receipt/v1` must be dispatch-enabled. The lease
+carries `rdc.request-queue-worker-capability/v4` and
+`rdc.dataset-worker-capability/v2`, both bound to the exact Queue and default
+Dataset with `dataset-before-queue-handled`. The trusted worker validates and
+idempotently appends the Agent's bounded `rdc.dataset-append/v1` output before
+completing the Queue claim. No Agent or Chromium database/object credentials
+are introduced.

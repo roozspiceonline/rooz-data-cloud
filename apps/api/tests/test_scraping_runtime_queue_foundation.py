@@ -63,13 +63,16 @@ def _worker_module():  # type: ignore[no-untyped-def]
 
 
 def _manifest(
-    *, network: str = "none", browser: bool = False
+    *,
+    network: str = "none",
+    browser: bool = False,
+    dataset: bool = False,
 ) -> dict[str, object]:
     return {
         "capabilities": {
             "network": network,
             "browser": browser,
-            "dataset": False,
+            "dataset": dataset,
             "keyValueStore": False,
             "requestQueue": True,
         },
@@ -171,6 +174,19 @@ def test_queue_http_gates_are_independent_and_fail_closed() -> None:
             browser_policy_digest="e" * 64,
             request_queue_browser_enabled=True,
         )
+    assert Settings().sandbox_canary_request_queue_dataset_enabled is False
+    with pytest.raises(ValueError, match="requires Queue and Dataset gates"):
+        Settings(sandbox_canary_request_queue_dataset_enabled=True)
+    with pytest.raises(ValidationError, match="explicit composition receipt"):
+        SandboxActivation(
+            agent_version_id=uuid4(),
+            worker_name="scraping-worker",
+            attestation_digest="a" * 64,
+            sandbox_policy_digest="b" * 64,
+            constraints_digest="c" * 64,
+            dataset_write_enabled=True,
+            request_queue_enabled=True,
+        )
 
 
 def test_worker_queue_browser_gate_requires_all_dependencies(
@@ -200,6 +216,23 @@ def test_worker_queue_browser_gate_requires_all_dependencies(
     )
     config = config_module.SandboxWorkerConfig.from_env()
     assert config.request_queue_browser_enabled is True
+
+
+def test_worker_queue_dataset_gate_requires_both_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_module = _worker_config_module()
+    monkeypatch.setenv("RDC_WORKER_TOKEN", "worker-token")
+    monkeypatch.setenv(
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED", "true"
+    )
+    with pytest.raises(RuntimeError, match="requires Queue and Dataset"):
+        config_module.SandboxWorkerConfig.from_env()
+
+    monkeypatch.setenv("RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED", "true")
+    monkeypatch.setenv("RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED", "true")
+    config = config_module.SandboxWorkerConfig.from_env()
+    assert config.request_queue_dataset_enabled is True
 
 
 def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
@@ -240,6 +273,38 @@ def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
                 {**value, "url": url},
                 expected_queue_id=queue_id,
             )
+
+
+def test_queue_dataset_idempotency_is_server_derived_and_token_free() -> None:
+    protocol = _queue_protocol_module()
+    request_id, queue_id = uuid4(), uuid4()
+    claim = {
+        "schema_version": "rdc.queue-worker-claim/v1",
+        "request_id": str(request_id),
+        "queue_id": str(queue_id),
+        "claim_token": "secret-claim-token",
+    }
+    key = protocol.queue_dataset_idempotency_key(claim)
+    assert key == f"queue:{request_id}"
+    assert "secret-claim-token" not in key
+
+    tampered = {**claim, "queue_id": str(uuid4()) + "-invalid"}
+    with pytest.raises(
+        protocol.QueueWorkerBoundaryError,
+        match="scope is invalid",
+    ):
+        protocol.queue_dataset_idempotency_key(tampered)
+
+
+def test_queue_dataset_persists_before_handled_completion() -> None:
+    worker = (WORKER_ROOT / "worker.py").read_text(encoding="utf-8")
+    segment = worker.split("dataset_enabled = (", 1)[1]
+    segment = segment.split("image_digest = (", 1)[0]
+    assert segment.index("client.dataset_append(") < segment.rindex(
+        "client.queue_complete("
+    )
+    assert 'failure_code="DATASET_APPEND_FAILED"' in segment
+    assert "queue_dataset_idempotency_key(queue_claim)" in segment
 
 
 def test_queue_http_protocol_is_claim_derived_and_token_free() -> None:
@@ -543,6 +608,51 @@ def test_queue_browser_capability_binds_both_policies(
     assert capability["browser_policy_digest"] == browser_digest
     assert capability["browser_egress_policy_digest"] == browser_egress_digest
 
+    payload["manifest"] = _manifest(
+        network="web-egress",
+        browser=True,
+        dataset=True,
+    )
+    payload["input_reference"][  # type: ignore[index]
+        "request_queue_dataset_receipt"
+    ] = {
+        "schema_version": "rdc.request-queue-dataset-receipt/v1",
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "queue_binding_receipt_digest": canonical_fingerprint(receipt),
+        "dataset_name": "default",
+        "dispatch_enabled": True,
+        "completion_order": "dataset-before-queue-handled",
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    monkeypatch.setattr(
+        service.settings,
+        "sandbox_canary_request_queue_dataset_enabled",
+        True,
+    )
+    monkeypatch.setattr(
+        service.settings,
+        "sandbox_canary_dataset_writes_enabled",
+        True,
+    )
+    composed = request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_browser_enabled=True,
+        browser_policy_digest=browser_digest,
+        browser_egress_policy_digest=browser_egress_digest,
+        request_queue_dataset_enabled=True,
+    )
+    assert composed is not None
+    assert composed["schema_version"] == (
+        "rdc.request-queue-worker-capability/v4"
+    )
+    assert composed["acquisition_mode"] == "controlled-browser"
+    assert composed["dataset_write_enabled"] is True
+
     payload["input_reference"][  # type: ignore[index]
         "request_queue_browser_policy_digest"
     ] = "0" * 64
@@ -554,6 +664,181 @@ def test_queue_browser_capability_binds_both_policies(
             request_queue_browser_enabled=True,
             browser_policy_digest=browser_digest,
             browser_egress_policy_digest=browser_egress_digest,
+            request_queue_dataset_enabled=True,
+        )
+        is None
+    )
+
+
+def test_queue_dataset_capabilities_are_exact_and_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import execution_plane as execution_service
+    from app.services import worker_request_queue as queue_service
+
+    queue_id, run_id, version_id = uuid4(), uuid4(), uuid4()
+    binding = _binding_payload(queue_id)
+    queue_receipt = {
+        "schema_version": "rdc.request-queue-binding-receipt/v1",
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    composition_receipt = {
+        "schema_version": "rdc.request-queue-dataset-receipt/v1",
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "queue_binding_receipt_digest": canonical_fingerprint(queue_receipt),
+        "dataset_name": "default",
+        "dispatch_enabled": True,
+        "completion_order": "dataset-before-queue-handled",
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    payload = {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": str(version_id),
+        "manifest": _manifest(dataset=True),
+        "input_reference": {
+            "kind": "inline",
+            "value": {},
+            "request_queue": binding,
+            "queue_binding_receipt": queue_receipt,
+            "request_queue_dataset_receipt": composition_receipt,
+        },
+    }
+    worker = SimpleNamespace(
+        name="scraping-worker",
+        max_concurrency=1,
+        capabilities=[
+            "RUN_START",
+            "REQUEST_QUEUE_ACCESS",
+            "DATASET_APPEND",
+        ],
+    )
+    for settings in (execution_service.settings, queue_service.settings):
+        for name in (
+            "sandbox_execution_enabled",
+            "sandbox_canary_request_queue_enabled",
+            "sandbox_canary_dataset_writes_enabled",
+            "sandbox_canary_request_queue_dataset_enabled",
+        ):
+            monkeypatch.setattr(settings, name, True)
+        monkeypatch.setattr(settings, "sandbox_activation_mode", "canary")
+        monkeypatch.setattr(
+            settings,
+            "sandbox_canary_agent_version_id",
+            str(version_id),
+        )
+        monkeypatch.setattr(
+            settings,
+            "sandbox_canary_worker_name",
+            worker.name,
+        )
+
+    activation = execution_service._canary_activation(
+        worker,  # type: ignore[arg-type]
+        payload,
+        {"attestation_digest": "a" * 64},
+    )
+    assert activation is not None
+    assert activation.dataset_write_enabled is True
+    assert activation.request_queue_enabled is True
+    assert activation.request_queue_dataset_enabled is True
+
+    queue_capability = request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_dataset_enabled=True,
+    )
+    assert queue_capability is not None
+    assert queue_capability["schema_version"] == (
+        "rdc.request-queue-worker-capability/v4"
+    )
+    assert queue_capability["completion_order"] == (
+        "dataset-before-queue-handled"
+    )
+    dataset_capability = execution_service._dataset_append_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        dataset_write_enabled=True,
+        request_queue_dataset_enabled=True,
+    )
+    assert dataset_capability is not None
+    assert dataset_capability["schema_version"] == (
+        "rdc.dataset-worker-capability/v2"
+    )
+    assert dataset_capability["queue_id"] == str(queue_id)
+
+    sandbox = {"attestation_digest": "a" * 64}
+    worker_payload = {
+        **payload,
+        "sandbox": sandbox,
+        "activation": activation.model_dump(mode="json"),
+        "request_queue_capability": queue_capability,
+        "dataset_append_capability": dataset_capability,
+    }
+    worker_module = _worker_module()
+    result = worker_module._require_canary_activation(
+        worker_payload,
+        worker_name=worker.name,
+        egress_policy=None,
+        browser_policy=None,
+        browser_live_navigation_enabled=False,
+        dataset_writes_enabled=True,
+        key_value_store_enabled=False,
+        request_queue_enabled=True,
+        request_queue_http_enabled=False,
+        request_queue_browser_enabled=False,
+        request_queue_dataset_enabled=True,
+    )
+    assert result["request_queue_dataset_enabled"] is True
+
+    tampered_worker_payload = {
+        **worker_payload,
+        "dataset_append_capability": {
+            **dataset_capability,
+            "queue_id": str(uuid4()),
+        },
+    }
+    with pytest.raises(
+        worker_module.SandboxPolicyError,
+        match="Dataset capability receipt is invalid",
+    ):
+        worker_module._require_canary_activation(
+            tampered_worker_payload,
+            worker_name=worker.name,
+            egress_policy=None,
+            browser_policy=None,
+            browser_live_navigation_enabled=False,
+            dataset_writes_enabled=True,
+            key_value_store_enabled=False,
+            request_queue_enabled=True,
+            request_queue_http_enabled=False,
+            request_queue_browser_enabled=False,
+            request_queue_dataset_enabled=True,
+        )
+
+    composition_receipt["completion_order"] = "queue-before-dataset"
+    assert (
+        request_queue_capability(
+            worker,  # type: ignore[arg-type]
+            payload,
+            request_queue_enabled=True,
+            request_queue_dataset_enabled=True,
+        )
+        is None
+    )
+    assert (
+        execution_service._canary_activation(
+            worker,  # type: ignore[arg-type]
+            payload,
+            {"attestation_digest": "a" * 64},
         )
         is None
     )
@@ -729,6 +1014,7 @@ def test_queue_browser_worker_independently_validates_v3_receipts() -> None:
         "request_queue_enabled": True,
         "request_queue_http_enabled": False,
         "request_queue_browser_enabled": True,
+        "request_queue_dataset_enabled": False,
         "max_concurrency": 1,
     }
     capability = {
@@ -1232,6 +1518,90 @@ async def test_create_run_persists_gated_queue_browser_receipt(
     assert receipt["acquisition_mode"] == "controlled-browser"
     assert receipt["dispatch_enabled"] is dispatch_enabled
     assert receipt["agent_container_network"] == "none"
+    outboxes = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], RunCommandOutbox)
+    ]
+    assert len(outboxes) == (1 if dispatch_enabled else 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("dispatch_enabled", "expected_status"),
+    [(False, "DRAFT"), (True, "QUEUED")],
+)
+async def test_create_run_persists_gated_queue_dataset_composition(
+    monkeypatch: pytest.MonkeyPatch,
+    dispatch_enabled: bool,
+    expected_status: str,
+) -> None:
+    from app.services import runs as run_service
+
+    organization_id, project_id, agent_id = uuid4(), uuid4(), uuid4()
+    version_id, build_id, user_id, queue_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    version = SimpleNamespace(
+        id=version_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        agent_id=agent_id,
+        manifest=_manifest(dataset=True),
+    )
+    build = SimpleNamespace(
+        id=build_id,
+        status="SUCCEEDED",
+        artifact_digest="sha256:" + "d" * 64,
+    )
+    queue = SimpleNamespace(
+        id=queue_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    monkeypatch.setattr(
+        run_service,
+        "_request_queue_dataset_canary_enabled",
+        lambda _version: dispatch_enabled,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    result = await create_run(
+        session,  # type: ignore[arg-type]
+        version=version,  # type: ignore[arg-type]
+        user_id=user_id,
+        idempotency_key="queue-dataset-intent-1",
+        payload=CreateRunRequest(
+            build_id=build_id,
+            request_queue=_binding_payload(queue_id),  # type: ignore[arg-type]
+        ),
+        request_id="queue-dataset-intent-create",
+    )
+    runs = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], Run)
+    ]
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == expected_status
+    assert result["status"] == expected_status
+    receipt = run.input_reference["request_queue_dataset_receipt"]
+    assert isinstance(receipt, dict)
+    assert receipt["schema_version"] == (
+        "rdc.request-queue-dataset-receipt/v1"
+    )
+    assert receipt["dispatch_enabled"] is dispatch_enabled
+    assert receipt["completion_order"] == (
+        "dataset-before-queue-handled"
+    )
     outboxes = [
         call.args[0]
         for call in session.add.call_args_list

@@ -31,6 +31,14 @@ gates. Confirm the v3 receipt and worker capability bind both current policy
 digests and `agent_container_network=none`. Disable this independent gate first
 during a browser acquisition incident.
 
+For Queue plus Dataset, set `dataset=true`, register the worker with both
+`REQUEST_QUEUE_ACCESS` and `DATASET_APPEND`, and enable
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED=true` plus the existing Queue
+and Dataset gates in the API and worker. Confirm the composition receipt is
+dispatch-enabled and both lease capabilities bind the exact Queue and default
+Dataset with `dataset-before-queue-handled`. Disable the composition gate first
+during a persistence incident; do not manually mark claims HANDLED.
+
 The Run succeeds without starting Agent code when the Queue is empty. A claimed
 request becomes `HANDLED` on exit code zero and `FAILED` with the generic
 `AGENT_EXIT_NONZERO` code otherwise. A denied or failed Queue HTTP acquisition
@@ -40,7 +48,9 @@ the existing bounded expiry/reclaim lifecycle.
 ## Incident response
 
 Disable `RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED` first for an acquisition
-incident, or `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` to stop all Queue work.
+incident, `RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED` for a composed
+persistence incident, or `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` to stop all
+Queue work.
 Drain or stop the worker, inspect immutable Queue transitions, Run events,
 execution leases, and audit events by safe identifiers, then allow expired
 claims to reclaim. Reduce or rotate the exact allowlist before re-enabling.

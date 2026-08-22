@@ -118,6 +118,7 @@ class Settings(BaseSettings):
     sandbox_canary_request_queue_enabled: bool = False
     sandbox_canary_request_queue_http_enabled: bool = False
     sandbox_canary_request_queue_browser_enabled: bool = False
+    sandbox_canary_request_queue_dataset_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -457,6 +458,14 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Queue browser acquisition requires allowlisted web egress."
                 )
+
+        if self.sandbox_canary_request_queue_dataset_enabled and (
+            not self.sandbox_canary_request_queue_enabled
+            or not self.sandbox_canary_dataset_writes_enabled
+        ):
+            raise ValueError(
+                "Queue Dataset composition requires Queue and Dataset gates."
+            )
 
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:
             raise ValueError("Canary browser page limit is outside the safe range.")
