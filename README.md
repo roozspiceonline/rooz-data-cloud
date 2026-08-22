@@ -27,5 +27,10 @@ The recovery scheduler also detects stale workers, fences their active leases,
 and requires label-scoped container/workspace cleanup evidence before a
 restarted worker can resume claims.
 Production service supervision, environment separation, database and object
-restore drills, aggregate recovery metrics, and SLO alert contracts now complete
-the execution-recovery implementation pending final merge gates.
+restore drills, aggregate recovery metrics, and SLO alert contracts completed
+the execution-recovery workstream in PR #57 with exact-head RDC CI #198.
+
+The active Scheduler workstream now persists tenant-scoped one-time and
+fixed-interval Run schedules, bounded missed-run policies, immutable trigger
+history and duplicate-safe singleton dispatch. See
+[the Scheduler documentation](docs/scheduler/README.md).

@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     execution_recovery_sweep_interval_seconds: int = 10
     execution_recovery_sweep_batch_size: int = 100
     execution_recovery_stale_after_seconds: int = 60
+    schedule_dispatch_enabled: bool = True
+    schedule_dispatch_interval_seconds: int = 10
+    schedule_dispatch_batch_size: int = 100
 
     sandbox_execution_enabled: bool = False
     sandbox_required_profile: str = "rdc.sandbox/v1"
@@ -206,6 +209,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Execution recovery stale threshold must be at least two intervals "
                 "and no more than one hour."
+            )
+        if not 1 <= self.schedule_dispatch_interval_seconds <= 300:
+            raise ValueError(
+                "Schedule dispatch interval must be between 1 and 300 seconds."
+            )
+        if not 1 <= self.schedule_dispatch_batch_size <= 500:
+            raise ValueError(
+                "Schedule dispatch batch size must be between 1 and 500."
             )
         if self.sandbox_required_profile != "rdc.sandbox/v1":
             raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")

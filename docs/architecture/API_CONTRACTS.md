@@ -912,6 +912,24 @@ Every endpoint specification MUST define:
 
 ---
 
+## Scheduler API
+
+```text
+POST /api/v1/agent-versions/{version_id}/schedules
+GET  /api/v1/projects/{project_id}/schedules
+GET  /api/v1/schedules/{schedule_id}
+POST /api/v1/schedules/{schedule_id}/pause
+POST /api/v1/schedules/{schedule_id}/resume
+GET  /api/v1/schedules/{schedule_id}/triggers
+```
+
+Create requires `Idempotency-Key`, `schedule.create`, CSRF for sessions and a
+strict `rdc.schedule/v1` body. Ownership is derived from the authorized Agent
+version. Mutation requires `schedule.update`; metadata/history requires
+`schedule.read`. Collection cursors are signed and bound to Project/Schedule
+and the active status/outcome filter. No route accepts a trigger, Run ID,
+organization ID, Project ID or Agent ID from the request body.
+
 ## 19. API evolution
 
 - Breaking changes require a new major URL version.

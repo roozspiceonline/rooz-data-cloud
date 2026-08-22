@@ -17,6 +17,7 @@ from .api.routes.internal_execution import router as internal_execution_router
 from .api.routes.key_value_stores import router as key_value_stores_router
 from .api.routes.request_queues import router as request_queues_router
 from .api.routes.runs import router as runs_router
+from .api.routes.schedules import router as schedules_router
 from .api.routes.storage import router as storage_router
 from .core.config import get_settings
 from .core.errors import (
@@ -128,6 +129,7 @@ v1_router.include_router(datasets_router)
 v1_router.include_router(key_value_stores_router)
 v1_router.include_router(request_queues_router)
 v1_router.include_router(runs_router)
+v1_router.include_router(schedules_router)
 v1_router.include_router(execution_router)
 v1_router.include_router(storage_router)
 
@@ -179,6 +181,11 @@ async def foundation_status() -> dict[str, object]:
         "build_execution_isolated": True,
         "tenant_rls_required": True,
         "tenant_rls_enabled": True,
+        "schedule_persistence_enabled": True,
+        "schedule_trigger_history_immutable": True,
+        "schedule_dispatch_enabled": settings.schedule_dispatch_enabled,
+        "schedule_dispatch_singleton_lock": "postgresql-advisory-xact",
+        "schedule_missed_run_policies": ["SKIP", "FIRE_ONCE"],
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,

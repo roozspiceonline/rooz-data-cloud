@@ -11,6 +11,7 @@ PERMISSIONS = frozenset(
         "dataset.create", "dataset.read", "dataset.write", "dataset.export",
         "kv.create", "kv.read", "kv.write", "kv.delete",
         "queue.create", "queue.read", "queue.enqueue",
+        "schedule.create", "schedule.read", "schedule.update",
         "secret.read_metadata", "secret.create", "secret.replace", "secret.delete",
         "api_key.create", "api_key.read_metadata", "api_key.revoke", "audit.read",
     }
@@ -29,6 +30,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "dataset.create", "dataset.read", "dataset.write", "dataset.export",
             "kv.create", "kv.read", "kv.write", "kv.delete",
             "queue.create", "queue.read", "queue.enqueue",
+            "schedule.create", "schedule.read", "schedule.update",
             "secret.read_metadata", "secret.create", "secret.replace",
             "secret.delete", "api_key.create", "api_key.read_metadata",
             "api_key.revoke",
@@ -39,6 +41,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read", "membership.read", "project.read", "agent.read",
             "build.read", "run.read", "execution.read", "storage.read",
             "storage.download", "dataset.read", "dataset.export", "kv.read", "queue.read",
+            "schedule.read",
             "api_key.read_metadata",
         }
     ),
@@ -47,14 +50,14 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read", "membership.read", "project.read", "agent.read",
             "build.read", "run.create", "run.read", "run.cancel",
             "execution.read", "storage.read", "storage.download", "dataset.read",
-            "dataset.export", "kv.read", "queue.read",
+            "dataset.export", "kv.read", "queue.read", "schedule.read",
         }
     ),
     "viewer": frozenset(
         {
             "organization.read", "project.read", "agent.read", "build.read",
             "run.read", "execution.read", "storage.read", "storage.download",
-            "dataset.read", "dataset.export", "kv.read", "queue.read",
+            "dataset.read", "dataset.export", "kv.read", "queue.read", "schedule.read",
         }
     ),
     "billing_manager": frozenset({"organization.read"}),

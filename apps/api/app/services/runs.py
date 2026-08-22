@@ -607,6 +607,8 @@ async def create_run(
     idempotency_key: str,
     payload: CreateRunRequest,
     request_id: str,
+    actor_type: str = "user",
+    actor_id: str | None = None,
 ) -> dict[str, object]:
     validate_idempotency_key(idempotency_key)
     build = await session.scalar(
@@ -841,8 +843,8 @@ async def create_run(
         session,
         organization_id=record.organization_id,
         project_id=record.project_id,
-        actor_type="user",
-        actor_id=str(user_id),
+        actor_type=actor_type,
+        actor_id=actor_id or str(user_id),
         action=(
             "run.browser_navigation_intent_recorded"
             if navigation_receipt_only

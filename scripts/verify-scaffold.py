@@ -29,6 +29,26 @@ FORBIDDEN = [
     (re.compile(r"github_pat_[A-Za-z0-9_]{20,}"), "GitHub token"),
     (re.compile(r"ghp_[A-Za-z0-9]{20,}"), "GitHub classic token"),
 ]
+IGNORED_PARTS = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".next",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".turbo",
+        ".venv",
+        "node_modules",
+    }
+)
+
+
+def repository_files(pattern: str):
+    return (
+        path
+        for path in ROOT.rglob(pattern)
+        if not IGNORED_PARTS.intersection(path.relative_to(ROOT).parts)
+    )
 
 
 def fail(message: str) -> None:
@@ -41,7 +61,7 @@ def main() -> None:
     if missing:
         fail("Missing required files: " + ", ".join(missing))
 
-    for path in ROOT.rglob("*.json"):
+    for path in repository_files("*.json"):
         try:
             json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
@@ -53,7 +73,7 @@ def main() -> None:
         fail("Python migration compilation failed")
 
     text_files = []
-    for path in ROOT.rglob("*"):
+    for path in repository_files("*"):
         if not path.is_file() or path.suffix in {".pyc", ".zip"}:
             continue
         try:
