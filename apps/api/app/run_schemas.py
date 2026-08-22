@@ -318,6 +318,7 @@ class CreateRunRequest(StrictModel):
             reserved_queue_keys = {
                 "_rdc_queue",
                 "_rdc_queue_http",
+                "_rdc_queue_browser",
                 "_rdc_web_requests",
                 "_rdc_web_fetch_result",
             }

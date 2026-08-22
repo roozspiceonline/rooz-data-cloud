@@ -34,6 +34,14 @@ browser-egress policy but always persists as DRAFT with
 `dispatch_enabled=false`; no worker capability or live browser execution is
 issued by this foundation.
 
+The trusted worker boundary now also defines the only admissible Queue/browser
+acquisition plan: one `goto` to the validated claimed HTTPS URL followed by one
+bounded `html` extraction. The normalized `rdc.queue-browser-result/v1`
+envelope binds the Queue and request identifiers to the validated browser
+navigation result and never contains the claim token. Caller input reserves
+`_rdc_queue_browser` for this future worker-produced envelope. This protocol is
+deliberately inert while the v3 receipt remains non-dispatching.
+
 The feature remains disabled unless both API and worker use
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=true`, the sandbox master gate and
 canary activation are enabled, and the exact worker has

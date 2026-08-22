@@ -17,6 +17,7 @@ need(
     "request_queue: RequestQueueBindingInput | None",
     "reserved _rdc_queue",
     '"_rdc_queue_http"',
+    '"_rdc_queue_browser"',
     '"_rdc_web_requests"',
 )
 need(
@@ -69,7 +70,10 @@ need(
     "queue_completion_payload(",
     "queue_http_fetch_envelope(",
     "queue_http_agent_result(",
+    "queue_browser_navigation_plan(",
+    "queue_browser_agent_result(",
     '"rdc.queue-http-result/v1"',
+    '"rdc.queue-browser-result/v1"',
 )
 need(
     "apps/api/tests/test_scraping_runtime_queue_foundation.py",

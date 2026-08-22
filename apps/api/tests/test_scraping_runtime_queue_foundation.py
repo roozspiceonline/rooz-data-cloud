@@ -79,7 +79,11 @@ def test_run_queue_binding_is_strict_and_reserved() -> None:
                 "request_queue": _binding_payload(queue_id),
             }
         )
-    for reserved in ("_rdc_queue_http", "_rdc_web_requests"):
+    for reserved in (
+        "_rdc_queue_http",
+        "_rdc_queue_browser",
+        "_rdc_web_requests",
+    ):
         with pytest.raises(ValidationError, match="reserved _rdc_queue"):
             CreateRunRequest.model_validate(
                 {
@@ -122,6 +126,8 @@ def test_queue_http_gates_are_independent_and_fail_closed() -> None:
             egress_policy_digest="d" * 64,
             request_queue_http_enabled=True,
         )
+
+
 def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
     protocol = _queue_protocol_module()
     queue_id = str(uuid4())
@@ -227,6 +233,94 @@ def test_queue_http_protocol_is_claim_derived_and_token_free() -> None:
                 "budget": {},
             },
         )
+
+
+def test_queue_browser_protocol_is_claim_derived_bounded_and_token_free() -> None:
+    protocol = _queue_protocol_module()
+    claim = {
+        "schema_version": "rdc.queue-worker-claim/v1",
+        "request_id": str(uuid4()),
+        "queue_id": str(uuid4()),
+        "url": "https://example.com/items/1",
+        "user_data": {"page": 1},
+        "attempt_count": 1,
+        "claim_token": str(uuid4()),
+    }
+    plan = protocol.queue_browser_navigation_plan(
+        claim,
+        max_dom_bytes=131_072,
+    )
+    assert plan == {
+        "schema_version": "rdc.browser/v2",
+        "steps": [
+            {
+                "id": "queue-goto",
+                "type": "goto",
+                "url": claim["url"],
+            },
+            {
+                "id": "queue-html",
+                "type": "extract_html",
+                "selector": "html",
+                "max_bytes": 131_072,
+            },
+        ],
+    }
+    navigation_result = {
+        "schema_version": "rdc.browser-navigation-result/v1",
+        "request_digest": canonical_fingerprint(plan),
+        "browser_policy_digest": "a" * 64,
+        "browser_egress_policy_digest": "b" * 64,
+        "browser_network": "none",
+        "gateway_transport": "unix",
+        "gateway_live_forwarding": True,
+        "final_url": claim["url"],
+        "steps": [
+            {
+                "id": "queue-goto",
+                "type": "goto",
+                "url": claim["url"],
+            },
+            {
+                "id": "queue-html",
+                "type": "extract_html",
+                "html": "<html></html>",
+                "truncated": False,
+            },
+        ],
+        "egress_budget": {
+            "requests_used": 1,
+            "bytes_received": 13,
+            "redirects_used": 0,
+            "max_requests": 8,
+            "max_total_bytes": 4_194_304,
+            "max_redirects": 3,
+        },
+    }
+    result = protocol.queue_browser_agent_result(
+        claim,
+        plan,
+        navigation_result,
+    )
+    assert result["schema_version"] == "rdc.queue-browser-result/v1"
+    assert result["request_id"] == claim["request_id"]
+    assert "claim_token" not in result
+    assert "claim_token" not in str(result)
+
+    tampered_plan = {**plan, "steps": [*plan["steps"]]}
+    tampered_plan["steps"][0] = {  # type: ignore[index]
+        **tampered_plan["steps"][0],  # type: ignore[index]
+        "url": "https://attacker.example/",
+    }
+    with pytest.raises(protocol.QueueWorkerBoundaryError, match="claim"):
+        protocol.queue_browser_agent_result(
+            claim,
+            tampered_plan,
+            navigation_result,
+        )
+
+    with pytest.raises(protocol.QueueWorkerBoundaryError, match="DOM limit"):
+        protocol.queue_browser_navigation_plan(claim, max_dom_bytes=65_535)
 
 
 def test_queue_capability_is_exact_run_worker_and_queue_bound(
