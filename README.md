@@ -30,7 +30,13 @@ Production service supervision, environment separation, database and object
 restore drills, aggregate recovery metrics, and SLO alert contracts completed
 the execution-recovery workstream in PR #57 with exact-head RDC CI #198.
 
-The active Scheduler workstream now persists tenant-scoped one-time and
-fixed-interval Run schedules, bounded missed-run policies, immutable trigger
-history and duplicate-safe singleton dispatch. See
-[the Scheduler documentation](docs/scheduler/README.md).
+The Scheduler workstream completed in PR #66 with exact-head RDC CI #206. It
+persists tenant-scoped one-time and fixed-interval Run schedules, bounded
+missed-run policies, immutable trigger history and duplicate-safe singleton
+dispatch. See [the Scheduler documentation](docs/scheduler/README.md).
+
+The active scraping-runtime workstream now binds one offline Run to one
+server-verified tenant Queue through an exact lease capability. The trusted
+worker validates and injects one claim without exposing its claim token or any
+control-plane credential to the Agent. See
+[the Scraping Runtime documentation](docs/scraping-runtime/README.md).

@@ -52,7 +52,7 @@ def test_phase1o_increment4_worker_capability_is_explicit() -> None:
     schemas = Path("app/execution_schemas.py").read_text(encoding="utf-8")
     assert '"KV_ACCESS"' in schemas
     assert "key_value_store_enabled: bool = False" in schemas
-    assert "max_length=7" in schemas
+    assert "max_length=8" in schemas
 
 
 def test_phase1o_increment4_internal_routes_are_hidden() -> None:

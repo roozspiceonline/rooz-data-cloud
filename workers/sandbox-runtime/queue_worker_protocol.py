@@ -1,0 +1,144 @@
+from __future__ import annotations
+
+import ipaddress
+import json
+import math
+from typing import NoReturn
+from urllib.parse import urlsplit
+from uuid import UUID
+
+MAX_USER_DATA_BYTES = 65_536
+MAX_DEPTH = 32
+
+
+class QueueWorkerBoundaryError(ValueError):
+    pass
+
+
+def _fail(message: str) -> NoReturn:
+    raise QueueWorkerBoundaryError(message)
+
+
+def _json_value(value: object, *, depth: int = 0) -> None:
+    if depth > MAX_DEPTH:
+        _fail("Queue user data exceeds the maximum nesting depth.")
+    if value is None or isinstance(value, (bool, int, str)):
+        return
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            _fail("Queue user data contains a non-finite number.")
+        return
+    if isinstance(value, list):
+        for item in value:
+            _json_value(item, depth=depth + 1)
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                _fail("Queue user data keys must be strings.")
+            _json_value(item, depth=depth + 1)
+        return
+    _fail("Queue user data must be JSON-compatible.")
+
+
+def _https_url(value: object) -> str:
+    if not isinstance(value, str) or not 1 <= len(value) <= 2_048:
+        _fail("Queue request URL is invalid.")
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError("Queue request URL is invalid.") from exc
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+        or any(character.isspace() for character in value)
+    ):
+        _fail("Queue request URL is invalid.")
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        pass
+    else:
+        _fail("Queue request URL cannot use an IP literal.")
+    return value
+
+
+def validate_queue_claim_result(
+    value: object,
+    *,
+    expected_queue_id: str,
+) -> dict[str, object]:
+    fields = {
+        "id",
+        "queue_id",
+        "url",
+        "user_data",
+        "attempt_count",
+        "claim_token",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        _fail("Queue claim result fields are invalid.")
+    try:
+        request_id = str(UUID(str(value["id"])))
+        queue_id = str(UUID(str(value["queue_id"])))
+        claim_token = str(UUID(str(value["claim_token"])))
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue claim identifiers are invalid."
+        ) from exc
+    if queue_id != expected_queue_id:
+        _fail("Queue claim is outside the bound Queue.")
+    attempt_count = value["attempt_count"]
+    if (
+        isinstance(attempt_count, bool)
+        or not isinstance(attempt_count, int)
+        or not 1 <= attempt_count <= 100
+    ):
+        _fail("Queue claim attempt count is invalid.")
+    user_data = value["user_data"]
+    _json_value(user_data)
+    try:
+        encoded = json.dumps(
+            user_data,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue user data cannot be encoded."
+        ) from exc
+    if len(encoded) > MAX_USER_DATA_BYTES:
+        _fail("Queue user data exceeds the worker limit.")
+    return {
+        "schema_version": "rdc.queue-worker-claim/v1",
+        "request_id": request_id,
+        "queue_id": queue_id,
+        "url": _https_url(value["url"]),
+        "user_data": user_data,
+        "attempt_count": attempt_count,
+        "claim_token": claim_token,
+    }
+
+
+def queue_completion_payload(
+    claim: dict[str, object],
+    *,
+    handled: bool,
+) -> dict[str, object]:
+    return {
+        "queue_id": str(claim["queue_id"]),
+        "request_id": str(claim["request_id"]),
+        "claim_token": str(claim["claim_token"]),
+        "status": "HANDLED" if handled else "FAILED",
+        "failure_code": None if handled else "AGENT_EXIT_NONZERO",
+        "failure_summary": (
+            None if handled else "Queue-bound Agent execution failed."
+        ),
+    }

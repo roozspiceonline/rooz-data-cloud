@@ -267,6 +267,10 @@ class BrowserNavigationInput(StrictModel):
         return self
 
 
+class RequestQueueBindingInput(StrictModel):
+    schema_version: Literal["rdc.run-queue/v1"] = "rdc.run-queue/v1"
+    queue_id: UUID
+
 
 class RuntimeConfigurationInput(StrictModel):
     memory_mb: int | None = Field(default=None, ge=128, le=32768)
@@ -280,6 +284,7 @@ class CreateRunRequest(StrictModel):
     web_fetch: WebFetchEnvelopeInput | None = None
     browser: BrowserSessionInput | None = None
     browser_navigation: BrowserNavigationInput | None = None
+    request_queue: RequestQueueBindingInput | None = None
     runtime: RuntimeConfigurationInput = Field(
         default_factory=RuntimeConfigurationInput
     )
@@ -302,11 +307,16 @@ class CreateRunRequest(StrictModel):
                 self.web_fetch,
                 self.browser,
                 self.browser_navigation,
+                self.request_queue,
             )
         )
         if external_surfaces > 1:
             raise ValueError(
-                "A Run may use only one external web/browser intent surface."
+                "A Run may use only one external or Queue intent surface."
+            )
+        if self.request_queue is not None and "_rdc_queue" in self.input:
+            raise ValueError(
+                "Run input cannot populate the reserved _rdc_queue key."
             )
         return self
 

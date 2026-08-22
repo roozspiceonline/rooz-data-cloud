@@ -266,6 +266,36 @@ class RdcWorkerClient:
             raise WorkerProtocolError("KV-mutate response was empty.")
         return response
 
+    def queue_claim(
+        self,
+        lease_id: str,
+        lease_token: str,
+        *,
+        queue_id: str,
+    ) -> dict[str, Any] | None:
+        return self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/queue-claim",
+            {"queue_id": queue_id},
+            lease_token=lease_token,
+        )
+
+    def queue_complete(
+        self,
+        lease_id: str,
+        lease_token: str,
+        payload: dict[str, object],
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/queue-complete",
+            payload,
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Queue-complete response was empty.")
+        return response
+
     def complete(
         self,
         lease_id: str,

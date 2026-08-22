@@ -17,12 +17,13 @@ test gates pass on the exact merged commit.
 | Tenant-scoped Key-Value Stores | Complete | Phase 1O, version history, RLS, controlled worker capability |
 | Tenant-scoped Request Queues | Complete | Phase 1P, PR #56, migration `0015`, RDC CI #189 |
 | Production Execution Lifecycle / Recovery | Complete | PR #57, migrations `0016`–`0020`, RDC CI #198 |
+| Scheduler | Complete | PR #66, migration `0021`, RDC CI #206 |
 
 ## Active work
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scheduler | Foundation implemented — verification and merge gate | Execution recovery, Runs and immutable Agent versions |
+| Scraping runtime | Queue-bound offline primitive implemented — composed HTTP/browser and Dataset/KV increments remain | Scheduler, execution recovery, Queue, Dataset and KV protocols |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -44,25 +45,28 @@ cleanup recovery evidence before claims and RLS authority resume.
 The seventh increment adds hardened service supervision, environment identity
 separation, PostgreSQL backup/restore and migration rollback rehearsal,
 versioned-object recovery canaries, aggregate recovery metrics, and SLO alerts.
-The Scheduler foundation adds persistent one-time and fixed-interval schedules,
-bounded missed-run behavior, duplicate-safe Run creation, immutable trigger
-history, tenant RLS and a singleton-safe dispatch service. Its current gate is
-migration, adversarial, full-suite and exact-head CI verification.
+The merged Scheduler foundation adds persistent one-time and fixed-interval
+schedules, bounded missed-run behavior, duplicate-safe Run creation, immutable
+trigger history, tenant RLS and a singleton-safe dispatch service.
+
+The first scraping-runtime increment binds a Run to one server-verified tenant
+Queue, issues an exact lease-scoped capability, independently validates the
+claim in the worker, withholds claim tokens from Agent input, and completes one
+request per Run. It remains offline and false-by-default. Controlled dynamic
+HTTP/browser acquisition and composed Dataset/KV persistence remain active work.
 
 ## Remaining RDC v1 workstreams
 
-1. Scraping runtime: reusable controlled HTTP/browser, queue, Dataset and KV
-   primitives without expanding egress authority.
-2. Proxy/egress: tenant-scoped policy, credential isolation, rotation and audit.
-3. Events/webhooks: signed delivery, retry/idempotency, history and failure
+1. Proxy/egress: tenant-scoped policy, credential isolation, rotation and audit.
+2. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
-4. Observability: structured run/worker logs, diagnostics, metrics and safe
+3. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
-5. Usage controls: quotas, rate limits, concurrency and auditable failures.
-6. SDK/CLI and Console: API-backed operations for all major resources.
-7. Platform-wide production operations: release automation, registry/SBOM,
+4. Usage controls: quotas, rate limits, concurrency and auditable failures.
+5. SDK/CLI and Console: API-backed operations for all major resources.
+6. Platform-wide production operations: release automation, registry/SBOM,
    capacity, disaster recovery, and environment promotion for all workstreams.
-8. End-to-end acceptance and final release/security audit.
+7. End-to-end acceptance and final release/security audit.
 
 ## Dependency order
 

@@ -491,7 +491,7 @@ def verify_increment4() -> None:
     for marker in [
         '"KV_ACCESS"',
         "key_value_store_enabled: bool = False",
-        "max_length=7",
+        "max_length=8",
     ]:
         require(marker in schemas, "Increment 4 schema missing: " + marker)
 

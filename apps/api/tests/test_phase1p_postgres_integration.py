@@ -16,6 +16,7 @@ from app.core.pagination import (
     QueueTransitionCursorPosition,
     RequestQueueListCursorPosition,
 )
+from app.core.security import canonical_fingerprint
 from app.models import RequestQueue
 from app.request_queue_protocol import validate_queue_enqueue
 from app.services.request_queues import (
@@ -28,6 +29,51 @@ from app.services.request_queues import (
 from app.services.worker_request_queue import complete_worker_queue_request
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
+
+
+def _worker_queue_snapshot(queue_id: UUID, run_id: UUID) -> dict[str, object]:
+    binding = {"schema_version": "rdc.run-queue/v1", "queue_id": str(queue_id)}
+    receipt = {
+        "schema_version": "rdc.request-queue-binding-receipt/v1",
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": "phase1p-version",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    capability = {
+        "schema_version": "rdc.request-queue-worker-capability/v1",
+        "queue_id": str(queue_id),
+        "run_id": str(run_id),
+        "agent_version_id": "phase1p-version",
+        "worker_name": "phase1p-worker",
+        "max_claims_per_run": 1,
+        "claim_completion_required": True,
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+        "enabled": True,
+    }
+    return {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": "phase1p-version",
+        "manifest": {
+            "capabilities": {
+                "network": "none",
+                "browser": False,
+                "dataset": False,
+                "keyValueStore": False,
+                "requestQueue": True,
+            }
+        },
+        "input_reference": {
+            "value": {},
+            "request_queue": binding,
+            "queue_binding_receipt": receipt,
+        },
+        "activation": {"request_queue_enabled": True},
+        "request_queue_capability": capability,
+    }
 
 
 async def _database_available() -> bool:
@@ -682,15 +728,13 @@ async def test_postgres_worker_completion_emits_tenant_bound_audit_event(
     monkeypatch.setattr(
         worker_service.settings, "sandbox_canary_agent_version_id", "phase1p-version"
     )
+    lease_id, run_id = uuid4(), uuid4()
     lease = SimpleNamespace(
-        id=uuid4(),
+        id=lease_id,
         organization_id=org_id,
         project_id=project_id,
         work_kind="RUN_START",
-        payload_snapshot={
-            "agent_version_id": "phase1p-version",
-            "manifest": {"capabilities": {"requestQueue": True}},
-        },
+        payload_snapshot=_worker_queue_snapshot(queue_id, run_id),
     )
     worker = SimpleNamespace(
         id=worker_id, name="phase1p-worker", capabilities=["REQUEST_QUEUE_ACCESS"]
@@ -757,15 +801,13 @@ async def test_postgres_stale_claim_token_cannot_complete(monkeypatch: pytest.Mo
     monkeypatch.setattr(
         worker_service.settings, "sandbox_canary_agent_version_id", "phase1p-version"
     )
+    lease_id, run_id = uuid4(), uuid4()
     lease = SimpleNamespace(
-        id=uuid4(),
+        id=lease_id,
         organization_id=org_id,
         project_id=project_id,
         work_kind="RUN_START",
-        payload_snapshot={
-            "agent_version_id": "phase1p-version",
-            "manifest": {"capabilities": {"requestQueue": True}},
-        },
+        payload_snapshot=_worker_queue_snapshot(queue_id, run_id),
     )
     worker = SimpleNamespace(
         id=worker_id, name="phase1p-worker", capabilities=["REQUEST_QUEUE_ACCESS"]

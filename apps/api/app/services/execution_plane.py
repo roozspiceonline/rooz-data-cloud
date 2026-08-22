@@ -82,6 +82,7 @@ from .runs import (
     sanitize_event_payload,
 )
 from .worker_key_value_store import key_value_store_capability
+from .worker_request_queue import request_queue_capability
 
 settings = get_settings()
 PROJECT_EXECUTION_SLOT_KINDS = {"BUILD", "RUN_START"}
@@ -183,6 +184,7 @@ def _canary_constraints(
     browser: bool = False,
     dataset: bool = False,
     key_value_store: bool = False,
+    request_queue: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -199,7 +201,7 @@ def _canary_constraints(
         "browser": browser,
         "dataset": dataset,
         "key_value_store": key_value_store,
-        "request_queue": False,
+        "request_queue": request_queue,
         "secrets": False,
         "max_concurrency": 1,
     }
@@ -262,13 +264,29 @@ def _canary_activation(
     key_value_store = capabilities.get("keyValueStore")
     if not isinstance(key_value_store, bool):
         return None
-    if capabilities.get("requestQueue") is not False:
+    request_queue = capabilities.get("requestQueue")
+    if not isinstance(request_queue, bool):
         return None
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
+    queue_runtime_enabled = request_queue and work_kind == "RUN_START"
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
     if work_kind == "RUN_START" and browser and kv_runtime_enabled:
+        return None
+    if queue_runtime_enabled and (
+        network != "none"
+        or browser
+        or dataset
+        or key_value_store
+        or not settings.sandbox_canary_request_queue_enabled
+        or request_queue_capability(
+            worker,
+            payload,
+            request_queue_enabled=True,
+        )
+        is None
+    ):
         return None
     if dataset and (
         work_kind != "RUN_START"
@@ -347,6 +365,7 @@ def _canary_activation(
         browser=browser,
         dataset=dataset,
         key_value_store=kv_runtime_enabled,
+        request_queue=queue_runtime_enabled,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -373,6 +392,7 @@ def _canary_activation(
         browser_policy_digest=browser_policy_digest,
         dataset_write_enabled=dataset,
         key_value_store_enabled=kv_runtime_enabled,
+        request_queue_enabled=queue_runtime_enabled,
     )
 
 
@@ -497,13 +517,29 @@ def _sandbox_claim_policy(
     key_value_store = capabilities.get("keyValueStore")
     if not isinstance(key_value_store, bool):
         return None
-    if capabilities.get("requestQueue") is not False:
+    request_queue = capabilities.get("requestQueue")
+    if not isinstance(request_queue, bool):
         return None
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
+    queue_runtime_enabled = request_queue and work_kind == "RUN_START"
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
     if work_kind == "RUN_START" and browser and kv_runtime_enabled:
+        return None
+    if queue_runtime_enabled and (
+        network != "none"
+        or browser
+        or dataset
+        or key_value_store
+        or not settings.sandbox_canary_request_queue_enabled
+        or request_queue_capability(
+            worker,
+            payload,
+            request_queue_enabled=True,
+        )
+        is None
+    ):
         return None
     if dataset and (
         work_kind != "RUN_START"
@@ -1910,6 +1946,13 @@ async def claim_work(
                     and activation.key_value_store_enabled
                 ),
             )
+        )
+        claim_payload["request_queue_capability"] = request_queue_capability(
+            worker,
+            claim_payload,
+            request_queue_enabled=(
+                activation is not None and activation.request_queue_enabled
+            ),
         )
         lease.payload_digest = canonical_fingerprint(claim_payload)
         lease.payload_snapshot = claim_payload
