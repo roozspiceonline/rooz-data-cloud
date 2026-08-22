@@ -1056,7 +1056,7 @@ activation object and expected source/image lineage.
 The Queue ID is resolved against the immutable Agent version's server-derived
 organization and Project. Cross-tenant or missing Queues return the same 404.
 The field cannot be combined with web-fetch or browser intent. Caller input
-cannot set `_rdc_queue`, `_rdc_queue_http`, `_rdc_web_requests`, or
+cannot set `_rdc_queue`, `_rdc_queue_http`, `_rdc_queue_browser`, `_rdc_web_requests`, or
 `_rdc_web_fetch_result`.
 
 Eligible execution claims carry immutable Queue binding and worker-capability
@@ -1082,3 +1082,10 @@ derives exactly one GET from the claimed URL, uses only the existing bounded
 HTTPS broker, validates its result, and injects `_rdc_queue_http` without the
 claim token. This mode is false by default and cannot be combined with browser,
 Dataset, KV, caller web-fetch, or legacy web-request input.
+
+When the immutable version also declares `browser=true`, the independently
+gated live canary emits `rdc.request-queue-binding-receipt/v3` and
+`rdc.request-queue-worker-capability/v3`, binding both current browser-policy
+digests. The trusted worker derives one bounded v2 navigation plan from the
+claimed HTTPS URL, validates the browser result, and injects the token-free
+`_rdc_queue_browser` envelope before running the Agent with network disabled.

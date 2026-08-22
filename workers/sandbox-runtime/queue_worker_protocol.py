@@ -244,6 +244,7 @@ def queue_browser_navigation_plan(
                 "id": "queue-goto",
                 "type": "goto",
                 "url": _https_url(claim.get("url")),
+                "wait_until": "domcontentloaded",
             },
             {
                 "id": "queue-html",

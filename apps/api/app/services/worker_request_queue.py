@@ -231,6 +231,7 @@ def _enabled(
         and isinstance(activation, dict)
         and activation.get("request_queue_enabled") is True
     )
+    input_reference = snapshot.get("input_reference")
     expected = request_queue_capability(
         worker,
         snapshot,
@@ -242,7 +243,30 @@ def _enabled(
         egress_policy_digest=(
             str(activation["egress_policy_digest"])
             if isinstance(activation, dict)
+            and activation.get("request_queue_http_enabled") is True
             and isinstance(activation.get("egress_policy_digest"), str)
+            else None
+        ),
+        request_queue_browser_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_browser_enabled") is True
+        ),
+        browser_policy_digest=(
+            str(activation["browser_policy_digest"])
+            if isinstance(activation, dict)
+            and activation.get("request_queue_browser_enabled") is True
+            and isinstance(activation.get("browser_policy_digest"), str)
+            else None
+        ),
+        browser_egress_policy_digest=(
+            str(input_reference["request_queue_browser_egress_policy_digest"])
+            if isinstance(input_reference, dict)
+            and isinstance(
+                input_reference.get(
+                    "request_queue_browser_egress_policy_digest"
+                ),
+                str,
+            )
             else None
         ),
     )

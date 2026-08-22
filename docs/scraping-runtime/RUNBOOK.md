@@ -23,11 +23,13 @@ has `acquisition_mode=brokered-http`, the current egress-policy digest,
 `dispatch_enabled=true`, and `agent_container_network=none`. A disabled Queue
 HTTP gate produces a DRAFT receipt-only Run rather than dispatching work.
 
-Keep `RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false` until the v3
-activation and worker execution path is present and exact-head CI is green.
-Enabling it alone cannot dispatch the current DRAFT receipts. Configuration
-validation also refuses it unless Queue, live-browser, web-egress, and a
-non-empty exact-host allowlist are enabled on both trust boundaries.
+For Queue/browser acquisition, use an immutable version with `browser=true` and
+`network=web-egress`, then enable
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=true` in both API and worker
+environments together with the Queue, browser, live-navigation, and web-egress
+gates. Confirm the v3 receipt and worker capability bind both current policy
+digests and `agent_container_network=none`. Disable this independent gate first
+during a browser acquisition incident.
 
 The Run succeeds without starting Agent code when the Queue is empty. A claimed
 request becomes `HANDLED` on exit code zero and `FAILED` with the generic

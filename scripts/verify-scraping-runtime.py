@@ -29,9 +29,9 @@ need(
     '"rdc.request-queue-binding-receipt/v3"',
     '"acquisition_mode": "brokered-http"',
     '"acquisition_mode": "controlled-browser"',
-    '"dispatch_enabled": False',
     '"agent_container_network": "none"',
     "_request_queue_http_canary_enabled",
+    "_request_queue_browser_canary_enabled",
     '"direct_database_access": False',
 )
 need(
@@ -52,6 +52,7 @@ need(
     "apps/api/app/services/execution_plane.py",
     "request_queue_capability(",
     "activation.request_queue_enabled",
+    "activation.request_queue_browser_enabled",
 )
 need(
     "workers/sandbox-runtime/worker.py",
@@ -63,6 +64,8 @@ need(
     "queue_http_fetch_envelope(",
     "queue_http_agent_result(",
     '"QUEUE_HTTP_FETCH_FAILED"',
+    "_queue_browser_acquire(",
+    '"QUEUE_BROWSER_NAVIGATION_FAILED"',
 )
 need(
     "workers/sandbox-runtime/queue_worker_protocol.py",
@@ -86,7 +89,10 @@ need(
     "test_queue_http_gates_are_independent_and_fail_closed",
     "test_queue_http_capability_binds_egress_policy",
     "test_create_run_persists_brokered_queue_http_receipt",
-    "test_create_run_persists_non_dispatching_queue_browser_receipt",
+    "test_create_run_persists_gated_queue_browser_receipt",
+    "test_queue_browser_control_plane_activation_is_exact_and_fail_closed",
+    "test_queue_browser_worker_independently_validates_v3_receipts",
+    "test_queue_browser_live_acquisition_is_claim_derived_and_token_free",
 )
 need(
     ".env.example",
