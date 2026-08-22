@@ -27,7 +27,10 @@ feature branch remains preserved.
    `REQUEST_QUEUE_ACCESS`, manifest `requestQueue: true`, and an ACTIVE,
    unexpired `RUN_START` lease for the same organization and project. Worker
    RLS is limited to the Queue/request lifecycle and transition inserts;
-   receipts remain outside worker authority.
+   receipts remain outside worker authority. The Scraping Runtime foundation
+   additionally binds each eligible Run to one server-verified Queue and one
+   exact worker capability; the trusted worker withholds claim tokens from
+   Agent input.
 6. **Immutable lineage and safe reads.** Every enqueue, claim, reclaim, handled,
    and failed transition writes tenant-bound transition and audit lineage in
    the same transaction. Request identity, receipts, transitions, and audit

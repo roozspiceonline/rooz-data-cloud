@@ -13,9 +13,22 @@ both:
   immutable AgentVersion.
 
 The worker requires `max_concurrency=1`, recomputes the sandbox-policy digest,
-rejects secrets and any capability outside `offline-minimal`, re-verifies
-source/image digests, and attaches activation/source/image lineage to every
-uploaded execution artifact.
+rejects secrets, re-verifies source/image digests, and attaches
+activation/source/image lineage to every uploaded execution artifact. The
+initial Phase 1I profile was `offline-minimal`.
+
+Later canary profiles add independently gated brokered web egress, controlled
+browser, Dataset, KV and Request Queue paths. Each path must reproduce its
+immutable operation-specific capability receipt; capabilities are not implied
+by the sandbox master gate.
+
+## Queue-bound scraping input
+
+With the Request Queue gate enabled, an offline `RUN_START` may claim one item
+from the exact Queue bound into the Run. The worker validates the response,
+injects `_rdc_queue` without its claim token, runs the Agent with network none,
+then completes the claim from the trusted worker process. Queue access cannot
+currently be combined with browser, Dataset, KV, or network capabilities.
 
 `RUN_CANCEL` remains available for cleanup even when execution is later
 disabled.

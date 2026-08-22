@@ -413,6 +413,15 @@ class Settings(BaseSettings):
                 "master gate and canary mode."
             )
 
+        if self.sandbox_canary_request_queue_enabled and (
+            not self.sandbox_execution_enabled
+            or self.sandbox_activation_mode != "canary"
+        ):
+            raise ValueError(
+                "Request Queue worker access requires the sandbox "
+                "master gate and canary mode."
+            )
+
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:
             raise ValueError("Canary browser page limit is outside the safe range.")
         if not 1 <= self.sandbox_canary_browser_max_actions <= 16:

@@ -42,6 +42,11 @@ from kv_worker_protocol import (
     validate_kv_worker_output,
 )
 from policy import SandboxPolicyError, verify_host
+from queue_worker_protocol import (
+    QueueWorkerBoundaryError,
+    queue_completion_payload,
+    validate_queue_claim_result,
+)
 from rdc_worker_client import (
     RdcWorkerClient,
     WorkerProtocolError,
@@ -210,6 +215,7 @@ def _require_canary_activation(
     browser_live_navigation_enabled: bool,
     dataset_writes_enabled: bool,
     key_value_store_enabled: bool,
+    request_queue_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -272,12 +278,16 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Agent Key-Value Store capability is invalid."
         )
-    if capabilities.get("requestQueue") is not False:
+    request_queue = capabilities.get("requestQueue")
+    if not isinstance(request_queue, bool):
         raise SandboxPolicyError(
-            "Canary Agent requested an unsupported Request Queue capability."
+            "Canary Agent Request Queue capability is invalid."
         )
     kv_runtime_enabled = (
         key_value_store and payload.get("work_kind") == "RUN_START"
+    )
+    queue_runtime_enabled = (
+        request_queue and payload.get("work_kind") == "RUN_START"
     )
     if dataset and kv_runtime_enabled:
         raise SandboxPolicyError(
@@ -286,6 +296,10 @@ def _require_canary_activation(
     if browser and kv_runtime_enabled:
         raise SandboxPolicyError(
             "Canary browser and Key-Value Store cannot be combined."
+        )
+    if queue_runtime_enabled and (browser or dataset or key_value_store):
+        raise SandboxPolicyError(
+            "Canary Request Queue access cannot be combined with other data capabilities."
         )
     if activation.get("dataset_write_enabled") is not dataset:
         raise SandboxPolicyError(
@@ -376,6 +390,62 @@ def _require_canary_activation(
     elif payload.get("key_value_store_capability") is not None:
         raise SandboxPolicyError(
             "KV-disabled work cannot carry a Key-Value Store capability."
+        )
+
+    if activation.get("request_queue_enabled") is not queue_runtime_enabled:
+        raise SandboxPolicyError(
+            "Canary Request Queue activation does not match manifest."
+        )
+    if queue_runtime_enabled:
+        if not request_queue_enabled:
+            raise SandboxPolicyError("Worker Request Queue gate is disabled.")
+        input_reference = payload.get("input_reference")
+        if not isinstance(input_reference, dict):
+            raise SandboxPolicyError("Queue-bound Run lacks input reference.")
+        binding = input_reference.get("request_queue")
+        receipt = input_reference.get("queue_binding_receipt")
+        if (
+            not isinstance(binding, dict)
+            or set(binding) != {"schema_version", "queue_id"}
+            or binding.get("schema_version") != "rdc.run-queue/v1"
+            or not isinstance(binding.get("queue_id"), str)
+        ):
+            raise SandboxPolicyError("Queue-bound Run binding is invalid.")
+        normalized_binding = {
+            "schema_version": "rdc.run-queue/v1",
+            "queue_id": binding["queue_id"],
+        }
+        expected_receipt = {
+            "schema_version": "rdc.request-queue-binding-receipt/v1",
+            "binding_digest": _canonical_digest(normalized_binding),
+            "queue_id": binding["queue_id"],
+            "agent_version_id": str(payload.get("agent_version_id", "")),
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
+        if receipt != expected_receipt:
+            raise SandboxPolicyError(
+                "Queue-bound Run binding receipt is invalid."
+            )
+        expected_queue_capability = {
+            "schema_version": "rdc.request-queue-worker-capability/v1",
+            "queue_id": binding["queue_id"],
+            "run_id": str(payload.get("run_id", "")),
+            "agent_version_id": str(payload.get("agent_version_id", "")),
+            "worker_name": worker_name,
+            "max_claims_per_run": 1,
+            "claim_completion_required": True,
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+            "enabled": True,
+        }
+        if payload.get("request_queue_capability") != expected_queue_capability:
+            raise SandboxPolicyError(
+                "Canary Request Queue capability receipt is invalid."
+            )
+    elif payload.get("request_queue_capability") is not None:
+        raise SandboxPolicyError(
+            "Queue-disabled work cannot carry a Request Queue capability."
         )
 
     profile = activation.get("capability_profile")
@@ -557,6 +627,7 @@ def _build(
             ),
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
+            request_queue_enabled=config.request_queue_enabled,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -651,6 +722,7 @@ def _run(
             ),
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
+            request_queue_enabled=config.request_queue_enabled,
         )
         if activation.get("capability_profile") == "controlled-browser":
             input_reference = payload.get("input_reference")
@@ -783,6 +855,64 @@ def _run(
         web_fetch = input_ref.get("web_fetch")
         profile = activation.get("capability_profile")
         kv_enabled = activation.get("key_value_store_enabled") is True
+        queue_enabled = activation.get("request_queue_enabled") is True
+        queue_claim: dict[str, object] | None = None
+
+        if queue_enabled:
+            capability = payload.get("request_queue_capability")
+            if not isinstance(capability, dict):
+                raise SandboxPolicyError(
+                    "Queue-bound Run lacks a capability receipt."
+                )
+            queue_id = capability.get("queue_id")
+            if not isinstance(queue_id, str):
+                raise SandboxPolicyError(
+                    "Queue-bound Run capability is invalid."
+                )
+            try:
+                claimed = client.queue_claim(
+                    lease_id,
+                    token,
+                    queue_id=queue_id,
+                )
+                if claimed is None:
+                    client.complete(
+                        lease_id,
+                        token,
+                        {
+                            "outcome": "SUCCEEDED",
+                            "retryable": False,
+                            "artifacts": [],
+                        },
+                    )
+                    return
+                queue_claim = validate_queue_claim_result(
+                    _data(claimed),
+                    expected_queue_id=queue_id,
+                )
+                if "_rdc_queue" in input_value:
+                    raise QueueWorkerBoundaryError(
+                        "Run input cannot populate reserved _rdc_queue."
+                    )
+                input_value["_rdc_queue"] = {
+                    key: value
+                    for key, value in queue_claim.items()
+                    if key != "claim_token"
+                }
+            except (QueueWorkerBoundaryError, WorkerProtocolError):
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "REQUEST_QUEUE_CLAIM_FAILED",
+                        "error_summary": (
+                            "Controlled Request Queue claim failed closed."
+                        ),
+                    },
+                )
+                return
 
         if kv_enabled:
             try:
@@ -912,6 +1042,31 @@ def _run(
             workspace=workspace,
             policy=dict(payload["sandbox"]),
         )
+
+        if queue_claim is not None:
+            try:
+                client.queue_complete(
+                    lease_id,
+                    token,
+                    queue_completion_payload(
+                        queue_claim,
+                        handled=code == 0,
+                    ),
+                )
+            except WorkerProtocolError:
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
+                        "error_summary": (
+                            "Controlled Request Queue completion failed closed."
+                        ),
+                    },
+                )
+                return
 
         if kv_enabled and code == 0:
             try:

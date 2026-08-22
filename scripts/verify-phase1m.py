@@ -548,7 +548,7 @@ def main() -> None:
     for marker in [
         'Literal["rdc.browser/v2"]',
         "browser_navigation: BrowserNavigationInput | None = None",
-        "A Run may use only one external web/browser intent surface.",
+        "A Run may use only one external or Queue intent surface.",
     ]:
         require(marker in run_schemas, "v2 Run intent schema missing: " + marker)
 

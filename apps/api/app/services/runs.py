@@ -17,6 +17,7 @@ from ..models import (
     AgentVersion,
     Build,
     IdempotencyRecord,
+    RequestQueue,
     Run,
     RunCommandOutbox,
     RunEvent,
@@ -649,6 +650,11 @@ async def create_run(
         if payload.browser_navigation is not None
         else None
     )
+    request_queue = (
+        payload.request_queue.model_dump(mode="json")
+        if payload.request_queue is not None
+        else None
+    )
     if web_fetch is not None and _manifest_network(version) != "web-egress":
         raise ApiError(
             status_code=422,
@@ -658,6 +664,47 @@ async def create_run(
                 "network=web-egress."
             ),
         )
+
+    queue_binding_receipt: dict[str, object] | None = None
+    if request_queue is not None:
+        capabilities = version.manifest.get("capabilities")
+        if (
+            not isinstance(capabilities, dict)
+            or capabilities.get("requestQueue") is not True
+            or capabilities.get("network") != "none"
+            or capabilities.get("browser") is not False
+            or capabilities.get("dataset") is not False
+            or capabilities.get("keyValueStore") is not False
+        ):
+            raise ApiError(
+                status_code=422,
+                code="REQUEST_QUEUE_CAPABILITY_REQUIRED",
+                message=(
+                    "Queue-bound Runs require an offline immutable Agent version "
+                    "with only requestQueue=true."
+                ),
+            )
+        queue = await session.scalar(
+            select(RequestQueue).where(
+                RequestQueue.id == request_queue["queue_id"],
+                RequestQueue.organization_id == version.organization_id,
+                RequestQueue.project_id == version.project_id,
+            )
+        )
+        if queue is None:
+            raise ApiError(
+                status_code=404,
+                code="RESOURCE_NOT_FOUND",
+                message="The requested resource was not found.",
+            )
+        queue_binding_receipt = {
+            "schema_version": "rdc.request-queue-binding-receipt/v1",
+            "binding_digest": canonical_fingerprint(request_queue),
+            "queue_id": str(queue.id),
+            "agent_version_id": str(version.id),
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
 
     browser_policy: dict[str, object] | None = None
     browser_policy_digest: str | None = None
@@ -709,6 +756,8 @@ async def create_run(
             "browser_navigation_receipt": browser_navigation_receipt,
             "browser_policy_digest": browser_policy_digest,
             "browser_egress_policy_digest": browser_egress_policy_digest,
+            "request_queue": request_queue,
+            "queue_binding_receipt": queue_binding_receipt,
             "runtime": runtime,
         }
     )
@@ -766,6 +815,9 @@ async def create_run(
         input_reference["browser_egress_policy_digest"] = (
             browser_egress_policy_digest
         )
+    if request_queue is not None:
+        input_reference["request_queue"] = request_queue
+        input_reference["queue_binding_receipt"] = queue_binding_receipt
 
     navigation_receipt_only = (
         browser_navigation is not None
@@ -870,6 +922,16 @@ async def create_run(
             ),
             "browser_egress_policy_digest": browser_egress_policy_digest,
             "browser_egress_transport_wired": True,
+            "request_queue_id": (
+                request_queue["queue_id"]
+                if request_queue is not None
+                else None
+            ),
+            "request_queue_binding_digest": (
+                queue_binding_receipt["binding_digest"]
+                if queue_binding_receipt is not None
+                else None
+            ),
         },
     )
     return snapshot

@@ -30,6 +30,9 @@ audit mutation is a security incident.
 Worker Queue access remains off unless sandbox execution, canary activation,
 and `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED` are all enabled. Enable it only
 for the pinned canary and monitor stale-claim, retry, and tenancy failures.
+Queue-bound Run input must carry the server-persisted binding receipt and the
+lease snapshot must carry the exact Run/worker/Queue capability. Never expose
+the claim token to Agent input or allow a worker to select another Queue.
 
 CI runs the migration against PostgreSQL and exercises simultaneous claims,
 cross-project and cross-request trigger rejection, lifecycle audit lineage,

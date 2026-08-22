@@ -1048,3 +1048,27 @@ snapshot and contains:
 
 Artifact registration verifies that worker provenance reproduces the same
 activation object and expected source/image lineage.
+
+## Scraping Runtime Queue binding
+
+`POST /api/v1/agent-versions/{version_id}/runs` accepts an optional strict
+`request_queue` object with `schema_version=rdc.run-queue/v1` and `queue_id`.
+The Queue ID is resolved against the immutable Agent version's server-derived
+organization and Project. Cross-tenant or missing Queues return the same 404.
+The field cannot be combined with web-fetch or browser intent, and caller input
+cannot set the reserved `_rdc_queue` key.
+
+Eligible execution claims carry immutable Queue binding and worker-capability
+receipts. The hidden internal routes are:
+
+```text
+POST /internal/v1/leases/{lease_id}/queue-claim
+POST /internal/v1/leases/{lease_id}/queue-complete
+```
+
+Both require the authenticated worker, active lease token, exact bound Queue,
+lease tenancy and the false-by-default Request Queue gate. A Run may claim at
+most one item. The trusted worker removes `claim_token` before injecting the
+normalized claim into Agent input and retains `--network none`. Completion is
+claim-token/worker/expiry bound and uses the existing immutable Queue transition
+and audit lineage.
