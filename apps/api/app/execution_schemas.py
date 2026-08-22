@@ -84,6 +84,7 @@ class SandboxActivation(StrictModel):
     key_value_store_enabled: bool = False
     request_queue_enabled: bool = False
     request_queue_http_enabled: bool = False
+    request_queue_browser_enabled: bool = False
     max_concurrency: Literal[1] = 1
 
     @model_validator(mode="after")
@@ -128,6 +129,17 @@ class SandboxActivation(StrictModel):
             raise ValueError(
                 "Queue HTTP acquisition requires Queue access and brokered egress."
             )
+        if self.request_queue_browser_enabled and (
+            not self.request_queue_enabled
+            or self.capability_profile != "controlled-browser"
+            or self.egress_policy_digest is None
+            or self.browser_policy_digest is None
+        ):
+            raise ValueError(
+                "Queue browser acquisition requires Queue access and controlled browser."
+            )
+        if self.request_queue_http_enabled and self.request_queue_browser_enabled:
+            raise ValueError("Queue acquisition modes are mutually exclusive.")
         return self
 
 

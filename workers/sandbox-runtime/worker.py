@@ -44,6 +44,8 @@ from kv_worker_protocol import (
 from policy import SandboxPolicyError, verify_host
 from queue_worker_protocol import (
     QueueWorkerBoundaryError,
+    queue_browser_agent_result,
+    queue_browser_navigation_plan,
     queue_completion_payload,
     queue_http_agent_result,
     queue_http_fetch_envelope,
@@ -219,6 +221,7 @@ def _require_canary_activation(
     key_value_store_enabled: bool,
     request_queue_enabled: bool,
     request_queue_http_enabled: bool,
+    request_queue_browser_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -293,8 +296,13 @@ def _require_canary_activation(
         request_queue and payload.get("work_kind") == "RUN_START"
     )
     network = capabilities.get("network")
+    queue_browser_runtime_enabled = (
+        queue_runtime_enabled and network == "web-egress" and browser
+    )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled and network == "web-egress"
+        queue_runtime_enabled
+        and network == "web-egress"
+        and not browser
     )
     if dataset and kv_runtime_enabled:
         raise SandboxPolicyError(
@@ -304,7 +312,7 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary browser and Key-Value Store cannot be combined."
         )
-    if queue_runtime_enabled and (browser or dataset or key_value_store):
+    if queue_runtime_enabled and (dataset or key_value_store):
         raise SandboxPolicyError(
             "Canary Request Queue access cannot be combined with other data capabilities."
         )
@@ -410,12 +418,23 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Queue HTTP activation does not match the manifest."
         )
+    if (
+        activation.get("request_queue_browser_enabled")
+        is not queue_browser_runtime_enabled
+    ):
+        raise SandboxPolicyError(
+            "Queue browser activation does not match the manifest."
+        )
     if queue_runtime_enabled:
         if not request_queue_enabled:
             raise SandboxPolicyError("Worker Request Queue gate is disabled.")
         if queue_http_runtime_enabled and not request_queue_http_enabled:
             raise SandboxPolicyError(
                 "Worker Queue HTTP acquisition gate is disabled."
+            )
+        if queue_browser_runtime_enabled and not request_queue_browser_enabled:
+            raise SandboxPolicyError(
+                "Worker Queue browser acquisition gate is disabled."
             )
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
@@ -433,7 +452,49 @@ def _require_canary_activation(
             "schema_version": "rdc.run-queue/v1",
             "queue_id": binding["queue_id"],
         }
-        if queue_http_runtime_enabled:
+        if queue_browser_runtime_enabled:
+            if egress_policy is None or browser_policy is None:
+                raise SandboxPolicyError(
+                    "Queue browser policy is unavailable."
+                )
+            browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
+            stored_browser_policy = input_reference.get(
+                "request_queue_browser_policy"
+            )
+            stored_browser_digest = input_reference.get(
+                "request_queue_browser_policy_digest"
+            )
+            stored_browser_egress_policy = input_reference.get(
+                "request_queue_browser_egress_policy"
+            )
+            stored_browser_egress_digest = input_reference.get(
+                "request_queue_browser_egress_policy_digest"
+            )
+            if (
+                stored_browser_policy != browser_policy.as_dict()
+                or stored_browser_digest != browser_policy.digest
+                or stored_browser_egress_policy
+                != browser_egress_policy.as_dict()
+                or stored_browser_egress_digest
+                != browser_egress_policy.digest
+            ):
+                raise SandboxPolicyError(
+                    "Queue browser receipt does not match worker policy."
+                )
+            expected_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v3",
+                "binding_digest": _canonical_digest(normalized_binding),
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload.get("agent_version_id", "")),
+                "acquisition_mode": "controlled-browser",
+                "browser_policy_digest": browser_policy.digest,
+                "browser_egress_policy_digest": browser_egress_policy.digest,
+                "dispatch_enabled": True,
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+        elif queue_http_runtime_enabled:
             stored_egress_policy = input_reference.get(
                 "request_queue_egress_policy"
             )
@@ -476,9 +537,13 @@ def _require_canary_activation(
             )
         expected_queue_capability = {
             "schema_version": (
-                "rdc.request-queue-worker-capability/v2"
-                if queue_http_runtime_enabled
-                else "rdc.request-queue-worker-capability/v1"
+                "rdc.request-queue-worker-capability/v3"
+                if queue_browser_runtime_enabled
+                else (
+                    "rdc.request-queue-worker-capability/v2"
+                    if queue_http_runtime_enabled
+                    else "rdc.request-queue-worker-capability/v1"
+                )
             ),
             "queue_id": binding["queue_id"],
             "run_id": str(payload.get("run_id", "")),
@@ -490,7 +555,18 @@ def _require_canary_activation(
             "direct_object_storage_access": False,
             "enabled": True,
         }
-        if queue_http_runtime_enabled:
+        if queue_browser_runtime_enabled:
+            expected_queue_capability.update(
+                {
+                    "acquisition_mode": "controlled-browser",
+                    "browser_policy_digest": browser_policy.digest,
+                    "browser_egress_policy_digest": (
+                        browser_egress_policy.digest
+                    ),
+                    "agent_container_network": "none",
+                }
+            )
+        elif queue_http_runtime_enabled:
             expected_queue_capability.update(
                 {
                     "acquisition_mode": "brokered-http",
@@ -577,14 +653,17 @@ def _require_canary_activation(
             raise SandboxPolicyError(
                 "Controlled-browser claim lacks an input reference."
             )
-        if "browser_navigation" in input_reference:
+        if (
+            not queue_browser_runtime_enabled
+            and "browser_navigation" in input_reference
+        ):
             _require_live_browser_navigation_receipt(
                 input_reference,
                 egress_policy=egress_policy,
                 browser_policy=browser_policy,
                 live_navigation_enabled=browser_live_navigation_enabled,
             )
-        else:
+        elif not queue_browser_runtime_enabled:
             browser_plan = input_reference.get("browser")
             stored_policy = input_reference.get("browser_policy")
             stored_digest = input_reference.get("browser_policy_digest")
@@ -612,6 +691,70 @@ def _require_canary_activation(
         )
 
     return {str(key): value for key, value in activation.items()}
+
+
+def _queue_browser_acquire(
+    *,
+    config: SandboxWorkerConfig,
+    payload: dict[str, Any],
+    workspace: Path,
+    queue_claim: dict[str, object],
+    egress_policy: EgressPolicy,
+    browser_policy: BrowserPolicy,
+) -> tuple[dict[str, object], dict[str, object]]:
+    navigation_plan = queue_browser_navigation_plan(
+        queue_claim,
+        max_dom_bytes=browser_policy.max_dom_bytes,
+    )
+    normalized_navigation = validate_browser_navigation_plan(
+        navigation_plan,
+        policy=browser_policy,
+    )
+    request_digest = normalized_navigation.get("request_digest")
+    if not isinstance(request_digest, str):
+        raise QueueWorkerBoundaryError(
+            "Queue browser request digest is invalid."
+        )
+    browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
+    browser_output, _browser_log = run_browser_live_navigation(
+        config=config,
+        run_id=str(payload["run_id"]),
+        workspace=workspace,
+        navigation_plan=navigation_plan,
+        browser_policy_digest=browser_policy.digest,
+        browser_egress_policy=browser_egress_policy,
+        request_digest=request_digest,
+        max_screenshot_bytes=browser_policy.max_screenshot_bytes,
+        navigation_timeout_seconds=(
+            browser_policy.navigation_timeout_seconds
+        ),
+        runtime_timeout_seconds=int(
+            payload["sandbox"]["timeout_seconds"]
+        ),
+    )
+    if (
+        not browser_output.is_file()
+        or browser_output.stat().st_size > 16_777_216
+    ):
+        raise QueueWorkerBoundaryError(
+            "Queue browser result is outside the worker limit."
+        )
+    decoded_browser = json.loads(browser_output.read_text(encoding="utf-8"))
+    agent_result = queue_browser_agent_result(
+        queue_claim,
+        navigation_plan,
+        decoded_browser,
+    )
+    provenance = {
+        "acquisition_mode": "controlled-browser",
+        "request_digest": request_digest,
+        "browser_policy_digest": browser_policy.digest,
+        "browser_egress_policy_digest": browser_egress_policy.digest,
+        "browser_network": "none",
+        "gateway_transport": "unix",
+        "agent_container_network": "none",
+    }
+    return agent_result, provenance
 
 
 def _upload_artifacts(
@@ -695,6 +838,9 @@ def _build(
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
             request_queue_http_enabled=config.request_queue_http_enabled,
+            request_queue_browser_enabled=(
+                config.request_queue_browser_enabled
+            ),
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -791,8 +937,14 @@ def _run(
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
             request_queue_http_enabled=config.request_queue_http_enabled,
+            request_queue_browser_enabled=(
+                config.request_queue_browser_enabled
+            ),
         )
-        if activation.get("capability_profile") == "controlled-browser":
+        if (
+            activation.get("capability_profile") == "controlled-browser"
+            and activation.get("request_queue_browser_enabled") is not True
+        ):
             input_reference = payload.get("input_reference")
             if not isinstance(input_reference, dict):
                 raise SandboxPolicyError("Controlled-browser Run lacks input reference.")
@@ -927,11 +1079,15 @@ def _run(
         queue_http_enabled = (
             activation.get("request_queue_http_enabled") is True
         )
+        queue_browser_enabled = (
+            activation.get("request_queue_browser_enabled") is True
+        )
         queue_claim: dict[str, object] | None = None
+        queue_browser_provenance: dict[str, object] | None = None
 
-        if queue_http_enabled and not queue_enabled:
+        if (queue_http_enabled or queue_browser_enabled) and not queue_enabled:
             raise SandboxPolicyError(
-                "Queue HTTP acquisition requires Queue access."
+                "Queue acquisition requires Queue access."
             )
 
         if queue_enabled:
@@ -969,6 +1125,7 @@ def _run(
                 if (
                     "_rdc_queue" in input_value
                     or "_rdc_queue_http" in input_value
+                    or "_rdc_queue_browser" in input_value
                 ):
                     raise QueueWorkerBoundaryError(
                         "Run input cannot populate Queue runtime keys."
@@ -988,6 +1145,74 @@ def _run(
                         "error_code": "REQUEST_QUEUE_CLAIM_FAILED",
                         "error_summary": (
                             "Controlled Request Queue claim failed closed."
+                        ),
+                    },
+                )
+                return
+
+        if queue_claim is not None and queue_browser_enabled:
+            if egress_policy is None or browser_policy is None:
+                raise SandboxPolicyError(
+                    "Queue browser acquisition lacks worker policy."
+                )
+            try:
+                (
+                    input_value["_rdc_queue_browser"],
+                    queue_browser_provenance,
+                ) = _queue_browser_acquire(
+                    config=config,
+                    payload=payload,
+                    workspace=workspace,
+                    queue_claim=queue_claim,
+                    egress_policy=egress_policy,
+                    browser_policy=browser_policy,
+                )
+            except (
+                BrowserNavigationContractError,
+                BrowserRuntimeError,
+                QueueWorkerBoundaryError,
+                json.JSONDecodeError,
+                OSError,
+                UnicodeError,
+            ):
+                try:
+                    client.queue_complete(
+                        lease_id,
+                        token,
+                        queue_completion_payload(
+                            queue_claim,
+                            handled=False,
+                            failure_code="QUEUE_BROWSER_NAVIGATION_FAILED",
+                            failure_summary=(
+                                "Controlled Queue browser acquisition failed."
+                            ),
+                        ),
+                    )
+                except WorkerProtocolError:
+                    client.complete(
+                        lease_id,
+                        token,
+                        {
+                            "outcome": "FAILED",
+                            "retryable": False,
+                            "error_code": (
+                                "REQUEST_QUEUE_COMPLETION_FAILED"
+                            ),
+                            "error_summary": (
+                                "Queue browser failure completion failed closed."
+                            ),
+                        },
+                    )
+                    return
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "QUEUE_BROWSER_NAVIGATION_FAILED",
+                        "error_summary": (
+                            "Controlled Queue browser acquisition failed closed."
                         ),
                     },
                 )
@@ -1328,6 +1553,8 @@ def _run(
             "run_id": str(payload["run_id"]),
             "image_digest": image_digest,
         }
+        if queue_browser_provenance is not None:
+            run_provenance["queue_browser"] = queue_browser_provenance
         artifacts: list[LocalArtifact] = []
         if output_path.is_file():
             digest, size = sha256_file(output_path)

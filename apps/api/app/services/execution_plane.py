@@ -186,6 +186,7 @@ def _canary_constraints(
     key_value_store: bool = False,
     request_queue: bool = False,
     request_queue_http: bool = False,
+    request_queue_browser: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -204,6 +205,7 @@ def _canary_constraints(
         "key_value_store": key_value_store,
         "request_queue": request_queue,
         "request_queue_http": request_queue_http,
+        "request_queue_browser": request_queue_browser,
         "secrets": False,
         "max_concurrency": 1,
     }
@@ -272,8 +274,13 @@ def _canary_activation(
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
+    queue_browser_runtime_enabled = (
+        queue_runtime_enabled and network == "web-egress" and browser
+    )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled and network == "web-egress"
+        queue_runtime_enabled
+        and network == "web-egress"
+        and not browser
     )
     egress_policy_digest = (
         canonical_fingerprint(_egress_policy_payload())
@@ -284,21 +291,39 @@ def _canary_activation(
         return None
     if work_kind == "RUN_START" and browser and kv_runtime_enabled:
         return None
+    current_browser_policy_digest = (
+        canonical_fingerprint(_browser_policy_payload())
+        if browser
+        else None
+    )
+    current_browser_egress_digest = (
+        canonical_fingerprint(_browser_egress_policy_payload())
+        if queue_browser_runtime_enabled
+        else None
+    )
     if queue_runtime_enabled and (
-        browser
-        or dataset
+        dataset
         or key_value_store
         or not settings.sandbox_canary_request_queue_enabled
         or (
             queue_http_runtime_enabled
             and not settings.sandbox_canary_request_queue_http_enabled
         )
+        or (
+            queue_browser_runtime_enabled
+            and not settings.sandbox_canary_request_queue_browser_enabled
+        )
         or request_queue_capability(
             worker,
             payload,
             request_queue_enabled=True,
             request_queue_http_enabled=queue_http_runtime_enabled,
-            egress_policy_digest=egress_policy_digest,
+            egress_policy_digest=(
+                egress_policy_digest if queue_http_runtime_enabled else None
+            ),
+            request_queue_browser_enabled=queue_browser_runtime_enabled,
+            browser_policy_digest=current_browser_policy_digest,
+            browser_egress_policy_digest=current_browser_egress_digest,
         )
         is None
     ):
@@ -328,7 +353,9 @@ def _canary_activation(
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
             return None
-        if "browser_navigation" in input_reference:
+        if queue_browser_runtime_enabled:
+            browser_policy_digest = current_browser_policy_digest
+        elif "browser_navigation" in input_reference:
             if not _browser_navigation_canary_receipt_allowed(input_reference):
                 return None
             browser_policy_digest = canonical_fingerprint(_browser_policy_payload())
@@ -382,6 +409,7 @@ def _canary_activation(
         key_value_store=kv_runtime_enabled,
         request_queue=queue_runtime_enabled,
         request_queue_http=queue_http_runtime_enabled,
+        request_queue_browser=queue_browser_runtime_enabled,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -404,6 +432,7 @@ def _canary_activation(
         key_value_store_enabled=kv_runtime_enabled,
         request_queue_enabled=queue_runtime_enabled,
         request_queue_http_enabled=queue_http_runtime_enabled,
+        request_queue_browser_enabled=queue_browser_runtime_enabled,
     )
 
 
@@ -534,8 +563,13 @@ def _sandbox_claim_policy(
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
+    queue_browser_runtime_enabled = (
+        queue_runtime_enabled and network == "web-egress" and browser
+    )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled and network == "web-egress"
+        queue_runtime_enabled
+        and network == "web-egress"
+        and not browser
     )
     egress_policy_digest = (
         canonical_fingerprint(_egress_policy_payload())
@@ -546,21 +580,39 @@ def _sandbox_claim_policy(
         return None
     if work_kind == "RUN_START" and browser and kv_runtime_enabled:
         return None
+    current_browser_policy_digest = (
+        canonical_fingerprint(_browser_policy_payload())
+        if browser
+        else None
+    )
+    current_browser_egress_digest = (
+        canonical_fingerprint(_browser_egress_policy_payload())
+        if queue_browser_runtime_enabled
+        else None
+    )
     if queue_runtime_enabled and (
-        browser
-        or dataset
+        dataset
         or key_value_store
         or not settings.sandbox_canary_request_queue_enabled
         or (
             queue_http_runtime_enabled
             and not settings.sandbox_canary_request_queue_http_enabled
         )
+        or (
+            queue_browser_runtime_enabled
+            and not settings.sandbox_canary_request_queue_browser_enabled
+        )
         or request_queue_capability(
             worker,
             payload,
             request_queue_enabled=True,
             request_queue_http_enabled=queue_http_runtime_enabled,
-            egress_policy_digest=egress_policy_digest,
+            egress_policy_digest=(
+                egress_policy_digest if queue_http_runtime_enabled else None
+            ),
+            request_queue_browser_enabled=queue_browser_runtime_enabled,
+            browser_policy_digest=current_browser_policy_digest,
+            browser_egress_policy_digest=current_browser_egress_digest,
         )
         is None
     ):
@@ -588,10 +640,13 @@ def _sandbox_claim_policy(
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
             return None
-        if "browser_navigation" in input_reference:
+        if (
+            not queue_browser_runtime_enabled
+            and "browser_navigation" in input_reference
+        ):
             if not _browser_navigation_canary_receipt_allowed(input_reference):
                 return None
-        elif (
+        elif not queue_browser_runtime_enabled and (
             not isinstance(input_reference.get("browser"), dict)
             or not isinstance(input_reference.get("browser_policy"), dict)
             or not isinstance(input_reference.get("browser_policy_digest"), str)
@@ -1984,6 +2039,23 @@ async def claim_work(
             egress_policy_digest=(
                 activation.egress_policy_digest
                 if activation is not None
+                and activation.request_queue_http_enabled
+                else None
+            ),
+            request_queue_browser_enabled=(
+                activation is not None
+                and activation.request_queue_browser_enabled
+            ),
+            browser_policy_digest=(
+                activation.browser_policy_digest
+                if activation is not None
+                and activation.request_queue_browser_enabled
+                else None
+            ),
+            browser_egress_policy_digest=(
+                canonical_fingerprint(_browser_egress_policy_payload())
+                if activation is not None
+                and activation.request_queue_browser_enabled
                 else None
             ),
         )

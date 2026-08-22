@@ -23,9 +23,33 @@ redirect revalidation, header stripping, timeouts, and byte/request budgets all
 remain authoritative. The v2 binding and worker capability receipts bind the
 current egress-policy digest and `brokered-http` acquisition mode.
 
-Queue Runs still cannot combine browser, Dataset, KV, caller-supplied web-fetch,
-or legacy `_rdc_web_requests` intent. Composed Dataset/KV output and controlled
-Queue-bound browser acquisition remain later scraping-runtime increments.
+Queue Runs still cannot combine Dataset, KV, caller-supplied web-fetch, or
+legacy `_rdc_web_requests` intent. Composed Dataset/KV output remains a later
+scraping-runtime increment.
+
+A strict `rdc.request-queue-binding-receipt/v3` intent is also available for an
+Agent version declaring `requestQueue=true`, `browser=true`, and
+`network=web-egress`. It binds the Queue, Agent version, browser policy, and
+browser-egress policy. It persists as DRAFT unless every independent Queue,
+browser-navigation, web-egress, exact-version, and exact-worker canary gate is
+enabled. An eligible Run is QUEUED with `dispatch_enabled=true`.
+
+The trusted worker boundary now also defines the only admissible Queue/browser
+acquisition plan: one `goto` to the validated claimed HTTPS URL followed by one
+bounded `html` extraction. The normalized `rdc.queue-browser-result/v1`
+envelope binds the Queue and request identifiers to the validated browser
+navigation result and never contains the claim token. Caller input reserves
+`_rdc_queue_browser` for this worker-produced envelope.
+
+The independently false-by-default API and worker setting
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED` is now defined, and the
+control plane derives an exact v3 worker capability only when both stored
+browser-policy digests match current trusted policy and the v3 receipt is
+dispatch-enabled. The worker independently reconstructs both policies, claims
+at most one Queue request, derives the fixed navigation plan from its validated
+URL, executes Chromium behind the Unix egress gateway, and then runs the Agent
+with networking disabled. Browser failure marks the claim FAILED with a generic
+code; Agent exit completes it through the existing token-bound lifecycle.
 
 The feature remains disabled unless both API and worker use
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=true`, the sandbox master gate and
@@ -35,3 +59,5 @@ canary activation are enabled, and the exact worker has
 Brokered Queue HTTP additionally requires
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=true` and the existing web-egress
 gate and exact hostname allowlist in both the API and worker environments.
+Queue/browser acquisition additionally requires
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=true` plus both browser gates.

@@ -17,6 +17,7 @@ need(
     "request_queue: RequestQueueBindingInput | None",
     "reserved _rdc_queue",
     '"_rdc_queue_http"',
+    '"_rdc_queue_browser"',
     '"_rdc_web_requests"',
 )
 need(
@@ -25,9 +26,12 @@ need(
     "RequestQueue.project_id == version.project_id",
     '"rdc.request-queue-binding-receipt/v1"',
     '"rdc.request-queue-binding-receipt/v2"',
+    '"rdc.request-queue-binding-receipt/v3"',
     '"acquisition_mode": "brokered-http"',
+    '"acquisition_mode": "controlled-browser"',
     '"agent_container_network": "none"',
     "_request_queue_http_canary_enabled",
+    "_request_queue_browser_canary_enabled",
     '"direct_database_access": False',
 )
 need(
@@ -39,13 +43,16 @@ need(
     "row.claim_token != claim_token",
     "with_for_update()",
     '"rdc.request-queue-worker-capability/v2"',
+    '"rdc.request-queue-worker-capability/v3"',
     "request_queue_http_enabled",
+    "request_queue_browser_enabled",
     "egress_policy_digest",
 )
 need(
     "apps/api/app/services/execution_plane.py",
     "request_queue_capability(",
     "activation.request_queue_enabled",
+    "activation.request_queue_browser_enabled",
 )
 need(
     "workers/sandbox-runtime/worker.py",
@@ -57,6 +64,8 @@ need(
     "queue_http_fetch_envelope(",
     "queue_http_agent_result(",
     '"QUEUE_HTTP_FETCH_FAILED"',
+    "_queue_browser_acquire(",
+    '"QUEUE_BROWSER_NAVIGATION_FAILED"',
 )
 need(
     "workers/sandbox-runtime/queue_worker_protocol.py",
@@ -66,7 +75,10 @@ need(
     "queue_completion_payload(",
     "queue_http_fetch_envelope(",
     "queue_http_agent_result(",
+    "queue_browser_navigation_plan(",
+    "queue_browser_agent_result(",
     '"rdc.queue-http-result/v1"',
+    '"rdc.queue-browser-result/v1"',
 )
 need(
     "apps/api/tests/test_scraping_runtime_queue_foundation.py",
@@ -77,11 +89,16 @@ need(
     "test_queue_http_gates_are_independent_and_fail_closed",
     "test_queue_http_capability_binds_egress_policy",
     "test_create_run_persists_brokered_queue_http_receipt",
+    "test_create_run_persists_gated_queue_browser_receipt",
+    "test_queue_browser_control_plane_activation_is_exact_and_fail_closed",
+    "test_queue_browser_worker_independently_validates_v3_receipts",
+    "test_queue_browser_live_acquisition_is_claim_derived_and_token_free",
 )
 need(
     ".env.example",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
+    "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
 )
 for path in (
     "infrastructure/environments/staging/api.env.example",
@@ -93,6 +110,7 @@ for path in (
         path,
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
     )
 for path in (
     "docs/scraping-runtime/README.md",

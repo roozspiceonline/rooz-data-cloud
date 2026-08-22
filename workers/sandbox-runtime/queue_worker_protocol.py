@@ -215,3 +215,100 @@ def queue_http_agent_result(
         "response": dict(results[0]),
         "budget": dict(budget),
     }
+
+
+def queue_browser_navigation_plan(
+    claim: dict[str, object],
+    *,
+    max_dom_bytes: int,
+) -> dict[str, object]:
+    if claim.get("schema_version") != "rdc.queue-worker-claim/v1":
+        _fail("Queue browser acquisition requires a validated claim.")
+    request_id = str(claim.get("request_id", ""))
+    try:
+        UUID(request_id)
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue browser acquisition request id is invalid."
+        ) from exc
+    if (
+        isinstance(max_dom_bytes, bool)
+        or not isinstance(max_dom_bytes, int)
+        or not 65_536 <= max_dom_bytes <= 4_194_304
+    ):
+        _fail("Queue browser DOM limit is unsafe.")
+    return {
+        "schema_version": "rdc.browser/v2",
+        "steps": [
+            {
+                "id": "queue-goto",
+                "type": "goto",
+                "url": _https_url(claim.get("url")),
+                "wait_until": "domcontentloaded",
+            },
+            {
+                "id": "queue-html",
+                "type": "extract_html",
+                "selector": "html",
+                "max_bytes": max_dom_bytes,
+            },
+        ],
+    }
+
+
+def queue_browser_agent_result(
+    claim: dict[str, object],
+    navigation_plan: dict[str, object],
+    browser_result: object,
+) -> dict[str, object]:
+    steps = navigation_plan.get("steps")
+    if (
+        not isinstance(steps, list)
+        or len(steps) != 2
+        or not isinstance(steps[1], dict)
+    ):
+        _fail("Queue browser navigation plan is invalid.")
+    max_dom_bytes = steps[1].get("max_bytes")
+    if isinstance(max_dom_bytes, bool) or not isinstance(max_dom_bytes, int):
+        _fail("Queue browser navigation plan is invalid.")
+    if navigation_plan != queue_browser_navigation_plan(
+        claim,
+        max_dom_bytes=max_dom_bytes,
+    ):
+        _fail("Queue browser navigation plan does not match its claim.")
+    expected_fields = {
+        "schema_version",
+        "request_digest",
+        "browser_policy_digest",
+        "browser_egress_policy_digest",
+        "browser_network",
+        "gateway_transport",
+        "gateway_live_forwarding",
+        "final_url",
+        "steps",
+        "egress_budget",
+    }
+    if (
+        not isinstance(browser_result, dict)
+        or set(browser_result) != expected_fields
+        or browser_result.get("schema_version")
+        != "rdc.browser-navigation-result/v1"
+        or browser_result.get("browser_network") != "none"
+        or browser_result.get("gateway_transport") != "unix"
+        or browser_result.get("gateway_live_forwarding") is not True
+        or browser_result.get("request_digest")
+        != hashlib.sha256(
+            json.dumps(
+                navigation_plan,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    ):
+        _fail("Queue browser result does not match its claim-derived plan.")
+    return {
+        "schema_version": "rdc.queue-browser-result/v1",
+        "request_id": str(claim["request_id"]),
+        "queue_id": str(claim["queue_id"]),
+        "navigation": dict(browser_result),
+    }
