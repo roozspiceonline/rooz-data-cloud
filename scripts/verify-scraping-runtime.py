@@ -16,12 +16,18 @@ need(
     'Literal["rdc.run-queue/v1"]',
     "request_queue: RequestQueueBindingInput | None",
     "reserved _rdc_queue",
+    '"_rdc_queue_http"',
+    '"_rdc_web_requests"',
 )
 need(
     "apps/api/app/services/runs.py",
     "RequestQueue.organization_id == version.organization_id",
     "RequestQueue.project_id == version.project_id",
     '"rdc.request-queue-binding-receipt/v1"',
+    '"rdc.request-queue-binding-receipt/v2"',
+    '"acquisition_mode": "brokered-http"',
+    '"agent_container_network": "none"',
+    "_request_queue_http_canary_enabled",
     '"direct_database_access": False',
 )
 need(
@@ -32,6 +38,9 @@ need(
     "RequestQueue.organization_id == lease.organization_id",
     "row.claim_token != claim_token",
     "with_for_update()",
+    '"rdc.request-queue-worker-capability/v2"',
+    "request_queue_http_enabled",
+    "egress_policy_digest",
 )
 need(
     "apps/api/app/services/execution_plane.py",
@@ -45,6 +54,9 @@ need(
     "client.queue_complete(",
     'if key != "claim_token"',
     "REQUEST_QUEUE_COMPLETION_FAILED",
+    "queue_http_fetch_envelope(",
+    "queue_http_agent_result(",
+    '"QUEUE_HTTP_FETCH_FAILED"',
 )
 need(
     "workers/sandbox-runtime/queue_worker_protocol.py",
@@ -52,16 +64,24 @@ need(
     "IP literal",
     "expected_queue_id",
     "queue_completion_payload(",
+    "queue_http_fetch_envelope(",
+    "queue_http_agent_result(",
+    '"rdc.queue-http-result/v1"',
 )
 need(
     "apps/api/tests/test_scraping_runtime_queue_foundation.py",
     "test_create_run_derives_queue_tenancy_and_persists_receipt",
     "test_create_run_hides_cross_tenant_queue",
     "test_queue_worker_protocol_rejects_scope_and_ip_literals",
+    "test_queue_http_protocol_is_claim_derived_and_token_free",
+    "test_queue_http_gates_are_independent_and_fail_closed",
+    "test_queue_http_capability_binds_egress_policy",
+    "test_create_run_persists_brokered_queue_http_receipt",
 )
 need(
     ".env.example",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
+    "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
 )
 for path in (
     "infrastructure/environments/staging/api.env.example",
@@ -69,7 +89,11 @@ for path in (
     "infrastructure/environments/production/api.env.example",
     "infrastructure/environments/production/worker.env.example",
 ):
-    need(path, "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false")
+    need(
+        path,
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
+    )
 for path in (
     "docs/scraping-runtime/README.md",
     "docs/scraping-runtime/RUNBOOK.md",

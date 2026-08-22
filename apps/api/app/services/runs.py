@@ -194,6 +194,35 @@ def _browser_policy_payload() -> dict[str, object]:
     }
 
 
+def _web_egress_policy_payload() -> dict[str, object]:
+    settings = get_settings()
+    return {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_schemes": ["https"],
+        "allowed_methods": ["GET", "HEAD"],
+        "allowed_hosts": list(
+            settings.sandbox_canary_web_egress_allowed_hosts
+        ),
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "revalidate_redirects": True,
+        "container_network": "none",
+        "max_requests": settings.sandbox_canary_web_egress_max_requests,
+        "max_response_bytes": (
+            settings.sandbox_canary_web_egress_max_response_bytes
+        ),
+        "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
+        "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
+        "connect_timeout_seconds": (
+            settings.sandbox_canary_web_egress_connect_timeout_seconds
+        ),
+        "request_timeout_seconds": (
+            settings.sandbox_canary_web_egress_request_timeout_seconds
+        ),
+    }
+
+
 def _browser_egress_policy_payload() -> dict[str, object]:
     settings = get_settings()
     return {
@@ -256,6 +285,36 @@ def _browser_navigation_live_canary_enabled(
         or not settings.sandbox_canary_web_egress_enabled
         or not settings.sandbox_canary_browser_enabled
         or not settings.sandbox_canary_browser_live_navigation_enabled
+        or not settings.sandbox_canary_web_egress_allowed_hosts
+        or not settings.sandbox_canary_worker_name.strip()
+        or str(version.id) != settings.sandbox_canary_agent_version_id.strip()
+    ):
+        return False
+    try:
+        return (
+            _manifest_resource(version, "memoryMb")
+            <= settings.sandbox_canary_max_memory_mb
+            and _manifest_resource(version, "cpuUnits")
+            <= settings.sandbox_canary_max_cpu_millis
+            and _manifest_resource(version, "maxProcesses")
+            <= settings.sandbox_canary_max_pids
+            and _manifest_resource(version, "ephemeralDiskMb")
+            <= settings.sandbox_canary_max_ephemeral_disk_mb
+            and _manifest_resource(version, "timeoutSeconds")
+            <= settings.sandbox_canary_max_run_seconds
+        )
+    except ApiError:
+        return False
+
+
+def _request_queue_http_canary_enabled(version: AgentVersion) -> bool:
+    settings = get_settings()
+    if (
+        not settings.sandbox_execution_enabled
+        or settings.sandbox_activation_mode != "canary"
+        or not settings.sandbox_canary_request_queue_enabled
+        or not settings.sandbox_canary_request_queue_http_enabled
+        or not settings.sandbox_canary_web_egress_enabled
         or not settings.sandbox_canary_web_egress_allowed_hosts
         or not settings.sandbox_canary_worker_name.strip()
         or str(version.id) != settings.sandbox_canary_agent_version_id.strip()
@@ -666,12 +725,20 @@ async def create_run(
         )
 
     queue_binding_receipt: dict[str, object] | None = None
+    request_queue_egress_policy: dict[str, object] | None = None
+    request_queue_egress_policy_digest: str | None = None
+    request_queue_http_live_canary = False
     if request_queue is not None:
         capabilities = version.manifest.get("capabilities")
+        queue_network = (
+            capabilities.get("network")
+            if isinstance(capabilities, dict)
+            else None
+        )
         if (
             not isinstance(capabilities, dict)
             or capabilities.get("requestQueue") is not True
-            or capabilities.get("network") != "none"
+            or queue_network not in {"none", "web-egress"}
             or capabilities.get("browser") is not False
             or capabilities.get("dataset") is not False
             or capabilities.get("keyValueStore") is not False
@@ -680,8 +747,8 @@ async def create_run(
                 status_code=422,
                 code="REQUEST_QUEUE_CAPABILITY_REQUIRED",
                 message=(
-                    "Queue-bound Runs require an offline immutable Agent version "
-                    "with only requestQueue=true."
+                    "Queue-bound Runs require requestQueue=true without browser "
+                    "or storage capabilities."
                 ),
             )
         queue = await session.scalar(
@@ -697,14 +764,35 @@ async def create_run(
                 code="RESOURCE_NOT_FOUND",
                 message="The requested resource was not found.",
             )
-        queue_binding_receipt = {
-            "schema_version": "rdc.request-queue-binding-receipt/v1",
-            "binding_digest": canonical_fingerprint(request_queue),
-            "queue_id": str(queue.id),
-            "agent_version_id": str(version.id),
-            "direct_database_access": False,
-            "direct_object_storage_access": False,
-        }
+        if queue_network == "web-egress":
+            request_queue_egress_policy = _web_egress_policy_payload()
+            request_queue_egress_policy_digest = canonical_fingerprint(
+                request_queue_egress_policy
+            )
+            request_queue_http_live_canary = (
+                _request_queue_http_canary_enabled(version)
+            )
+            queue_binding_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v2",
+                "binding_digest": canonical_fingerprint(request_queue),
+                "queue_id": str(queue.id),
+                "agent_version_id": str(version.id),
+                "acquisition_mode": "brokered-http",
+                "egress_policy_digest": request_queue_egress_policy_digest,
+                "dispatch_enabled": request_queue_http_live_canary,
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+        else:
+            queue_binding_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v1",
+                "binding_digest": canonical_fingerprint(request_queue),
+                "queue_id": str(queue.id),
+                "agent_version_id": str(version.id),
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
 
     browser_policy: dict[str, object] | None = None
     browser_policy_digest: str | None = None
@@ -758,6 +846,9 @@ async def create_run(
             "browser_egress_policy_digest": browser_egress_policy_digest,
             "request_queue": request_queue,
             "queue_binding_receipt": queue_binding_receipt,
+            "request_queue_egress_policy_digest": (
+                request_queue_egress_policy_digest
+            ),
             "runtime": runtime,
         }
     )
@@ -818,12 +909,27 @@ async def create_run(
     if request_queue is not None:
         input_reference["request_queue"] = request_queue
         input_reference["queue_binding_receipt"] = queue_binding_receipt
+        if request_queue_egress_policy is not None:
+            input_reference["request_queue_egress_policy"] = (
+                request_queue_egress_policy
+            )
+            input_reference["request_queue_egress_policy_digest"] = (
+                request_queue_egress_policy_digest
+            )
 
     navigation_receipt_only = (
         browser_navigation is not None
         and not browser_navigation_live_canary
     )
-    initial_status = "DRAFT" if navigation_receipt_only else "QUEUED"
+    queue_http_receipt_only = (
+        request_queue_egress_policy is not None
+        and not request_queue_http_live_canary
+    )
+    initial_status = (
+        "DRAFT"
+        if navigation_receipt_only or queue_http_receipt_only
+        else "QUEUED"
+    )
 
     record = Run(
         id=uuid4(),
@@ -846,7 +952,7 @@ async def create_run(
     )
     session.add(record)
     await session.flush()
-    if not navigation_receipt_only:
+    if not navigation_receipt_only and not queue_http_receipt_only:
         session.add(
             RunCommandOutbox(
                 organization_id=record.organization_id,
@@ -900,7 +1006,11 @@ async def create_run(
         action=(
             "run.browser_navigation_intent_recorded"
             if navigation_receipt_only
-            else "run.queued"
+            else (
+                "run.request_queue_http_intent_recorded"
+                if queue_http_receipt_only
+                else "run.queued"
+            )
         ),
         resource_type="run",
         resource_id=str(record.id),
@@ -931,6 +1041,12 @@ async def create_run(
                 queue_binding_receipt["binding_digest"]
                 if queue_binding_receipt is not None
                 else None
+            ),
+            "request_queue_http_dispatch_enabled": (
+                request_queue_http_live_canary
+            ),
+            "request_queue_egress_policy_digest": (
+                request_queue_egress_policy_digest
             ),
         },
     )

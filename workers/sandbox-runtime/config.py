@@ -59,6 +59,7 @@ class SandboxWorkerConfig:
     dataset_writes_enabled: bool
     key_value_store_enabled: bool
     request_queue_enabled: bool
+    request_queue_http_enabled: bool
     browser_max_pages: int
     browser_max_actions: int
     browser_navigation_timeout_seconds: int
@@ -102,6 +103,21 @@ class SandboxWorkerConfig:
             raise RuntimeError(
                 "RDC_WORKER_LEASE_RENEW_SECONDS must be between 15 and 300."
             )
+        web_egress_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED", False
+        )
+        request_queue_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED", False
+        )
+        request_queue_http_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED", False
+        )
+        if request_queue_http_enabled and (
+            not request_queue_enabled or not web_egress_enabled
+        ):
+            raise RuntimeError(
+                "Queue HTTP acquisition requires Queue and web-egress gates."
+            )
         return cls(
             api_base_url=os.environ.get(
                 "RDC_INTERNAL_API_BASE_URL", "http://127.0.0.1:8000"
@@ -141,10 +157,7 @@ class SandboxWorkerConfig:
             ),
             heartbeat_seconds=heartbeat_seconds,
             lease_renew_seconds=lease_renew_seconds,
-            web_egress_enabled=_env_bool(
-                "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED",
-                False,
-            ),
+            web_egress_enabled=web_egress_enabled,
             web_egress_allowed_hosts=_json_string_list(
                 "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS"
             ),
@@ -200,10 +213,8 @@ class SandboxWorkerConfig:
                 "RDC_SANDBOX_CANARY_KEY_VALUE_STORE_ENABLED",
                 False,
             ),
-            request_queue_enabled=_env_bool(
-                "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED",
-                False,
-            ),
+            request_queue_enabled=request_queue_enabled,
+            request_queue_http_enabled=request_queue_http_enabled,
             browser_max_pages=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_PAGES", "1")),
             browser_max_actions=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_ACTIONS", "8")),
             browser_navigation_timeout_seconds=int(

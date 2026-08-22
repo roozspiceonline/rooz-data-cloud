@@ -24,11 +24,14 @@ by the sandbox master gate.
 
 ## Queue-bound scraping input
 
-With the Request Queue gate enabled, an offline `RUN_START` may claim one item
+With the Request Queue gate enabled, a `RUN_START` may claim one item
 from the exact Queue bound into the Run. The worker validates the response,
 injects `_rdc_queue` without its claim token, runs the Agent with network none,
-then completes the claim from the trusted worker process. Queue access cannot
-currently be combined with browser, Dataset, KV, or network capabilities.
+then completes the claim from the trusted worker process. In the additional
+Queue HTTP mode, the worker derives one GET from the claim, runs it through the
+existing pinned HTTPS broker, and injects `_rdc_queue_http`; the Agent still has
+network none. Queue access cannot be combined with browser, Dataset, or KV, and
+cannot carry caller-supplied web intent.
 
 `RUN_CANCEL` remains available for cleanup even when execution is later
 disabled.

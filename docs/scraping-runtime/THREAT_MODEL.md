@@ -17,8 +17,17 @@ URLs fail closed. It removes the claim token before mounting Agent input. Agent
 containers retain `--network none` and receive no worker, lease, database, or
 object-storage credentials.
 
-Queue capability composition is deliberately exclusive in this increment.
-Dataset, KV, browser, and network capabilities cannot accompany Request Queue
-access. A worker crash may delay the request only until its bounded claim
-expiry; the existing reclaim transition supplies immutable evidence. Logs and
-audit details must not include URL, user data, claim tokens, or Agent output.
+Brokered Queue HTTP treats the claimed URL, DNS, redirects, headers, and body as
+hostile. Only the trusted worker can derive the single GET, and it must use the
+existing egress broker with exact operator hostname allowlisting, public address
+resolution, address pinning, redirect revalidation, safe headers, identity
+encoding, bounded response bytes, and bounded timeouts. The v2 Run binding and
+lease capability bind the current egress-policy digest. Caller input cannot add
+legacy or versioned web requests, and the Agent container remains networkless.
+
+Queue capability composition remains deliberately narrow. Dataset, KV, and
+browser cannot accompany Queue access; web egress is valid only for the
+independently gated one-claim/one-GET Queue HTTP mode. A worker crash may delay
+the request only until its bounded claim expiry; the existing reclaim
+transition supplies immutable evidence. Logs and audit details must not include
+URL, user data, response content, claim tokens, or Agent output.

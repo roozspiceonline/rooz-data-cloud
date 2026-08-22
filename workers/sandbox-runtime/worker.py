@@ -45,6 +45,8 @@ from policy import SandboxPolicyError, verify_host
 from queue_worker_protocol import (
     QueueWorkerBoundaryError,
     queue_completion_payload,
+    queue_http_agent_result,
+    queue_http_fetch_envelope,
     validate_queue_claim_result,
 )
 from rdc_worker_client import (
@@ -216,6 +218,7 @@ def _require_canary_activation(
     dataset_writes_enabled: bool,
     key_value_store_enabled: bool,
     request_queue_enabled: bool,
+    request_queue_http_enabled: bool,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -288,6 +291,10 @@ def _require_canary_activation(
     )
     queue_runtime_enabled = (
         request_queue and payload.get("work_kind") == "RUN_START"
+    )
+    network = capabilities.get("network")
+    queue_http_runtime_enabled = (
+        queue_runtime_enabled and network == "web-egress"
     )
     if dataset and kv_runtime_enabled:
         raise SandboxPolicyError(
@@ -396,9 +403,20 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Request Queue activation does not match manifest."
         )
+    if (
+        activation.get("request_queue_http_enabled")
+        is not queue_http_runtime_enabled
+    ):
+        raise SandboxPolicyError(
+            "Queue HTTP activation does not match the manifest."
+        )
     if queue_runtime_enabled:
         if not request_queue_enabled:
             raise SandboxPolicyError("Worker Request Queue gate is disabled.")
+        if queue_http_runtime_enabled and not request_queue_http_enabled:
+            raise SandboxPolicyError(
+                "Worker Queue HTTP acquisition gate is disabled."
+            )
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
             raise SandboxPolicyError("Queue-bound Run lacks input reference.")
@@ -415,20 +433,53 @@ def _require_canary_activation(
             "schema_version": "rdc.run-queue/v1",
             "queue_id": binding["queue_id"],
         }
-        expected_receipt = {
-            "schema_version": "rdc.request-queue-binding-receipt/v1",
-            "binding_digest": _canonical_digest(normalized_binding),
-            "queue_id": binding["queue_id"],
-            "agent_version_id": str(payload.get("agent_version_id", "")),
-            "direct_database_access": False,
-            "direct_object_storage_access": False,
-        }
+        if queue_http_runtime_enabled:
+            stored_egress_policy = input_reference.get(
+                "request_queue_egress_policy"
+            )
+            stored_egress_digest = input_reference.get(
+                "request_queue_egress_policy_digest"
+            )
+            if (
+                egress_policy is None
+                or not isinstance(stored_egress_policy, dict)
+                or stored_egress_policy != egress_policy.as_dict()
+                or stored_egress_digest != egress_policy.digest
+            ):
+                raise SandboxPolicyError(
+                    "Queue HTTP egress receipt does not match worker policy."
+                )
+            expected_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v2",
+                "binding_digest": _canonical_digest(normalized_binding),
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload.get("agent_version_id", "")),
+                "acquisition_mode": "brokered-http",
+                "egress_policy_digest": egress_policy.digest,
+                "dispatch_enabled": True,
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+        else:
+            expected_receipt = {
+                "schema_version": "rdc.request-queue-binding-receipt/v1",
+                "binding_digest": _canonical_digest(normalized_binding),
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload.get("agent_version_id", "")),
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
         if receipt != expected_receipt:
             raise SandboxPolicyError(
                 "Queue-bound Run binding receipt is invalid."
             )
         expected_queue_capability = {
-            "schema_version": "rdc.request-queue-worker-capability/v1",
+            "schema_version": (
+                "rdc.request-queue-worker-capability/v2"
+                if queue_http_runtime_enabled
+                else "rdc.request-queue-worker-capability/v1"
+            ),
             "queue_id": binding["queue_id"],
             "run_id": str(payload.get("run_id", "")),
             "agent_version_id": str(payload.get("agent_version_id", "")),
@@ -439,6 +490,14 @@ def _require_canary_activation(
             "direct_object_storage_access": False,
             "enabled": True,
         }
+        if queue_http_runtime_enabled:
+            expected_queue_capability.update(
+                {
+                    "acquisition_mode": "brokered-http",
+                    "egress_policy_digest": egress_policy.digest,
+                    "agent_container_network": "none",
+                }
+            )
         if payload.get("request_queue_capability") != expected_queue_capability:
             raise SandboxPolicyError(
                 "Canary Request Queue capability receipt is invalid."
@@ -449,7 +508,6 @@ def _require_canary_activation(
         )
 
     profile = activation.get("capability_profile")
-    network = capabilities.get("network")
     egress_digest = activation.get("egress_policy_digest")
     browser_digest = activation.get("browser_policy_digest")
 
@@ -461,6 +519,10 @@ def _require_canary_activation(
         if egress_digest is not None:
             raise SandboxPolicyError(
                 "Offline-minimal activation cannot carry an egress digest."
+            )
+        if queue_http_runtime_enabled:
+            raise SandboxPolicyError(
+                "Queue HTTP acquisition cannot use the offline profile."
             )
     elif profile == "brokered-web-egress":
         if browser is not False:
@@ -483,6 +545,10 @@ def _require_canary_activation(
         if browser_digest is not None:
             raise SandboxPolicyError(
                 "Brokered web-egress activation cannot carry browser policy."
+            )
+        if queue_runtime_enabled and not queue_http_runtime_enabled:
+            raise SandboxPolicyError(
+                "Brokered Queue Runs require Queue HTTP acquisition."
             )
     elif profile == "controlled-browser":
         if payload.get("work_kind") != "RUN_START":
@@ -628,6 +694,7 @@ def _build(
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
+            request_queue_http_enabled=config.request_queue_http_enabled,
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -723,6 +790,7 @@ def _run(
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
+            request_queue_http_enabled=config.request_queue_http_enabled,
         )
         if activation.get("capability_profile") == "controlled-browser":
             input_reference = payload.get("input_reference")
@@ -856,7 +924,15 @@ def _run(
         profile = activation.get("capability_profile")
         kv_enabled = activation.get("key_value_store_enabled") is True
         queue_enabled = activation.get("request_queue_enabled") is True
+        queue_http_enabled = (
+            activation.get("request_queue_http_enabled") is True
+        )
         queue_claim: dict[str, object] | None = None
+
+        if queue_http_enabled and not queue_enabled:
+            raise SandboxPolicyError(
+                "Queue HTTP acquisition requires Queue access."
+            )
 
         if queue_enabled:
             capability = payload.get("request_queue_capability")
@@ -890,9 +966,12 @@ def _run(
                     _data(claimed),
                     expected_queue_id=queue_id,
                 )
-                if "_rdc_queue" in input_value:
+                if (
+                    "_rdc_queue" in input_value
+                    or "_rdc_queue_http" in input_value
+                ):
                     raise QueueWorkerBoundaryError(
-                        "Run input cannot populate reserved _rdc_queue."
+                        "Run input cannot populate Queue runtime keys."
                     )
                 input_value["_rdc_queue"] = {
                     key: value
@@ -909,6 +988,72 @@ def _run(
                         "error_code": "REQUEST_QUEUE_CLAIM_FAILED",
                         "error_summary": (
                             "Controlled Request Queue claim failed closed."
+                        ),
+                    },
+                )
+                return
+
+        if queue_claim is not None and queue_http_enabled:
+            if egress_policy is None:
+                raise SandboxPolicyError(
+                    "Queue HTTP acquisition lacks worker egress policy."
+                )
+            try:
+                queue_fetch = queue_http_fetch_envelope(queue_claim)
+                broker_input = phase1j_broker_adapter(queue_fetch)
+                broker_output = broker_web_requests(
+                    broker_input,
+                    policy=egress_policy,
+                )
+                fetch_result = phase1j_broker_result_adapter(
+                    queue_fetch,
+                    broker_output,
+                )
+                input_value["_rdc_queue_http"] = queue_http_agent_result(
+                    queue_claim,
+                    fetch_result,
+                )
+            except (
+                QueueWorkerBoundaryError,
+                WebFetchContractError,
+                EgressPolicyError,
+            ):
+                try:
+                    client.queue_complete(
+                        lease_id,
+                        token,
+                        queue_completion_payload(
+                            queue_claim,
+                            handled=False,
+                            failure_code="QUEUE_HTTP_FETCH_FAILED",
+                            failure_summary=(
+                                "Brokered Queue HTTP acquisition failed."
+                            ),
+                        ),
+                    )
+                except WorkerProtocolError:
+                    client.complete(
+                        lease_id,
+                        token,
+                        {
+                            "outcome": "FAILED",
+                            "retryable": False,
+                            "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
+                            "error_summary": (
+                                "Queue HTTP failure completion failed closed."
+                            ),
+                        },
+                    )
+                    return
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "QUEUE_HTTP_FETCH_FAILED",
+                        "error_summary": (
+                            "Brokered Queue HTTP acquisition failed closed."
                         ),
                     },
                 )
@@ -961,7 +1106,12 @@ def _run(
                 raise SandboxPolicyError(
                     "Brokered web-egress activation lacks worker policy."
                 )
-            if web_fetch is not None:
+            if queue_http_enabled:
+                if web_fetch is not None or "_rdc_web_requests" in input_value:
+                    raise SandboxPolicyError(
+                        "Queue HTTP acquisition cannot carry another web intent."
+                    )
+            elif web_fetch is not None:
                 if "_rdc_web_requests" in input_value:
                     raise SandboxPolicyError(
                         "Versioned web fetch cannot be mixed with the "

@@ -23,7 +23,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Scraping runtime | Queue-bound offline primitive implemented — composed HTTP/browser and Dataset/KV increments remain | Scheduler, execution recovery, Queue, Dataset and KV protocols |
+| Scraping runtime | Queue-bound offline and brokered HTTP primitives implemented — browser and Dataset/KV composition remain | Scheduler, execution recovery, Queue, Dataset and KV protocols |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -52,8 +52,11 @@ trigger history, tenant RLS and a singleton-safe dispatch service.
 The first scraping-runtime increment binds a Run to one server-verified tenant
 Queue, issues an exact lease-scoped capability, independently validates the
 claim in the worker, withholds claim tokens from Agent input, and completes one
-request per Run. It remains offline and false-by-default. Controlled dynamic
-HTTP/browser acquisition and composed Dataset/KV persistence remain active work.
+request per Run. It remains offline and false-by-default. The second increment
+derives one Queue-claimed GET through the existing bounded
+HTTPS egress broker, binds its policy digest into v2 Run/lease receipts, rejects
+caller web-intent injection, and keeps Agent networking disabled. Queue-bound
+browser acquisition and composed Dataset/KV persistence remain active work.
 
 ## Remaining RDC v1 workstreams
 

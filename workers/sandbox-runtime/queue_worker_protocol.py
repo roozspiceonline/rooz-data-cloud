@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import math
@@ -131,14 +132,86 @@ def queue_completion_payload(
     claim: dict[str, object],
     *,
     handled: bool,
+    failure_code: str = "AGENT_EXIT_NONZERO",
+    failure_summary: str = "Queue-bound Agent execution failed.",
 ) -> dict[str, object]:
     return {
         "queue_id": str(claim["queue_id"]),
         "request_id": str(claim["request_id"]),
         "claim_token": str(claim["claim_token"]),
         "status": "HANDLED" if handled else "FAILED",
-        "failure_code": None if handled else "AGENT_EXIT_NONZERO",
+        "failure_code": None if handled else failure_code[:80],
         "failure_summary": (
-            None if handled else "Queue-bound Agent execution failed."
+            None if handled else failure_summary[:2000]
         ),
+    }
+
+
+def queue_http_fetch_envelope(
+    claim: dict[str, object],
+) -> dict[str, object]:
+    if claim.get("schema_version") != "rdc.queue-worker-claim/v1":
+        _fail("Queue HTTP acquisition requires a validated claim.")
+    request_id = str(claim.get("request_id", ""))
+    try:
+        UUID(request_id)
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue HTTP acquisition request id is invalid."
+        ) from exc
+    return {
+        "schema_version": "rdc.web-fetch/v1",
+        "requests": [
+            {
+                "id": "queue-request",
+                "method": "GET",
+                "url": _https_url(claim.get("url")),
+            }
+        ],
+    }
+
+
+def queue_http_agent_result(
+    claim: dict[str, object],
+    web_fetch_result: object,
+) -> dict[str, object]:
+    envelope = queue_http_fetch_envelope(claim)
+    expected_digest = hashlib.sha256(
+        json.dumps(
+            envelope,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    expected_fields = {
+        "schema_version",
+        "request_digest",
+        "results",
+        "budget",
+    }
+    if (
+        not isinstance(web_fetch_result, dict)
+        or set(web_fetch_result) != expected_fields
+        or web_fetch_result.get("schema_version")
+        != "rdc.web-fetch-result/v1"
+        or web_fetch_result.get("request_digest") != expected_digest
+    ):
+        _fail("Queue HTTP result envelope is invalid.")
+    results = web_fetch_result.get("results")
+    budget = web_fetch_result.get("budget")
+    if (
+        not isinstance(results, list)
+        or len(results) != 1
+        or not isinstance(results[0], dict)
+        or results[0].get("id") != "queue-request"
+        or results[0].get("method") != "GET"
+        or not isinstance(budget, dict)
+    ):
+        _fail("Queue HTTP result does not match its claim.")
+    return {
+        "schema_version": "rdc.queue-http-result/v1",
+        "request_id": str(claim["request_id"]),
+        "queue_id": str(claim["queue_id"]),
+        "response": dict(results[0]),
+        "budget": dict(budget),
     }
