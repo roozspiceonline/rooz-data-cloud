@@ -253,7 +253,7 @@ def main() -> None:
         "class BrowserSessionInput",
         'browser: BrowserSessionInput | None = None',
         "external_surfaces = sum(",
-        "A Run may use only one external web/browser intent surface.",
+        "A Run may use only one external or Queue intent surface.",
     ]:
         require(marker in run_schemas, "Run browser contract missing: " + marker)
     require(
