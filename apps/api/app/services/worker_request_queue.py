@@ -32,6 +32,7 @@ def request_queue_capability(
     request_queue_browser_enabled: bool = False,
     browser_policy_digest: str | None = None,
     browser_egress_policy_digest: str | None = None,
+    request_queue_dataset_enabled: bool = False,
 ) -> dict[str, object] | None:
     if (
         not request_queue_enabled
@@ -63,13 +64,18 @@ def request_queue_capability(
     )
     browser_acquisition = network == "web-egress" and browser is True
     http_acquisition = network == "web-egress" and browser is False
+    dataset = (
+        capabilities.get("dataset")
+        if isinstance(capabilities, dict)
+        else None
+    )
     if (
         not isinstance(capabilities, dict)
         or capabilities.get("requestQueue") is not True
         or network not in {"none", "web-egress"}
         or not isinstance(browser, bool)
+        or not isinstance(dataset, bool)
         or (browser and not browser_acquisition)
-        or capabilities.get("dataset") is not False
         or capabilities.get("keyValueStore") is not False
         or not isinstance(binding, dict)
         or set(binding) != {"schema_version", "queue_id"}
@@ -177,14 +183,46 @@ def request_queue_capability(
         }
     if receipt != expected_receipt:
         return None
+    if dataset:
+        composition_receipt = input_reference.get(
+            "request_queue_dataset_receipt"
+        )
+        expected_composition_receipt = {
+            "schema_version": "rdc.request-queue-dataset-receipt/v1",
+            "queue_id": str(queue_id),
+            "agent_version_id": str(payload["agent_version_id"]),
+            "queue_binding_receipt_digest": canonical_fingerprint(receipt),
+            "dataset_name": "default",
+            "dispatch_enabled": True,
+            "completion_order": "dataset-before-queue-handled",
+            "agent_container_network": "none",
+            "direct_database_access": False,
+            "direct_object_storage_access": False,
+        }
+        if (
+            not request_queue_dataset_enabled
+            or not settings.sandbox_canary_request_queue_dataset_enabled
+            or not settings.sandbox_canary_dataset_writes_enabled
+            or composition_receipt != expected_composition_receipt
+        ):
+            return None
+    elif (
+        request_queue_dataset_enabled
+        or input_reference.get("request_queue_dataset_receipt") is not None
+    ):
+        return None
     capability: dict[str, object] = {
         "schema_version": (
-            "rdc.request-queue-worker-capability/v3"
-            if browser_acquisition
+            "rdc.request-queue-worker-capability/v4"
+            if dataset
             else (
-                "rdc.request-queue-worker-capability/v2"
-                if http_acquisition
-                else "rdc.request-queue-worker-capability/v1"
+                "rdc.request-queue-worker-capability/v3"
+                if browser_acquisition
+                else (
+                    "rdc.request-queue-worker-capability/v2"
+                    if http_acquisition
+                    else "rdc.request-queue-worker-capability/v1"
+                )
             )
         ),
         "queue_id": str(queue_id),
@@ -214,6 +252,14 @@ def request_queue_capability(
                 "acquisition_mode": "brokered-http",
                 "egress_policy_digest": egress_policy_digest,
                 "agent_container_network": "none",
+            }
+        )
+    if dataset:
+        capability.update(
+            {
+                "dataset_write_enabled": True,
+                "dataset_name": "default",
+                "completion_order": "dataset-before-queue-handled",
             }
         )
     return capability
@@ -268,6 +314,10 @@ def _enabled(
                 str,
             )
             else None
+        ),
+        request_queue_dataset_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_dataset_enabled") is True
         ),
     )
     if (

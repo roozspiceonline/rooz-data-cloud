@@ -187,6 +187,7 @@ def _canary_constraints(
     request_queue: bool = False,
     request_queue_http: bool = False,
     request_queue_browser: bool = False,
+    request_queue_dataset: bool = False,
 ) -> dict[str, object]:
     return {
         "memory_mb": settings.sandbox_canary_max_memory_mb,
@@ -206,6 +207,7 @@ def _canary_constraints(
         "request_queue": request_queue,
         "request_queue_http": request_queue_http,
         "request_queue_browser": request_queue_browser,
+        "request_queue_dataset": request_queue_dataset,
         "secrets": False,
         "max_concurrency": 1,
     }
@@ -274,6 +276,7 @@ def _canary_activation(
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
+    queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
     )
@@ -302,9 +305,15 @@ def _canary_activation(
         else None
     )
     if queue_runtime_enabled and (
-        dataset
-        or key_value_store
+        key_value_store
         or not settings.sandbox_canary_request_queue_enabled
+        or (
+            queue_dataset_runtime_enabled
+            and (
+                not settings.sandbox_canary_dataset_writes_enabled
+                or not settings.sandbox_canary_request_queue_dataset_enabled
+            )
+        )
         or (
             queue_http_runtime_enabled
             and not settings.sandbox_canary_request_queue_http_enabled
@@ -324,13 +333,14 @@ def _canary_activation(
             request_queue_browser_enabled=queue_browser_runtime_enabled,
             browser_policy_digest=current_browser_policy_digest,
             browser_egress_policy_digest=current_browser_egress_digest,
+            request_queue_dataset_enabled=queue_dataset_runtime_enabled,
         )
         is None
     ):
         return None
     if dataset and (
         work_kind != "RUN_START"
-        or browser
+        or (browser and not queue_dataset_runtime_enabled)
         or not settings.sandbox_canary_dataset_writes_enabled
         or "DATASET_APPEND" not in worker.capabilities
     ):
@@ -410,6 +420,7 @@ def _canary_activation(
         request_queue=queue_runtime_enabled,
         request_queue_http=queue_http_runtime_enabled,
         request_queue_browser=queue_browser_runtime_enabled,
+        request_queue_dataset=queue_dataset_runtime_enabled,
     )
     if browser:
         capability_profile = "controlled-browser"
@@ -433,6 +444,7 @@ def _canary_activation(
         request_queue_enabled=queue_runtime_enabled,
         request_queue_http_enabled=queue_http_runtime_enabled,
         request_queue_browser_enabled=queue_browser_runtime_enabled,
+        request_queue_dataset_enabled=queue_dataset_runtime_enabled,
     )
 
 
@@ -442,6 +454,7 @@ def _dataset_append_capability(
     payload: dict[str, object],
     *,
     dataset_write_enabled: bool,
+    request_queue_dataset_enabled: bool = False,
 ) -> dict[str, object] | None:
     if (
         not dataset_write_enabled
@@ -460,11 +473,20 @@ def _dataset_append_capability(
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         return None
+    request_queue = capabilities.get("requestQueue")
     if (
         capabilities.get("dataset") is not True
-        or capabilities.get("browser") is not False
         or capabilities.get("keyValueStore") is not False
-        or capabilities.get("requestQueue") is not False
+        or not isinstance(request_queue, bool)
+        or request_queue is not request_queue_dataset_enabled
+        or (
+            capabilities.get("browser") is not False
+            and not request_queue_dataset_enabled
+        )
+        or (
+            request_queue_dataset_enabled
+            and not settings.sandbox_canary_request_queue_dataset_enabled
+        )
     ):
         return None
 
@@ -472,8 +494,12 @@ def _dataset_append_capability(
     if not isinstance(run_id, str) or not run_id:
         return None
 
-    return {
-        "schema_version": "rdc.dataset-worker-capability/v1",
+    capability: dict[str, object] = {
+        "schema_version": (
+            "rdc.dataset-worker-capability/v2"
+            if request_queue_dataset_enabled
+            else "rdc.dataset-worker-capability/v1"
+        ),
         "append_schema_version": "rdc.dataset-append/v1",
         "run_id": run_id,
         "agent_version_id": str(payload["agent_version_id"]),
@@ -486,6 +512,26 @@ def _dataset_append_capability(
         "max_dataset_bytes": 268_435_456,
         "enabled": True,
     }
+    if request_queue_dataset_enabled:
+        input_reference = payload.get("input_reference")
+        binding = (
+            input_reference.get("request_queue")
+            if isinstance(input_reference, dict)
+            else None
+        )
+        if (
+            not isinstance(binding, dict)
+            or binding.get("schema_version") != "rdc.run-queue/v1"
+            or not isinstance(binding.get("queue_id"), str)
+        ):
+            return None
+        capability.update(
+            {
+                "queue_id": binding["queue_id"],
+                "completion_order": "dataset-before-queue-handled",
+            }
+        )
+    return capability
 
 
 def _activation_payload(
@@ -563,6 +609,7 @@ def _sandbox_claim_policy(
     work_kind = str(payload.get("work_kind", ""))
     kv_runtime_enabled = key_value_store and work_kind == "RUN_START"
     queue_runtime_enabled = request_queue and work_kind == "RUN_START"
+    queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
     )
@@ -591,9 +638,15 @@ def _sandbox_claim_policy(
         else None
     )
     if queue_runtime_enabled and (
-        dataset
-        or key_value_store
+        key_value_store
         or not settings.sandbox_canary_request_queue_enabled
+        or (
+            queue_dataset_runtime_enabled
+            and (
+                not settings.sandbox_canary_dataset_writes_enabled
+                or not settings.sandbox_canary_request_queue_dataset_enabled
+            )
+        )
         or (
             queue_http_runtime_enabled
             and not settings.sandbox_canary_request_queue_http_enabled
@@ -613,13 +666,14 @@ def _sandbox_claim_policy(
             request_queue_browser_enabled=queue_browser_runtime_enabled,
             browser_policy_digest=current_browser_policy_digest,
             browser_egress_policy_digest=current_browser_egress_digest,
+            request_queue_dataset_enabled=queue_dataset_runtime_enabled,
         )
         is None
     ):
         return None
     if dataset and (
         work_kind != "RUN_START"
-        or browser
+        or (browser and not queue_dataset_runtime_enabled)
         or not settings.sandbox_canary_dataset_writes_enabled
         or "DATASET_APPEND" not in worker.capabilities
     ):
@@ -2014,6 +2068,10 @@ async def claim_work(
                     activation is not None
                     and activation.dataset_write_enabled
                 ),
+                request_queue_dataset_enabled=(
+                    activation is not None
+                    and activation.request_queue_dataset_enabled
+                ),
             )
         )
         claim_payload["key_value_store_capability"] = (
@@ -2057,6 +2115,10 @@ async def claim_work(
                 if activation is not None
                 and activation.request_queue_browser_enabled
                 else None
+            ),
+            request_queue_dataset_enabled=(
+                activation is not None
+                and activation.request_queue_dataset_enabled
             ),
         )
         lease.payload_digest = canonical_fingerprint(claim_payload)
@@ -2149,6 +2211,10 @@ async def append_worker_dataset_items(
         worker,
         snapshot,
         dataset_write_enabled=dataset_write_enabled,
+        request_queue_dataset_enabled=(
+            isinstance(activation, dict)
+            and activation.get("request_queue_dataset_enabled") is True
+        ),
     )
     if (
         expected_capability is None

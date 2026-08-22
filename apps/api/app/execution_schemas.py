@@ -85,6 +85,7 @@ class SandboxActivation(StrictModel):
     request_queue_enabled: bool = False
     request_queue_http_enabled: bool = False
     request_queue_browser_enabled: bool = False
+    request_queue_dataset_enabled: bool = False
     max_concurrency: Literal[1] = 1
 
     @model_validator(mode="after")
@@ -140,6 +141,20 @@ class SandboxActivation(StrictModel):
             )
         if self.request_queue_http_enabled and self.request_queue_browser_enabled:
             raise ValueError("Queue acquisition modes are mutually exclusive.")
+        if self.request_queue_dataset_enabled and (
+            not self.request_queue_enabled or not self.dataset_write_enabled
+        ):
+            raise ValueError(
+                "Queue Dataset composition requires Queue and Dataset access."
+            )
+        if (
+            self.request_queue_enabled
+            and self.dataset_write_enabled
+            and not self.request_queue_dataset_enabled
+        ):
+            raise ValueError(
+                "Queue and Dataset access require an explicit composition receipt."
+            )
         return self
 
 

@@ -23,9 +23,12 @@ redirect revalidation, header stripping, timeouts, and byte/request budgets all
 remain authoritative. The v2 binding and worker capability receipts bind the
 current egress-policy digest and `brokered-http` acquisition mode.
 
-Queue Runs still cannot combine Dataset, KV, caller-supplied web-fetch, or
-legacy `_rdc_web_requests` intent. Composed Dataset/KV output remains a later
-scraping-runtime increment.
+Queue Runs still cannot combine KV, caller-supplied web-fetch, or legacy
+`_rdc_web_requests` intent. Dataset composition is independently gated: the
+control plane binds the Queue receipt to the default Dataset, and the worker
+must persist the validated `rdc.dataset-append/v1` output under an idempotency
+key derived from the Queue request before it may mark the claim HANDLED. KV
+composition remains a later scraping-runtime increment.
 
 A strict `rdc.request-queue-binding-receipt/v3` intent is also available for an
 Agent version declaring `requestQueue=true`, `browser=true`, and
@@ -61,3 +64,9 @@ Brokered Queue HTTP additionally requires
 gate and exact hostname allowlist in both the API and worker environments.
 Queue/browser acquisition additionally requires
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=true` plus both browser gates.
+Queue plus Dataset additionally requires
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_DATASET_ENABLED=true` and the existing Dataset
+write gate in both API and worker environments. The v4 Queue capability and v2
+Dataset capability bind the same Queue, Run, Agent version, worker and
+`dataset-before-queue-handled` ordering; Agent and Chromium remain credential-
+free and networkless at the persistence boundary.

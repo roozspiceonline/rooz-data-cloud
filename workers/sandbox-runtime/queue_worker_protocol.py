@@ -147,6 +147,21 @@ def queue_completion_payload(
     }
 
 
+def queue_dataset_idempotency_key(claim: dict[str, object]) -> str:
+    if claim.get("schema_version") != "rdc.queue-worker-claim/v1":
+        _fail("Queue Dataset persistence requires a validated claim.")
+    request_id = str(claim.get("request_id", ""))
+    queue_id = str(claim.get("queue_id", ""))
+    try:
+        UUID(request_id)
+        UUID(queue_id)
+    except ValueError as exc:
+        raise QueueWorkerBoundaryError(
+            "Queue Dataset persistence scope is invalid."
+        ) from exc
+    return f"queue:{request_id}"
+
+
 def queue_http_fetch_envelope(
     claim: dict[str, object],
 ) -> dict[str, object]:

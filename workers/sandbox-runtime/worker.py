@@ -47,6 +47,7 @@ from queue_worker_protocol import (
     queue_browser_agent_result,
     queue_browser_navigation_plan,
     queue_completion_payload,
+    queue_dataset_idempotency_key,
     queue_http_agent_result,
     queue_http_fetch_envelope,
     validate_queue_claim_result,
@@ -222,6 +223,7 @@ def _require_canary_activation(
     request_queue_enabled: bool,
     request_queue_http_enabled: bool,
     request_queue_browser_enabled: bool,
+    request_queue_dataset_enabled: bool = False,
 ) -> dict[str, object]:
     activation = payload.get("activation")
     sandbox = payload.get("sandbox")
@@ -295,6 +297,7 @@ def _require_canary_activation(
     queue_runtime_enabled = (
         request_queue and payload.get("work_kind") == "RUN_START"
     )
+    queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
     network = capabilities.get("network")
     queue_browser_runtime_enabled = (
         queue_runtime_enabled and network == "web-egress" and browser
@@ -312,9 +315,20 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary browser and Key-Value Store cannot be combined."
         )
-    if queue_runtime_enabled and (dataset or key_value_store):
+    if queue_runtime_enabled and key_value_store:
         raise SandboxPolicyError(
-            "Canary Request Queue access cannot be combined with other data capabilities."
+            "Canary Request Queue access cannot combine with Key-Value Store."
+        )
+    if queue_dataset_runtime_enabled and not request_queue_dataset_enabled:
+        raise SandboxPolicyError(
+            "Worker Queue Dataset composition gate is disabled."
+        )
+    if (
+        activation.get("request_queue_dataset_enabled")
+        is not queue_dataset_runtime_enabled
+    ):
+        raise SandboxPolicyError(
+            "Queue Dataset activation does not match the manifest."
         )
     if activation.get("dataset_write_enabled") is not dataset:
         raise SandboxPolicyError(
@@ -323,14 +337,18 @@ def _require_canary_activation(
     if dataset:
         if (
             payload.get("work_kind") != "RUN_START"
-            or browser
+            or (browser and not queue_dataset_runtime_enabled)
             or not dataset_writes_enabled
         ):
             raise SandboxPolicyError(
                 "Canary Dataset writes are not enabled for this Run."
             )
         expected_dataset_capability = {
-            "schema_version": "rdc.dataset-worker-capability/v1",
+            "schema_version": (
+                "rdc.dataset-worker-capability/v2"
+                if queue_dataset_runtime_enabled
+                else "rdc.dataset-worker-capability/v1"
+            ),
             "append_schema_version": "rdc.dataset-append/v1",
             "run_id": str(payload.get("run_id", "")),
             "agent_version_id": str(payload.get("agent_version_id", "")),
@@ -343,6 +361,25 @@ def _require_canary_activation(
             "max_dataset_bytes": 268_435_456,
             "enabled": True,
         }
+        if queue_dataset_runtime_enabled:
+            input_reference = payload.get("input_reference")
+            binding = (
+                input_reference.get("request_queue")
+                if isinstance(input_reference, dict)
+                else None
+            )
+            if not isinstance(binding, dict) or not isinstance(
+                binding.get("queue_id"), str
+            ):
+                raise SandboxPolicyError(
+                    "Queue Dataset binding is invalid."
+                )
+            expected_dataset_capability.update(
+                {
+                    "queue_id": binding["queue_id"],
+                    "completion_order": "dataset-before-queue-handled",
+                }
+            )
         if payload.get("dataset_append_capability") != (
             expected_dataset_capability
         ):
@@ -535,14 +572,42 @@ def _require_canary_activation(
             raise SandboxPolicyError(
                 "Queue-bound Run binding receipt is invalid."
             )
+        if queue_dataset_runtime_enabled:
+            expected_composition_receipt = {
+                "schema_version": "rdc.request-queue-dataset-receipt/v1",
+                "queue_id": binding["queue_id"],
+                "agent_version_id": str(payload.get("agent_version_id", "")),
+                "queue_binding_receipt_digest": _canonical_digest(receipt),
+                "dataset_name": "default",
+                "dispatch_enabled": True,
+                "completion_order": "dataset-before-queue-handled",
+                "agent_container_network": "none",
+                "direct_database_access": False,
+                "direct_object_storage_access": False,
+            }
+            if (
+                input_reference.get("request_queue_dataset_receipt")
+                != expected_composition_receipt
+            ):
+                raise SandboxPolicyError(
+                    "Queue Dataset composition receipt is invalid."
+                )
+        elif input_reference.get("request_queue_dataset_receipt") is not None:
+            raise SandboxPolicyError(
+                "Dataset-disabled Queue work cannot carry a composition receipt."
+            )
         expected_queue_capability = {
             "schema_version": (
-                "rdc.request-queue-worker-capability/v3"
-                if queue_browser_runtime_enabled
+                "rdc.request-queue-worker-capability/v4"
+                if queue_dataset_runtime_enabled
                 else (
-                    "rdc.request-queue-worker-capability/v2"
-                    if queue_http_runtime_enabled
-                    else "rdc.request-queue-worker-capability/v1"
+                    "rdc.request-queue-worker-capability/v3"
+                    if queue_browser_runtime_enabled
+                    else (
+                        "rdc.request-queue-worker-capability/v2"
+                        if queue_http_runtime_enabled
+                        else "rdc.request-queue-worker-capability/v1"
+                    )
                 )
             ),
             "queue_id": binding["queue_id"],
@@ -572,6 +637,14 @@ def _require_canary_activation(
                     "acquisition_mode": "brokered-http",
                     "egress_policy_digest": egress_policy.digest,
                     "agent_container_network": "none",
+                }
+            )
+        if queue_dataset_runtime_enabled:
+            expected_queue_capability.update(
+                {
+                    "dataset_write_enabled": True,
+                    "dataset_name": "default",
+                    "completion_order": "dataset-before-queue-handled",
                 }
             )
         if payload.get("request_queue_capability") != expected_queue_capability:
@@ -841,6 +914,9 @@ def _build(
             request_queue_browser_enabled=(
                 config.request_queue_browser_enabled
             ),
+            request_queue_dataset_enabled=(
+                config.request_queue_dataset_enabled
+            ),
         )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
@@ -939,6 +1015,9 @@ def _run(
             request_queue_http_enabled=config.request_queue_http_enabled,
             request_queue_browser_enabled=(
                 config.request_queue_browser_enabled
+            ),
+            request_queue_dataset_enabled=(
+                config.request_queue_dataset_enabled
             ),
         )
         if (
@@ -1418,31 +1497,6 @@ def _run(
             policy=dict(payload["sandbox"]),
         )
 
-        if queue_claim is not None:
-            try:
-                client.queue_complete(
-                    lease_id,
-                    token,
-                    queue_completion_payload(
-                        queue_claim,
-                        handled=code == 0,
-                    ),
-                )
-            except WorkerProtocolError:
-                client.complete(
-                    lease_id,
-                    token,
-                    {
-                        "outcome": "FAILED",
-                        "retryable": False,
-                        "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
-                        "error_summary": (
-                            "Controlled Request Queue completion failed closed."
-                        ),
-                    },
-                )
-                return
-
         if kv_enabled and code == 0:
             try:
                 if not output_path.is_file():
@@ -1516,6 +1570,10 @@ def _run(
                 dataset_payload = {
                     str(key): value for key, value in decoded.items()
                 }
+                if queue_claim is not None:
+                    dataset_payload["idempotency_key"] = (
+                        queue_dataset_idempotency_key(queue_claim)
+                    )
                 validate_dataset_append(dataset_payload)
                 client.dataset_append(
                     lease_id,
@@ -1529,6 +1587,36 @@ def _run(
                 OSError,
                 UnicodeError,
             ):
+                if queue_claim is not None:
+                    try:
+                        client.queue_complete(
+                            lease_id,
+                            token,
+                            queue_completion_payload(
+                                queue_claim,
+                                handled=False,
+                                failure_code="DATASET_APPEND_FAILED",
+                                failure_summary=(
+                                    "Queue-bound Dataset persistence failed."
+                                ),
+                            ),
+                        )
+                    except WorkerProtocolError:
+                        client.complete(
+                            lease_id,
+                            token,
+                            {
+                                "outcome": "FAILED",
+                                "retryable": False,
+                                "error_code": (
+                                    "REQUEST_QUEUE_COMPLETION_FAILED"
+                                ),
+                                "error_summary": (
+                                    "Queue Dataset failure completion failed closed."
+                                ),
+                            },
+                        )
+                        return
                 client.complete(
                     lease_id,
                     token,
@@ -1538,6 +1626,31 @@ def _run(
                         "error_code": "DATASET_APPEND_FAILED",
                         "error_summary": (
                             "Controlled Dataset append failed closed."
+                        ),
+                    },
+                )
+                return
+
+        if queue_claim is not None:
+            try:
+                client.queue_complete(
+                    lease_id,
+                    token,
+                    queue_completion_payload(
+                        queue_claim,
+                        handled=code == 0,
+                    ),
+                )
+            except WorkerProtocolError:
+                client.complete(
+                    lease_id,
+                    token,
+                    {
+                        "outcome": "FAILED",
+                        "retryable": False,
+                        "error_code": "REQUEST_QUEUE_COMPLETION_FAILED",
+                        "error_summary": (
+                            "Controlled Request Queue completion failed closed."
                         ),
                     },
                 )
