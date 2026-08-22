@@ -60,6 +60,7 @@ class SandboxWorkerConfig:
     key_value_store_enabled: bool
     request_queue_enabled: bool
     request_queue_http_enabled: bool
+    request_queue_browser_enabled: bool
     browser_max_pages: int
     browser_max_actions: int
     browser_navigation_timeout_seconds: int
@@ -106,17 +107,42 @@ class SandboxWorkerConfig:
         web_egress_enabled = _env_bool(
             "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED", False
         )
+        web_egress_allowed_hosts = _json_string_list(
+            "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS"
+        )
         request_queue_enabled = _env_bool(
             "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED", False
         )
         request_queue_http_enabled = _env_bool(
             "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED", False
         )
+        browser_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_BROWSER_ENABLED", False
+        )
+        browser_live_navigation_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED", False
+        )
+        request_queue_browser_enabled = _env_bool(
+            "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED", False
+        )
         if request_queue_http_enabled and (
-            not request_queue_enabled or not web_egress_enabled
+            not request_queue_enabled
+            or not web_egress_enabled
+            or not web_egress_allowed_hosts
         ):
             raise RuntimeError(
-                "Queue HTTP acquisition requires Queue and web-egress gates."
+                "Queue HTTP acquisition requires Queue, web-egress, and an allowlist."
+            )
+        if request_queue_browser_enabled and (
+            not request_queue_enabled
+            or not web_egress_enabled
+            or not browser_enabled
+            or not browser_live_navigation_enabled
+            or not web_egress_allowed_hosts
+        ):
+            raise RuntimeError(
+                "Queue browser acquisition requires Queue, web-egress, "
+                "live browser, and an allowlist."
             )
         return cls(
             api_base_url=os.environ.get(
@@ -158,9 +184,7 @@ class SandboxWorkerConfig:
             heartbeat_seconds=heartbeat_seconds,
             lease_renew_seconds=lease_renew_seconds,
             web_egress_enabled=web_egress_enabled,
-            web_egress_allowed_hosts=_json_string_list(
-                "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS"
-            ),
+            web_egress_allowed_hosts=web_egress_allowed_hosts,
             web_egress_max_requests=int(
                 os.environ.get(
                     "RDC_SANDBOX_CANARY_WEB_EGRESS_MAX_REQUESTS",
@@ -197,14 +221,8 @@ class SandboxWorkerConfig:
                     "15",
                 )
             ),
-            browser_enabled=_env_bool(
-                "RDC_SANDBOX_CANARY_BROWSER_ENABLED",
-                False,
-            ),
-            browser_live_navigation_enabled=_env_bool(
-                "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED",
-                False,
-            ),
+            browser_enabled=browser_enabled,
+            browser_live_navigation_enabled=browser_live_navigation_enabled,
             dataset_writes_enabled=_env_bool(
                 "RDC_SANDBOX_CANARY_DATASET_WRITES_ENABLED",
                 False,
@@ -215,6 +233,7 @@ class SandboxWorkerConfig:
             ),
             request_queue_enabled=request_queue_enabled,
             request_queue_http_enabled=request_queue_http_enabled,
+            request_queue_browser_enabled=request_queue_browser_enabled,
             browser_max_pages=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_PAGES", "1")),
             browser_max_actions=int(os.environ.get("RDC_SANDBOX_CANARY_BROWSER_MAX_ACTIONS", "8")),
             browser_navigation_timeout_seconds=int(

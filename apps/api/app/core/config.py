@@ -117,6 +117,7 @@ class Settings(BaseSettings):
     sandbox_canary_key_value_store_enabled: bool = False
     sandbox_canary_request_queue_enabled: bool = False
     sandbox_canary_request_queue_http_enabled: bool = False
+    sandbox_canary_request_queue_browser_enabled: bool = False
     sandbox_canary_browser_max_pages: int = 1
     sandbox_canary_browser_max_actions: int = 8
     sandbox_canary_browser_navigation_timeout_seconds: int = 15
@@ -435,6 +436,26 @@ class Settings(BaseSettings):
             if not self.sandbox_canary_web_egress_allowed_hosts:
                 raise ValueError(
                     "Queue HTTP acquisition requires an operator allowlist."
+                )
+
+        if self.sandbox_canary_request_queue_browser_enabled:
+            if not self.sandbox_canary_request_queue_enabled:
+                raise ValueError(
+                    "Queue browser acquisition requires the Request Queue gate."
+                )
+            if (
+                not self.sandbox_canary_browser_enabled
+                or not self.sandbox_canary_browser_live_navigation_enabled
+            ):
+                raise ValueError(
+                    "Queue browser acquisition requires live browser gates."
+                )
+            if (
+                not self.sandbox_canary_web_egress_enabled
+                or not self.sandbox_canary_web_egress_allowed_hosts
+            ):
+                raise ValueError(
+                    "Queue browser acquisition requires allowlisted web egress."
                 )
 
         if not 1 <= self.sandbox_canary_browser_max_pages <= 2:

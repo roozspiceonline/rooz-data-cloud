@@ -42,6 +42,14 @@ navigation result and never contains the claim token. Caller input reserves
 `_rdc_queue_browser` for this future worker-produced envelope. This protocol is
 deliberately inert while the v3 receipt remains non-dispatching.
 
+The independently false-by-default API and worker setting
+`RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED` is now defined, and the
+control plane can derive an exact v3 worker capability only when both stored
+browser-policy digests match current trusted policy and the v3 receipt is
+dispatch-enabled. The current Run path still writes `dispatch_enabled=false`,
+so this capability cannot yet be issued; activation and execution wiring remain
+the next increment.
+
 The feature remains disabled unless both API and worker use
 `RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=true`, the sandbox master gate and
 canary activation are enabled, and the exact worker has

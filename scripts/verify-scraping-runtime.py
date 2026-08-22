@@ -43,7 +43,9 @@ need(
     "row.claim_token != claim_token",
     "with_for_update()",
     '"rdc.request-queue-worker-capability/v2"',
+    '"rdc.request-queue-worker-capability/v3"',
     "request_queue_http_enabled",
+    "request_queue_browser_enabled",
     "egress_policy_digest",
 )
 need(
@@ -90,6 +92,7 @@ need(
     ".env.example",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
     "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
+    "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
 )
 for path in (
     "infrastructure/environments/staging/api.env.example",
@@ -101,6 +104,7 @@ for path in (
         path,
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED=false",
         "RDC_SANDBOX_CANARY_REQUEST_QUEUE_HTTP_ENABLED=false",
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED=false",
     )
 for path in (
     "docs/scraping-runtime/README.md",

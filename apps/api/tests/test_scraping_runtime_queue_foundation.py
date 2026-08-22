@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -28,6 +29,19 @@ def _queue_protocol_module():  # type: ignore[no-untyped-def]
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _worker_config_module():  # type: ignore[no-untyped-def]
+    spec = importlib.util.spec_from_file_location(
+        "rdc_sandbox_worker_config",
+        WORKER_ROOT / "config.py",
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -126,6 +140,50 @@ def test_queue_http_gates_are_independent_and_fail_closed() -> None:
             egress_policy_digest="d" * 64,
             request_queue_http_enabled=True,
         )
+    assert Settings().sandbox_canary_request_queue_browser_enabled is False
+    with pytest.raises(ValueError, match="requires the Request Queue gate"):
+        Settings(sandbox_canary_request_queue_browser_enabled=True)
+    with pytest.raises(ValidationError, match="requires Queue access"):
+        SandboxActivation(
+            agent_version_id=uuid4(),
+            worker_name="scraping-worker",
+            attestation_digest="a" * 64,
+            sandbox_policy_digest="b" * 64,
+            constraints_digest="c" * 64,
+            capability_profile="controlled-browser",
+            egress_policy_digest="d" * 64,
+            browser_policy_digest="e" * 64,
+            request_queue_browser_enabled=True,
+        )
+
+
+def test_worker_queue_browser_gate_requires_all_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_module = _worker_config_module()
+    monkeypatch.setenv("RDC_WORKER_TOKEN", "worker-token")
+    monkeypatch.setenv(
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_BROWSER_ENABLED", "true"
+    )
+    with pytest.raises(RuntimeError, match="requires Queue"):
+        config_module.SandboxWorkerConfig.from_env()
+
+    for name in (
+        "RDC_SANDBOX_CANARY_REQUEST_QUEUE_ENABLED",
+        "RDC_SANDBOX_CANARY_WEB_EGRESS_ENABLED",
+        "RDC_SANDBOX_CANARY_BROWSER_ENABLED",
+        "RDC_SANDBOX_CANARY_BROWSER_LIVE_NAVIGATION_ENABLED",
+    ):
+        monkeypatch.setenv(name, "true")
+    with pytest.raises(RuntimeError, match="allowlist"):
+        config_module.SandboxWorkerConfig.from_env()
+
+    monkeypatch.setenv(
+        "RDC_SANDBOX_CANARY_WEB_EGRESS_ALLOWED_HOSTS",
+        '["example.com"]',
+    )
+    config = config_module.SandboxWorkerConfig.from_env()
+    assert config.request_queue_browser_enabled is True
 
 
 def test_queue_worker_protocol_rejects_scope_and_ip_literals() -> None:
@@ -382,6 +440,103 @@ def test_queue_capability_is_exact_run_worker_and_queue_bound(
             worker,  # type: ignore[arg-type]
             tampered,
             request_queue_enabled=True,
+        )
+        is None
+    )
+
+
+def test_queue_browser_capability_binds_both_policies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import worker_request_queue as service
+
+    queue_id, run_id, version_id = uuid4(), uuid4(), uuid4()
+    worker = SimpleNamespace(
+        name="scraping-worker",
+        capabilities=["RUN_START", "REQUEST_QUEUE_ACCESS"],
+    )
+    binding = _binding_payload(queue_id)
+    browser_policy = {
+        "schema_version": "rdc.browser-policy/v1",
+        "max_dom_bytes": 131_072,
+    }
+    browser_egress_policy = {
+        "schema_version": "rdc.browser-egress/v1",
+        "allowed_hosts": ["example.com"],
+    }
+    browser_digest = canonical_fingerprint(browser_policy)
+    browser_egress_digest = canonical_fingerprint(browser_egress_policy)
+    receipt = {
+        "schema_version": "rdc.request-queue-binding-receipt/v3",
+        "binding_digest": canonical_fingerprint(binding),
+        "queue_id": str(queue_id),
+        "agent_version_id": str(version_id),
+        "acquisition_mode": "controlled-browser",
+        "browser_policy_digest": browser_digest,
+        "browser_egress_policy_digest": browser_egress_digest,
+        "dispatch_enabled": True,
+        "agent_container_network": "none",
+        "direct_database_access": False,
+        "direct_object_storage_access": False,
+    }
+    payload = {
+        "work_kind": "RUN_START",
+        "run_id": str(run_id),
+        "agent_version_id": str(version_id),
+        "manifest": _manifest(network="web-egress", browser=True),
+        "input_reference": {
+            "value": {},
+            "request_queue": binding,
+            "queue_binding_receipt": receipt,
+            "request_queue_browser_policy": browser_policy,
+            "request_queue_browser_policy_digest": browser_digest,
+            "request_queue_browser_egress_policy": browser_egress_policy,
+            "request_queue_browser_egress_policy_digest": (
+                browser_egress_digest
+            ),
+        },
+    }
+    for name in (
+        "sandbox_canary_request_queue_enabled",
+        "sandbox_canary_request_queue_browser_enabled",
+        "sandbox_canary_browser_enabled",
+        "sandbox_canary_browser_live_navigation_enabled",
+        "sandbox_canary_web_egress_enabled",
+    ):
+        monkeypatch.setattr(service.settings, name, True)
+    monkeypatch.setattr(service.settings, "sandbox_canary_worker_name", worker.name)
+    monkeypatch.setattr(
+        service.settings,
+        "sandbox_canary_agent_version_id",
+        str(version_id),
+    )
+    capability = request_queue_capability(
+        worker,  # type: ignore[arg-type]
+        payload,
+        request_queue_enabled=True,
+        request_queue_browser_enabled=True,
+        browser_policy_digest=browser_digest,
+        browser_egress_policy_digest=browser_egress_digest,
+    )
+    assert capability is not None
+    assert capability["schema_version"] == (
+        "rdc.request-queue-worker-capability/v3"
+    )
+    assert capability["acquisition_mode"] == "controlled-browser"
+    assert capability["browser_policy_digest"] == browser_digest
+    assert capability["browser_egress_policy_digest"] == browser_egress_digest
+
+    payload["input_reference"][  # type: ignore[index]
+        "request_queue_browser_policy_digest"
+    ] = "0" * 64
+    assert (
+        request_queue_capability(
+            worker,  # type: ignore[arg-type]
+            payload,
+            request_queue_enabled=True,
+            request_queue_browser_enabled=True,
+            browser_policy_digest=browser_digest,
+            browser_egress_policy_digest=browser_egress_digest,
         )
         is None
     )
