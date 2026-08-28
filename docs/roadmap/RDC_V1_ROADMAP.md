@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Immutable binding, revocation and credential envelopes implemented; bounded provider-neutral health classification in progress | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable binding, revocation, credential envelopes and lease-scoped health observation persistence implemented | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -90,6 +90,11 @@ and serializes secret replacement with grant issuance and revocation.
 The fifth increment begins provider health with a strict deterministic outcome
 taxonomy over bounded status/latency/size/boolean evidence. It deliberately
 does not persist targets, select routes, authorize retries or widen egress.
+The sixth increment persists those classifications as immutable, replay-safe
+observations bound to an authenticated active Run lease. PostgreSQL RLS and an
+exact-reference trigger independently enforce tenant/Project/Run/worker
+lineage; a bounded Project aggregate exposes no target or raw evidence and does
+not grant retry or routing authority.
 
 ## Remaining RDC v1 workstreams
 

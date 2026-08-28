@@ -879,6 +879,30 @@ class EgressPolicyRevision(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "egress_health_observations"
+    __table_args__ = (
+        UniqueConstraint(
+            "lease_id",
+            "client_observation_id",
+            name="uq_egress_health_observations_lease_client",
+        ),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False, index=True)
+    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.runs.id", ondelete="RESTRICT"), nullable=False, index=True)
+    lease_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.execution_leases.id", ondelete="RESTRICT"), nullable=False, index=True)
+    worker_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.worker_identities.id", ondelete="RESTRICT"), nullable=False, index=True)
+    client_observation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    healthy: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    retryable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RequestQueue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "request_queues"
     __table_args__ = (UniqueConstraint("project_id", "name", name="uq_request_queues_project_name"), {"schema": "control"})

@@ -53,14 +53,25 @@ proxy responses and all external network data are untrusted.
   encrypted grant to secret version plus worker/lease/Run/policy digest, and
   replacement revokes outstanding grants. Previously decrypted values are
   bounded by the shorter of lease expiry and the 60-second envelope TTL.
+- Forged or replayed health evidence: only an authenticated active `RUN_START`
+  lease owned by an active `EVENT_INGEST` worker with an egress activation may
+  append. Ownership is derived from that lease and independently checked by a
+  PostgreSQL trigger and worker RLS. The server and database deterministically
+  derive outcome flags. Each immutable observation is replay-keyed within its
+  lease; exact replay is harmless and changed evidence conflicts.
+- Health telemetry exfiltration: the strict evidence object cannot contain a
+  target, body, headers, credential, provider identity or arbitrary extension.
+  Stored values and audit details are bounded classifications only. Tenant users
+  receive a bounded 1–24 hour Project aggregate, not raw observation lineage.
 
 ## Residual work before live enforcement
 
-Add production proxy-provider health, upstream credential-rotation canaries and
-live adversarial canaries.
+Add privacy-preserving provider/region dimensions, upstream credential-rotation
+canaries and live adversarial canaries before adaptive routing.
 
 The provider-health evidence is untrusted even when reported by an authenticated
 worker because status codes and challenge signals originate externally. The
 classification protocol accepts only bounded numeric/boolean evidence, rejects
 target URLs and arbitrary content, and cannot widen policy, select a route or
-authorize a retry. Persistence and routing decisions remain later increments.
+authorize a retry. Immutable observation persistence does not confer routing or
+retry authority.

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
 from ...dataset_schemas import DatasetAppendRequest, DatasetAppendResult
+from ...egress_health_protocol import EgressHealthObservationRequest
 from ...execution_schemas import (
     AppendWorkerEventsRequest,
     ArtifactUploadRequest,
@@ -20,6 +21,7 @@ from ...execution_schemas import (
     WorkerHeartbeatRequest,
 )
 from ...services.datasets import dataset_append_receipt_summary
+from ...services.egress_health import record_egress_health_observation
 from ...services.execution_plane import (
     append_worker_dataset_items,
     append_worker_events,
@@ -173,6 +175,29 @@ async def append_worker_events_route(
         request_id=request_id(request),
     )
     return success_payload(request, {"accepted": count})
+
+
+@router.post(
+    "/leases/{lease_id}/egress-health-observations",
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_egress_health_observation_route(
+    payload: EgressHealthObservationRequest,
+    request: Request,
+    response: Response,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await record_egress_health_observation(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload,
+        request_id=request_id(request),
+    )
+    if result.replayed:
+        response.status_code = status.HTTP_200_OK
+    return success_payload(request, result.model_dump(mode="json"))
 
 
 @router.post("/leases/{lease_id}/secret-envelope")
