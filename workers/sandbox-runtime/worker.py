@@ -7,6 +7,7 @@ import time
 import zipfile
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from browser_egress_policy import BrowserEgressPolicy
 from browser_executor import (
@@ -117,6 +118,125 @@ def _worker_egress_policy(
     )
 
 
+def _effective_worker_egress_policy(
+    payload: dict[str, Any],
+    ceiling: EgressPolicy | None,
+) -> EgressPolicy | None:
+    input_reference = payload.get("input_reference")
+    if not isinstance(input_reference, dict):
+        return ceiling
+    stored = input_reference.get("project_egress_policy")
+    receipt = input_reference.get("project_egress_policy_receipt")
+    if stored is None and receipt is None:
+        return ceiling
+    if ceiling is None or not isinstance(stored, dict) or not isinstance(receipt, dict):
+        raise SandboxPolicyError("Project egress-policy binding is incomplete.")
+    if set(receipt) != {
+        "schema_version",
+        "policy_id",
+        "revision_id",
+        "revision_number",
+        "policy_digest",
+        "runtime_policy_digest",
+        "credential_configured",
+        "binding_digest",
+    }:
+        raise SandboxPolicyError("Project egress-policy receipt has unknown fields.")
+    try:
+        UUID(str(receipt["policy_id"]))
+        UUID(str(receipt["revision_id"]))
+        if type(receipt["revision_number"]) is not int:
+            raise ValueError
+        revision_number = int(receipt["revision_number"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SandboxPolicyError("Project egress-policy receipt is invalid.") from exc
+    if (
+        receipt.get("schema_version") != "rdc.run-egress-policy-receipt/v1"
+        or receipt.get("credential_configured") is not False
+        or revision_number < 1
+    ):
+        raise SandboxPolicyError("Project egress-policy receipt is unsafe.")
+    without_binding = {
+        key: value for key, value in receipt.items() if key != "binding_digest"
+    }
+    if receipt.get("binding_digest") != _canonical_digest(without_binding):
+        raise SandboxPolicyError("Project egress-policy binding digest mismatch.")
+    required = {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_schemes": ["https"],
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "revalidate_redirects": True,
+        "container_network": "none",
+    }
+    if any(stored.get(key) != value for key, value in required.items()):
+        raise SandboxPolicyError("Project egress runtime envelope is unsafe.")
+    hosts = stored.get("allowed_hosts")
+    methods = stored.get("allowed_methods")
+    if (
+        not isinstance(hosts, list)
+        or not all(isinstance(host, str) for host in hosts)
+        or not isinstance(methods, list)
+        or not all(isinstance(method, str) for method in methods)
+    ):
+        raise SandboxPolicyError("Project egress-policy values are invalid.")
+    try:
+        numeric_keys = (
+            "max_requests",
+            "max_response_bytes",
+            "max_total_bytes",
+            "max_redirects",
+            "connect_timeout_seconds",
+            "request_timeout_seconds",
+        )
+        if any(type(stored.get(key)) is not int for key in numeric_keys):
+            raise ValueError
+        effective = EgressPolicy.create(
+            hosts,
+            allowed_methods=methods,
+            max_requests=int(stored["max_requests"]),
+            max_response_bytes=int(stored["max_response_bytes"]),
+            max_total_bytes=int(stored["max_total_bytes"]),
+            max_redirects=int(stored["max_redirects"]),
+            connect_timeout_seconds=int(stored["connect_timeout_seconds"]),
+            request_timeout_seconds=int(stored["request_timeout_seconds"]),
+        )
+    except (KeyError, TypeError, ValueError, EgressPolicyError) as exc:
+        raise SandboxPolicyError(
+            "Project egress policy failed independent worker validation."
+        ) from exc
+    if effective.as_dict() != stored:
+        raise SandboxPolicyError("Project egress policy is not canonical.")
+    if (
+        not set(effective.allowed_hosts) <= set(ceiling.allowed_hosts)
+        or not set(effective.allowed_methods) <= set(ceiling.allowed_methods)
+        or effective.max_requests > ceiling.max_requests
+        or effective.max_response_bytes > ceiling.max_response_bytes
+        or effective.max_total_bytes > ceiling.max_total_bytes
+        or effective.max_redirects > ceiling.max_redirects
+        or effective.connect_timeout_seconds > ceiling.connect_timeout_seconds
+        or effective.request_timeout_seconds > ceiling.request_timeout_seconds
+    ):
+        raise SandboxPolicyError("Project egress policy exceeds the worker ceiling.")
+    if receipt.get("runtime_policy_digest") != effective.digest:
+        raise SandboxPolicyError("Project runtime-policy digest mismatch.")
+    foundation = {
+        "allowed_hosts": list(effective.allowed_hosts),
+        "allowed_methods": list(effective.allowed_methods),
+        "connect_timeout_seconds": effective.connect_timeout_seconds,
+        "max_redirects": effective.max_redirects,
+        "max_requests": effective.max_requests,
+        "max_response_bytes": effective.max_response_bytes,
+        "max_total_bytes": effective.max_total_bytes,
+        "request_timeout_seconds": effective.request_timeout_seconds,
+        "schema_version": "rdc.egress-policy/v1",
+    }
+    if receipt.get("policy_digest") != _canonical_digest(foundation):
+        raise SandboxPolicyError("Project policy-revision digest mismatch.")
+    return effective
+
+
 def _worker_browser_policy(
     config: SandboxWorkerConfig,
 ) -> BrowserPolicy | None:
@@ -127,9 +247,7 @@ def _worker_browser_policy(
         allowed_hosts=config.web_egress_allowed_hosts,
         max_pages=config.browser_max_pages,
         max_actions=config.browser_max_actions,
-        navigation_timeout_seconds=(
-            config.browser_navigation_timeout_seconds
-        ),
+        navigation_timeout_seconds=(config.browser_navigation_timeout_seconds),
         max_dom_bytes=config.browser_max_dom_bytes,
         max_screenshot_bytes=config.browser_max_screenshot_bytes,
     )
@@ -149,9 +267,7 @@ def _require_live_browser_navigation_receipt(
     stored_policy = input_reference.get("browser_policy")
     stored_policy_digest = input_reference.get("browser_policy_digest")
     stored_egress_policy = input_reference.get("browser_egress_policy")
-    stored_egress_digest = input_reference.get(
-        "browser_egress_policy_digest"
-    )
+    stored_egress_digest = input_reference.get("browser_egress_policy_digest")
     if (
         not isinstance(navigation, dict)
         or not isinstance(receipt, dict)
@@ -171,9 +287,7 @@ def _require_live_browser_navigation_receipt(
         raise SandboxPolicyError(
             "Phase 1M browser policy digest does not match worker policy."
         )
-    browser_egress_policy = BrowserEgressPolicy.create(
-        egress_policy
-    )
+    browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
     if stored_egress_policy != browser_egress_policy.as_dict():
         raise SandboxPolicyError(
             "Phase 1M stored browser egress policy does not match worker policy."
@@ -209,7 +323,6 @@ def _require_live_browser_navigation_receipt(
             "Phase 1M browser navigation receipt does not match the Run intent."
         )
     return None
-
 
 
 def _require_canary_activation(
@@ -248,12 +361,8 @@ def _require_canary_activation(
             "Canary activation requires single-concurrency execution."
         )
     if activation.get("no_secrets") is not True:
-        raise SandboxPolicyError(
-            "Canary execution cannot inject project secrets."
-        )
-    if activation.get("attestation_digest") != sandbox.get(
-        "attestation_digest"
-    ):
+        raise SandboxPolicyError("Canary execution cannot inject project secrets.")
+    if activation.get("attestation_digest") != sandbox.get("attestation_digest"):
         raise SandboxPolicyError(
             "Canary activation does not match the sandbox attestation."
         )
@@ -266,39 +375,25 @@ def _require_canary_activation(
     if not isinstance(manifest, dict):
         raise SandboxPolicyError("Canary claim is missing the Agent manifest.")
     if manifest.get("secrets"):
-        raise SandboxPolicyError(
-            "Canary Agent manifests cannot declare secrets."
-        )
+        raise SandboxPolicyError("Canary Agent manifests cannot declare secrets.")
 
     capabilities = manifest.get("capabilities")
     if not isinstance(capabilities, dict):
         raise SandboxPolicyError("Canary Agent capabilities are missing.")
     browser = capabilities.get("browser")
     if not isinstance(browser, bool):
-        raise SandboxPolicyError(
-            "Canary Agent browser capability is invalid."
-        )
+        raise SandboxPolicyError("Canary Agent browser capability is invalid.")
     dataset = capabilities.get("dataset")
     if not isinstance(dataset, bool):
-        raise SandboxPolicyError(
-            "Canary Agent Dataset capability is invalid."
-        )
+        raise SandboxPolicyError("Canary Agent Dataset capability is invalid.")
     key_value_store = capabilities.get("keyValueStore")
     if not isinstance(key_value_store, bool):
-        raise SandboxPolicyError(
-            "Canary Agent Key-Value Store capability is invalid."
-        )
+        raise SandboxPolicyError("Canary Agent Key-Value Store capability is invalid.")
     request_queue = capabilities.get("requestQueue")
     if not isinstance(request_queue, bool):
-        raise SandboxPolicyError(
-            "Canary Agent Request Queue capability is invalid."
-        )
-    kv_runtime_enabled = (
-        key_value_store and payload.get("work_kind") == "RUN_START"
-    )
-    queue_runtime_enabled = (
-        request_queue and payload.get("work_kind") == "RUN_START"
-    )
+        raise SandboxPolicyError("Canary Agent Request Queue capability is invalid.")
+    kv_runtime_enabled = key_value_store and payload.get("work_kind") == "RUN_START"
+    queue_runtime_enabled = request_queue and payload.get("work_kind") == "RUN_START"
     queue_dataset_runtime_enabled = queue_runtime_enabled and dataset
     queue_kv_runtime_enabled = queue_runtime_enabled and kv_runtime_enabled
     network = capabilities.get("network")
@@ -306,9 +401,7 @@ def _require_canary_activation(
         queue_runtime_enabled and network == "web-egress" and browser
     )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled
-        and network == "web-egress"
-        and not browser
+        queue_runtime_enabled and network == "web-egress" and not browser
     )
     if dataset and kv_runtime_enabled:
         raise SandboxPolicyError(
@@ -330,9 +423,7 @@ def _require_canary_activation(
             "Queue Key-Value Store activation does not match the manifest."
         )
     if queue_dataset_runtime_enabled and not request_queue_dataset_enabled:
-        raise SandboxPolicyError(
-            "Worker Queue Dataset composition gate is disabled."
-        )
+        raise SandboxPolicyError("Worker Queue Dataset composition gate is disabled.")
     if (
         activation.get("request_queue_dataset_enabled")
         is not queue_dataset_runtime_enabled
@@ -381,21 +472,15 @@ def _require_canary_activation(
             if not isinstance(binding, dict) or not isinstance(
                 binding.get("queue_id"), str
             ):
-                raise SandboxPolicyError(
-                    "Queue Dataset binding is invalid."
-                )
+                raise SandboxPolicyError("Queue Dataset binding is invalid.")
             expected_dataset_capability.update(
                 {
                     "queue_id": binding["queue_id"],
                     "completion_order": "dataset-before-queue-handled",
                 }
             )
-        if payload.get("dataset_append_capability") != (
-            expected_dataset_capability
-        ):
-            raise SandboxPolicyError(
-                "Canary Dataset capability receipt is invalid."
-            )
+        if payload.get("dataset_append_capability") != (expected_dataset_capability):
+            raise SandboxPolicyError("Canary Dataset capability receipt is invalid.")
     elif payload.get("dataset_append_capability") is not None:
         raise SandboxPolicyError(
             "Dataset-disabled Run cannot carry a Dataset capability."
@@ -407,9 +492,7 @@ def _require_canary_activation(
         )
     if kv_runtime_enabled:
         if not key_value_store_enabled:
-            raise SandboxPolicyError(
-                "Worker Key-Value Store gate is disabled."
-            )
+            raise SandboxPolicyError("Worker Key-Value Store gate is disabled.")
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
             raise SandboxPolicyError("KV Run lacks input reference.")
@@ -423,9 +506,7 @@ def _require_canary_activation(
                 read_value = validate_kv_read_request(read_request)
                 read_digest = str(read_value["request_digest"])
             except KVWorkerBoundaryError as exc:
-                raise SandboxPolicyError(
-                    "KV read request is invalid."
-                ) from exc
+                raise SandboxPolicyError("KV read request is invalid.") from exc
         expected_kv_capability = {
             "schema_version": (
                 "rdc.kv-worker-capability/v2"
@@ -475,13 +556,8 @@ def _require_canary_activation(
         raise SandboxPolicyError(
             "Canary Request Queue activation does not match manifest."
         )
-    if (
-        activation.get("request_queue_http_enabled")
-        is not queue_http_runtime_enabled
-    ):
-        raise SandboxPolicyError(
-            "Queue HTTP activation does not match the manifest."
-        )
+    if activation.get("request_queue_http_enabled") is not queue_http_runtime_enabled:
+        raise SandboxPolicyError("Queue HTTP activation does not match the manifest.")
     if (
         activation.get("request_queue_browser_enabled")
         is not queue_browser_runtime_enabled
@@ -493,9 +569,7 @@ def _require_canary_activation(
         if not request_queue_enabled:
             raise SandboxPolicyError("Worker Request Queue gate is disabled.")
         if queue_http_runtime_enabled and not request_queue_http_enabled:
-            raise SandboxPolicyError(
-                "Worker Queue HTTP acquisition gate is disabled."
-            )
+            raise SandboxPolicyError("Worker Queue HTTP acquisition gate is disabled.")
         if queue_browser_runtime_enabled and not request_queue_browser_enabled:
             raise SandboxPolicyError(
                 "Worker Queue browser acquisition gate is disabled."
@@ -518,13 +592,9 @@ def _require_canary_activation(
         }
         if queue_browser_runtime_enabled:
             if egress_policy is None or browser_policy is None:
-                raise SandboxPolicyError(
-                    "Queue browser policy is unavailable."
-                )
+                raise SandboxPolicyError("Queue browser policy is unavailable.")
             browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
-            stored_browser_policy = input_reference.get(
-                "request_queue_browser_policy"
-            )
+            stored_browser_policy = input_reference.get("request_queue_browser_policy")
             stored_browser_digest = input_reference.get(
                 "request_queue_browser_policy_digest"
             )
@@ -537,10 +607,8 @@ def _require_canary_activation(
             if (
                 stored_browser_policy != browser_policy.as_dict()
                 or stored_browser_digest != browser_policy.digest
-                or stored_browser_egress_policy
-                != browser_egress_policy.as_dict()
-                or stored_browser_egress_digest
-                != browser_egress_policy.digest
+                or stored_browser_egress_policy != browser_egress_policy.as_dict()
+                or stored_browser_egress_digest != browser_egress_policy.digest
             ):
                 raise SandboxPolicyError(
                     "Queue browser receipt does not match worker policy."
@@ -559,9 +627,7 @@ def _require_canary_activation(
                 "direct_object_storage_access": False,
             }
         elif queue_http_runtime_enabled:
-            stored_egress_policy = input_reference.get(
-                "request_queue_egress_policy"
-            )
+            stored_egress_policy = input_reference.get("request_queue_egress_policy")
             stored_egress_digest = input_reference.get(
                 "request_queue_egress_policy_digest"
             )
@@ -596,9 +662,7 @@ def _require_canary_activation(
                 "direct_object_storage_access": False,
             }
         if receipt != expected_receipt:
-            raise SandboxPolicyError(
-                "Queue-bound Run binding receipt is invalid."
-            )
+            raise SandboxPolicyError("Queue-bound Run binding receipt is invalid.")
         if queue_dataset_runtime_enabled:
             expected_composition_receipt = {
                 "schema_version": "rdc.request-queue-dataset-receipt/v1",
@@ -634,18 +698,14 @@ def _require_canary_activation(
             if read_request is not None:
                 try:
                     read_digest = str(
-                        validate_kv_read_request(read_request)[
-                            "request_digest"
-                        ]
+                        validate_kv_read_request(read_request)["request_digest"]
                     )
                 except KVWorkerBoundaryError as exc:
                     raise SandboxPolicyError(
                         "Queue KV read request is invalid."
                     ) from exc
             expected_composition_receipt = {
-                "schema_version": (
-                    "rdc.request-queue-key-value-store-receipt/v1"
-                ),
+                "schema_version": ("rdc.request-queue-key-value-store-receipt/v1"),
                 "queue_id": binding["queue_id"],
                 "agent_version_id": str(payload.get("agent_version_id", "")),
                 "queue_binding_receipt_digest": _canonical_digest(receipt),
@@ -659,34 +719,34 @@ def _require_canary_activation(
                 "direct_object_storage_access": False,
             }
             if (
-                input_reference.get(
-                    "request_queue_key_value_store_receipt"
-                )
+                input_reference.get("request_queue_key_value_store_receipt")
                 != expected_composition_receipt
             ):
                 raise SandboxPolicyError(
                     "Queue Key-Value Store composition receipt is invalid."
                 )
-        elif input_reference.get(
-            "request_queue_key_value_store_receipt"
-        ) is not None:
+        elif input_reference.get("request_queue_key_value_store_receipt") is not None:
             raise SandboxPolicyError(
                 "KV-disabled Queue work cannot carry a composition receipt."
             )
         expected_queue_capability = {
             "schema_version": (
-                "rdc.request-queue-worker-capability/v5"
-                if queue_kv_runtime_enabled
+                "rdc.request-queue-worker-capability/v6"
+                if activation.get("project_egress_policy_binding_digest") is not None
                 else (
-                    "rdc.request-queue-worker-capability/v4"
-                    if queue_dataset_runtime_enabled
+                    "rdc.request-queue-worker-capability/v5"
+                    if queue_kv_runtime_enabled
                     else (
-                        "rdc.request-queue-worker-capability/v3"
-                        if queue_browser_runtime_enabled
+                        "rdc.request-queue-worker-capability/v4"
+                        if queue_dataset_runtime_enabled
                         else (
-                            "rdc.request-queue-worker-capability/v2"
-                            if queue_http_runtime_enabled
-                            else "rdc.request-queue-worker-capability/v1"
+                            "rdc.request-queue-worker-capability/v3"
+                            if queue_browser_runtime_enabled
+                            else (
+                                "rdc.request-queue-worker-capability/v2"
+                                if queue_http_runtime_enabled
+                                else "rdc.request-queue-worker-capability/v1"
+                            )
                         )
                     )
                 )
@@ -701,14 +761,16 @@ def _require_canary_activation(
             "direct_object_storage_access": False,
             "enabled": True,
         }
+        if activation.get("project_egress_policy_binding_digest") is not None:
+            expected_queue_capability["project_egress_policy_binding_digest"] = (
+                activation["project_egress_policy_binding_digest"]
+            )
         if queue_browser_runtime_enabled:
             expected_queue_capability.update(
                 {
                     "acquisition_mode": "controlled-browser",
                     "browser_policy_digest": browser_policy.digest,
-                    "browser_egress_policy_digest": (
-                        browser_egress_policy.digest
-                    ),
+                    "browser_egress_policy_digest": (browser_egress_policy.digest),
                     "agent_container_network": "none",
                 }
             )
@@ -749,6 +811,27 @@ def _require_canary_activation(
     profile = activation.get("capability_profile")
     egress_digest = activation.get("egress_policy_digest")
     browser_digest = activation.get("browser_policy_digest")
+    project_binding_digest = activation.get("project_egress_policy_binding_digest")
+    input_reference = payload.get("input_reference")
+    project_receipt = (
+        input_reference.get("project_egress_policy_receipt")
+        if isinstance(input_reference, dict)
+        else None
+    )
+    if project_binding_digest is not None:
+        if (
+            not isinstance(project_binding_digest, str)
+            or not isinstance(project_receipt, dict)
+            or project_receipt.get("binding_digest") != project_binding_digest
+            or egress_policy is None
+        ):
+            raise SandboxPolicyError(
+                "Activation Project egress-policy binding mismatch."
+            )
+    elif project_receipt is not None:
+        raise SandboxPolicyError(
+            "Project egress-policy receipt lacks activation binding."
+        )
 
     if profile == "offline-minimal":
         if network != "none":
@@ -807,9 +890,7 @@ def _require_canary_activation(
                 "Controlled-browser egress-policy digest mismatch."
             )
         if browser_digest != browser_policy.digest:
-            raise SandboxPolicyError(
-                "Controlled-browser policy digest mismatch."
-            )
+            raise SandboxPolicyError("Controlled-browser policy digest mismatch.")
 
         input_reference = payload.get("input_reference")
         if not isinstance(input_reference, dict):
@@ -849,9 +930,7 @@ def _require_canary_activation(
                     "Browser plan failed independent worker validation."
                 ) from exc
     else:
-        raise SandboxPolicyError(
-            "Canary activation capability profile is unsupported."
-        )
+        raise SandboxPolicyError("Canary activation capability profile is unsupported.")
 
     return {str(key): value for key, value in activation.items()}
 
@@ -875,9 +954,7 @@ def _queue_browser_acquire(
     )
     request_digest = normalized_navigation.get("request_digest")
     if not isinstance(request_digest, str):
-        raise QueueWorkerBoundaryError(
-            "Queue browser request digest is invalid."
-        )
+        raise QueueWorkerBoundaryError("Queue browser request digest is invalid.")
     browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
     browser_output, _browser_log = run_browser_live_navigation(
         config=config,
@@ -888,17 +965,10 @@ def _queue_browser_acquire(
         browser_egress_policy=browser_egress_policy,
         request_digest=request_digest,
         max_screenshot_bytes=browser_policy.max_screenshot_bytes,
-        navigation_timeout_seconds=(
-            browser_policy.navigation_timeout_seconds
-        ),
-        runtime_timeout_seconds=int(
-            payload["sandbox"]["timeout_seconds"]
-        ),
+        navigation_timeout_seconds=(browser_policy.navigation_timeout_seconds),
+        runtime_timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
     )
-    if (
-        not browser_output.is_file()
-        or browser_output.stat().st_size > 16_777_216
-    ):
+    if not browser_output.is_file() or browser_output.stat().st_size > 16_777_216:
         raise QueueWorkerBoundaryError(
             "Queue browser result is outside the worker limit."
         )
@@ -970,9 +1040,8 @@ def _build(
     payload = dict(lease["payload"])
     lease_id = str(lease["id"])
     token = str(lease["lease_token"])
-    if (
-        payload.get("execution_enabled") is not True
-        or not isinstance(payload.get("sandbox"), dict)
+    if payload.get("execution_enabled") is not True or not isinstance(
+        payload.get("sandbox"), dict
     ):
         client.complete(
             lease_id,
@@ -987,26 +1056,23 @@ def _build(
         return
     workspace = private_temp_dir(config.workspace_root, "build-")
     try:
-        egress_policy = _worker_egress_policy(config)
+        egress_policy = _effective_worker_egress_policy(
+            payload,
+            _worker_egress_policy(config),
+        )
         browser_policy = _worker_browser_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
             egress_policy=egress_policy,
             browser_policy=browser_policy,
-            browser_live_navigation_enabled=(
-                config.browser_live_navigation_enabled
-            ),
+            browser_live_navigation_enabled=(config.browser_live_navigation_enabled),
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
             request_queue_http_enabled=config.request_queue_http_enabled,
-            request_queue_browser_enabled=(
-                config.request_queue_browser_enabled
-            ),
-            request_queue_dataset_enabled=(
-                config.request_queue_dataset_enabled
-            ),
+            request_queue_browser_enabled=(config.request_queue_browser_enabled),
+            request_queue_dataset_enabled=(config.request_queue_dataset_enabled),
             request_queue_key_value_store_enabled=(
                 config.request_queue_key_value_store_enabled
             ),
@@ -1016,10 +1082,16 @@ def _build(
         source_dir.mkdir(mode=0o700)
         grant = _data(client.source_download(lease_id, token))
         source_meta = dict(payload["source"])
-        download_file(str(grant["url"]), source_zip, max_bytes=int(source_meta["size_bytes"]))
+        download_file(
+            str(grant["url"]), source_zip, max_bytes=int(source_meta["size_bytes"])
+        )
         digest, size = sha256_file(source_zip)
-        if digest != source_meta["sha256_digest"] or size != int(source_meta["size_bytes"]):
-            raise SandboxPolicyError("Downloaded source digest or size does not match the claim.")
+        if digest != source_meta["sha256_digest"] or size != int(
+            source_meta["size_bytes"]
+        ):
+            raise SandboxPolicyError(
+                "Downloaded source digest or size does not match the claim."
+            )
         _extract_zip(source_zip, source_dir)
         client.status(lease_id, token, status="RUNNING")
         artifacts = build_agent(
@@ -1073,9 +1145,8 @@ def _run(
         cancel_run(config=config, run_id=str(payload["run_id"]))
         client.complete(lease_id, token, {"outcome": "ABORTED", "retryable": False})
         return
-    if (
-        payload.get("execution_enabled") is not True
-        or not isinstance(payload.get("sandbox"), dict)
+    if payload.get("execution_enabled") is not True or not isinstance(
+        payload.get("sandbox"), dict
     ):
         client.complete(
             lease_id,
@@ -1092,26 +1163,23 @@ def _run(
         return
     workspace = private_temp_dir(config.workspace_root, "run-")
     try:
-        egress_policy = _worker_egress_policy(config)
+        egress_policy = _effective_worker_egress_policy(
+            payload,
+            _worker_egress_policy(config),
+        )
         browser_policy = _worker_browser_policy(config)
         activation = _require_canary_activation(
             payload,
             worker_name=worker_name,
             egress_policy=egress_policy,
             browser_policy=browser_policy,
-            browser_live_navigation_enabled=(
-                config.browser_live_navigation_enabled
-            ),
+            browser_live_navigation_enabled=(config.browser_live_navigation_enabled),
             dataset_writes_enabled=config.dataset_writes_enabled,
             key_value_store_enabled=config.key_value_store_enabled,
             request_queue_enabled=config.request_queue_enabled,
             request_queue_http_enabled=config.request_queue_http_enabled,
-            request_queue_browser_enabled=(
-                config.request_queue_browser_enabled
-            ),
-            request_queue_dataset_enabled=(
-                config.request_queue_dataset_enabled
-            ),
+            request_queue_browser_enabled=(config.request_queue_browser_enabled),
+            request_queue_dataset_enabled=(config.request_queue_dataset_enabled),
             request_queue_key_value_store_enabled=(
                 config.request_queue_key_value_store_enabled
             ),
@@ -1122,7 +1190,9 @@ def _run(
         ):
             input_reference = payload.get("input_reference")
             if not isinstance(input_reference, dict):
-                raise SandboxPolicyError("Controlled-browser Run lacks input reference.")
+                raise SandboxPolicyError(
+                    "Controlled-browser Run lacks input reference."
+                )
             browser_navigation = input_reference.get("browser_navigation")
             try:
                 client.status(lease_id, token, status="RUNNING")
@@ -1132,14 +1202,18 @@ def _run(
                         or egress_policy is None
                         or browser_policy is None
                     ):
-                        raise SandboxPolicyError("Live browser Run lacks validated policy.")
+                        raise SandboxPolicyError(
+                            "Live browser Run lacks validated policy."
+                        )
                     browser_egress_policy = BrowserEgressPolicy.create(egress_policy)
                     receipt = input_reference.get("browser_navigation_receipt")
                     if not isinstance(receipt, dict):
                         raise SandboxPolicyError("Live browser Run lacks receipt.")
                     request_digest = receipt.get("request_digest")
                     if not isinstance(request_digest, str):
-                        raise SandboxPolicyError("Live browser Run request digest is invalid.")
+                        raise SandboxPolicyError(
+                            "Live browser Run request digest is invalid."
+                        )
                     browser_output, browser_log = run_browser_live_navigation(
                         config=config,
                         run_id=str(payload["run_id"]),
@@ -1150,7 +1224,9 @@ def _run(
                         request_digest=request_digest,
                         max_screenshot_bytes=browser_policy.max_screenshot_bytes,
                         navigation_timeout_seconds=browser_policy.navigation_timeout_seconds,
-                        runtime_timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
+                        runtime_timeout_seconds=int(
+                            payload["sandbox"]["timeout_seconds"]
+                        ),
                     )
                     browser_provenance = {
                         "activation": activation,
@@ -1235,13 +1311,19 @@ def _run(
             max_bytes=int(artifact_grant["size_bytes"]),
         )
         digest, size = sha256_file(image_path)
-        if digest != artifact_grant["digest"] or size != int(artifact_grant["size_bytes"]):
-            raise SandboxPolicyError("Downloaded image artifact failed digest verification.")
+        if digest != artifact_grant["digest"] or size != int(
+            artifact_grant["size_bytes"]
+        ):
+            raise SandboxPolicyError(
+                "Downloaded image artifact failed digest verification."
+            )
         load_image(config, image_path)
         provenance = dict(artifact_grant.get("provenance") or {})
         image_ref = str(provenance.get("image_ref", ""))
         if not image_ref.startswith("rdc.local/agent:"):
-            raise SandboxPolicyError("Container artifact provenance lacks a safe image reference.")
+            raise SandboxPolicyError(
+                "Container artifact provenance lacks a safe image reference."
+            )
         manifest = dict(payload["manifest"])
         runtime = dict(manifest["runtime"])
         entrypoint = [str(value) for value in runtime["entrypoint"]]
@@ -1251,31 +1333,21 @@ def _run(
         profile = activation.get("capability_profile")
         kv_enabled = activation.get("key_value_store_enabled") is True
         queue_enabled = activation.get("request_queue_enabled") is True
-        queue_http_enabled = (
-            activation.get("request_queue_http_enabled") is True
-        )
-        queue_browser_enabled = (
-            activation.get("request_queue_browser_enabled") is True
-        )
+        queue_http_enabled = activation.get("request_queue_http_enabled") is True
+        queue_browser_enabled = activation.get("request_queue_browser_enabled") is True
         queue_claim: dict[str, object] | None = None
         queue_browser_provenance: dict[str, object] | None = None
 
         if (queue_http_enabled or queue_browser_enabled) and not queue_enabled:
-            raise SandboxPolicyError(
-                "Queue acquisition requires Queue access."
-            )
+            raise SandboxPolicyError("Queue acquisition requires Queue access.")
 
         if queue_enabled:
             capability = payload.get("request_queue_capability")
             if not isinstance(capability, dict):
-                raise SandboxPolicyError(
-                    "Queue-bound Run lacks a capability receipt."
-                )
+                raise SandboxPolicyError("Queue-bound Run lacks a capability receipt.")
             queue_id = capability.get("queue_id")
             if not isinstance(queue_id, str):
-                raise SandboxPolicyError(
-                    "Queue-bound Run capability is invalid."
-                )
+                raise SandboxPolicyError("Queue-bound Run capability is invalid.")
             try:
                 claimed = client.queue_claim(
                     lease_id,
@@ -1370,9 +1442,7 @@ def _run(
                         {
                             "outcome": "FAILED",
                             "retryable": False,
-                            "error_code": (
-                                "REQUEST_QUEUE_COMPLETION_FAILED"
-                            ),
+                            "error_code": ("REQUEST_QUEUE_COMPLETION_FAILED"),
                             "error_summary": (
                                 "Queue browser failure completion failed closed."
                             ),
@@ -1426,9 +1496,7 @@ def _run(
                             queue_claim,
                             handled=False,
                             failure_code="QUEUE_HTTP_FETCH_FAILED",
-                            failure_summary=(
-                                "Brokered Queue HTTP acquisition failed."
-                            ),
+                            failure_summary=("Brokered Queue HTTP acquisition failed."),
                         ),
                     )
                 except WorkerProtocolError:
@@ -1631,9 +1699,7 @@ def _run(
                     raise KVWorkerBoundaryError(
                         "KV worker output exceeds the read limit."
                     )
-                decoded_kv = json.loads(
-                    output_path.read_text(encoding="utf-8")
-                )
+                decoded_kv = json.loads(output_path.read_text(encoding="utf-8"))
                 normalized_kv = validate_kv_worker_output(decoded_kv)
                 mutations = normalized_kv["mutations"]
                 if not isinstance(mutations, list):
@@ -1644,9 +1710,7 @@ def _run(
                     persisted_mutation = dict(mutation)
                     if queue_claim is not None:
                         persisted_mutation["idempotency_key"] = (
-                            queue_kv_idempotency_key(
-                                queue_claim, mutation_index
-                            )
+                            queue_kv_idempotency_key(queue_claim, mutation_index)
                         )
                     client.kv_mutate(lease_id, token, persisted_mutation)
                 result_bytes = json.dumps(
@@ -1726,13 +1790,10 @@ def _run(
                     raise DatasetProtocolError(
                         "Dataset output envelope must be an object."
                     )
-                dataset_payload = {
-                    str(key): value for key, value in decoded.items()
-                }
+                dataset_payload = {str(key): value for key, value in decoded.items()}
                 if queue_claim is not None:
-                    dataset_payload["idempotency_key"] = (
-                        queue_dataset_idempotency_key(queue_claim)
-                    )
+                    idempotency_key = queue_dataset_idempotency_key(queue_claim)
+                    dataset_payload["idempotency_key"] = idempotency_key
                 validate_dataset_append(dataset_payload)
                 client.dataset_append(
                     lease_id,
@@ -1767,9 +1828,7 @@ def _run(
                             {
                                 "outcome": "FAILED",
                                 "retryable": False,
-                                "error_code": (
-                                    "REQUEST_QUEUE_COMPLETION_FAILED"
-                                ),
+                                "error_code": ("REQUEST_QUEUE_COMPLETION_FAILED"),
                                 "error_summary": (
                                     "Queue Dataset failure completion failed closed."
                                 ),
@@ -1783,9 +1842,7 @@ def _run(
                         "outcome": "FAILED",
                         "retryable": False,
                         "error_code": "DATASET_APPEND_FAILED",
-                        "error_summary": (
-                            "Controlled Dataset append failed closed."
-                        ),
+                        "error_summary": ("Controlled Dataset append failed closed."),
                     },
                 )
                 return
@@ -1867,7 +1924,9 @@ def _run(
                 "outcome": "SUCCEEDED" if code == 0 else "FAILED",
                 "retryable": False,
                 "error_code": None if code == 0 else "AGENT_EXIT_NONZERO",
-                "error_summary": None if code == 0 else f"Agent exited with status {code}.",
+                "error_summary": None
+                if code == 0
+                else f"Agent exited with status {code}.",
                 "artifacts": registrations,
             },
         )
@@ -1903,9 +1962,7 @@ def main() -> None:
     worker = _data(client.worker())
     worker_name = str(worker["name"])
     if int(worker["max_concurrency"]) != 1:
-        raise SandboxPolicyError(
-            "Phase 1J canary worker must have max_concurrency=1."
-        )
+        raise SandboxPolicyError("Phase 1J canary worker must have max_concurrency=1.")
     stop_requested = False
 
     def request_stop(_signum: int, _frame: object) -> None:

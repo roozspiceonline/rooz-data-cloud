@@ -64,7 +64,7 @@ class BrowserEgressPolicy:
             "schema_version": "rdc.browser-egress-policy/v1",
             "mode": "gateway-live-canary",
             "allowed_schemes": ["https"],
-            "allowed_methods": ["GET", "HEAD"],
+            "allowed_methods": list(self.base.allowed_methods),
             "allowed_resource_types": sorted(_ALLOWED_RESOURCE_TYPES),
             "allowed_hosts": list(self.base.allowed_hosts),
             "deny_ip_literals": True,
@@ -116,10 +116,11 @@ class BrowserEgressPolicy:
                 "Browser resource type is not allowed by gateway policy."
             )
         normalized_method = method.strip().upper()
-        if normalized_method not in _ALLOWED_METHODS:
-            raise BrowserEgressPolicyError(
-                "Browser gateway permits GET and HEAD only."
-            )
+        if (
+            normalized_method not in _ALLOWED_METHODS
+            or normalized_method not in self.base.allowed_methods
+        ):
+            raise BrowserEgressPolicyError("Browser gateway permits GET and HEAD only.")
         try:
             target = self.base.validate_target(url, resolver=resolver)
         except EgressPolicyError as exc:

@@ -38,6 +38,7 @@ def request_queue_capability(
     browser_egress_policy_digest: str | None = None,
     request_queue_dataset_enabled: bool = False,
     request_queue_key_value_store_enabled: bool = False,
+    project_egress_policy_binding_digest: str | None = None,
 ) -> dict[str, object] | None:
     if (
         not request_queue_enabled
@@ -57,27 +58,13 @@ def request_queue_capability(
     capabilities = manifest.get("capabilities")
     binding = input_reference.get("request_queue")
     receipt = input_reference.get("queue_binding_receipt")
-    network = (
-        capabilities.get("network")
-        if isinstance(capabilities, dict)
-        else None
-    )
-    browser = (
-        capabilities.get("browser")
-        if isinstance(capabilities, dict)
-        else None
-    )
+    network = capabilities.get("network") if isinstance(capabilities, dict) else None
+    browser = capabilities.get("browser") if isinstance(capabilities, dict) else None
     browser_acquisition = network == "web-egress" and browser is True
     http_acquisition = network == "web-egress" and browser is False
-    dataset = (
-        capabilities.get("dataset")
-        if isinstance(capabilities, dict)
-        else None
-    )
+    dataset = capabilities.get("dataset") if isinstance(capabilities, dict) else None
     key_value_store = (
-        capabilities.get("keyValueStore")
-        if isinstance(capabilities, dict)
-        else None
+        capabilities.get("keyValueStore") if isinstance(capabilities, dict) else None
     )
     if (
         not isinstance(capabilities, dict)
@@ -94,6 +81,17 @@ def request_queue_capability(
         or binding.get("schema_version") != "rdc.run-queue/v1"
         or not isinstance(receipt, dict)
     ):
+        return None
+    project_receipt = input_reference.get("project_egress_policy_receipt")
+    if project_egress_policy_binding_digest is not None:
+        if (
+            not isinstance(project_receipt, dict)
+            or project_receipt.get("binding_digest")
+            != project_egress_policy_binding_digest
+            or not (browser_acquisition or http_acquisition)
+        ):
+            return None
+    elif project_receipt is not None:
         return None
     try:
         queue_id = UUID(str(binding["queue_id"]))
@@ -129,8 +127,7 @@ def request_queue_capability(
             or stored_policy_digest != browser_policy_digest
             or stored_egress_digest != browser_egress_policy_digest
             or canonical_fingerprint(stored_policy) != stored_policy_digest
-            or canonical_fingerprint(stored_egress_policy)
-            != stored_egress_digest
+            or canonical_fingerprint(stored_egress_policy) != stored_egress_digest
         ):
             return None
         expected_receipt = {
@@ -148,9 +145,7 @@ def request_queue_capability(
         }
     elif http_acquisition:
         stored_policy = input_reference.get("request_queue_egress_policy")
-        stored_digest = input_reference.get(
-            "request_queue_egress_policy_digest"
-        )
+        stored_digest = input_reference.get("request_queue_egress_policy_digest")
         if (
             request_queue_browser_enabled
             or browser_policy_digest is not None
@@ -196,9 +191,7 @@ def request_queue_capability(
     if receipt != expected_receipt:
         return None
     if dataset:
-        composition_receipt = input_reference.get(
-            "request_queue_dataset_receipt"
-        )
+        composition_receipt = input_reference.get("request_queue_dataset_receipt")
         expected_composition_receipt = {
             "schema_version": "rdc.request-queue-dataset-receipt/v1",
             "queue_id": str(queue_id),
@@ -229,9 +222,7 @@ def request_queue_capability(
         )
         input_value = input_reference.get("value")
         read_request = (
-            input_value.get("_rdc_kv_read")
-            if isinstance(input_value, dict)
-            else None
+            input_value.get("_rdc_kv_read") if isinstance(input_value, dict) else None
         )
         read_request_digest: str | None = None
         if read_request is not None:
@@ -242,9 +233,7 @@ def request_queue_capability(
             except KVWorkerProtocolError:
                 return None
         expected_composition_receipt = {
-            "schema_version": (
-                "rdc.request-queue-key-value-store-receipt/v1"
-            ),
+            "schema_version": ("rdc.request-queue-key-value-store-receipt/v1"),
             "queue_id": str(queue_id),
             "agent_version_id": str(payload["agent_version_id"]),
             "queue_binding_receipt_digest": canonical_fingerprint(receipt),
@@ -266,24 +255,27 @@ def request_queue_capability(
             return None
     elif (
         request_queue_key_value_store_enabled
-        or input_reference.get("request_queue_key_value_store_receipt")
-        is not None
+        or input_reference.get("request_queue_key_value_store_receipt") is not None
     ):
         return None
     capability: dict[str, object] = {
         "schema_version": (
-            "rdc.request-queue-worker-capability/v5"
-            if key_value_store
+            "rdc.request-queue-worker-capability/v6"
+            if project_egress_policy_binding_digest is not None
             else (
-                "rdc.request-queue-worker-capability/v4"
-                if dataset
+                "rdc.request-queue-worker-capability/v5"
+                if key_value_store
                 else (
-                    "rdc.request-queue-worker-capability/v3"
-                    if browser_acquisition
+                    "rdc.request-queue-worker-capability/v4"
+                    if dataset
                     else (
-                        "rdc.request-queue-worker-capability/v2"
-                        if http_acquisition
-                        else "rdc.request-queue-worker-capability/v1"
+                        "rdc.request-queue-worker-capability/v3"
+                        if browser_acquisition
+                        else (
+                            "rdc.request-queue-worker-capability/v2"
+                            if http_acquisition
+                            else "rdc.request-queue-worker-capability/v1"
+                        )
                     )
                 )
             )
@@ -298,14 +290,16 @@ def request_queue_capability(
         "direct_object_storage_access": False,
         "enabled": True,
     }
+    if project_egress_policy_binding_digest is not None:
+        capability["project_egress_policy_binding_digest"] = (
+            project_egress_policy_binding_digest
+        )
     if browser_acquisition:
         capability.update(
             {
                 "acquisition_mode": "controlled-browser",
                 "browser_policy_digest": browser_policy_digest,
-                "browser_egress_policy_digest": (
-                    browser_egress_policy_digest
-                ),
+                "browser_egress_policy_digest": (browser_egress_policy_digest),
                 "agent_container_network": "none",
             }
         )
@@ -380,9 +374,7 @@ def _enabled(
             str(input_reference["request_queue_browser_egress_policy_digest"])
             if isinstance(input_reference, dict)
             and isinstance(
-                input_reference.get(
-                    "request_queue_browser_egress_policy_digest"
-                ),
+                input_reference.get("request_queue_browser_egress_policy_digest"),
                 str,
             )
             else None
@@ -394,6 +386,12 @@ def _enabled(
         request_queue_key_value_store_enabled=(
             isinstance(activation, dict)
             and activation.get("request_queue_key_value_store_enabled") is True
+        ),
+        project_egress_policy_binding_digest=(
+            str(activation["project_egress_policy_binding_digest"])
+            if isinstance(activation, dict)
+            and isinstance(activation.get("project_egress_policy_binding_digest"), str)
+            else None
         ),
     )
     if (

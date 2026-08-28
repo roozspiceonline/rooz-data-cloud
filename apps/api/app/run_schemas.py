@@ -157,9 +157,7 @@ class BrowserGotoStepInput(StrictModel):
     @classmethod
     def validate_url(cls, value: str) -> str:
         if not value.startswith("https://"):
-            raise ValueError(
-                "Browser navigation URLs must use lowercase https://."
-            )
+            raise ValueError("Browser navigation URLs must use lowercase https://.")
         try:
             parsed = urlsplit(value)
         except ValueError as exc:
@@ -167,9 +165,7 @@ class BrowserGotoStepInput(StrictModel):
         if not parsed.hostname:
             raise ValueError("Browser navigation URL requires a hostname.")
         if parsed.username is not None or parsed.password is not None:
-            raise ValueError(
-                "Browser navigation URL credentials are not allowed."
-            )
+            raise ValueError("Browser navigation URL credentials are not allowed.")
         return value
 
 
@@ -261,15 +257,18 @@ class BrowserNavigationInput(StrictModel):
             separators=(",", ":"),
         ).encode()
         if len(encoded) > 65_536:
-            raise ValueError(
-                "Browser navigation envelope cannot exceed 64 KiB."
-            )
+            raise ValueError("Browser navigation envelope cannot exceed 64 KiB.")
         return self
 
 
 class RequestQueueBindingInput(StrictModel):
     schema_version: Literal["rdc.run-queue/v1"] = "rdc.run-queue/v1"
     queue_id: UUID
+
+
+class EgressPolicyBindingInput(StrictModel):
+    schema_version: Literal["rdc.run-egress-policy/v1"] = "rdc.run-egress-policy/v1"
+    policy_id: UUID
 
 
 class RuntimeConfigurationInput(StrictModel):
@@ -285,6 +284,7 @@ class CreateRunRequest(StrictModel):
     browser: BrowserSessionInput | None = None
     browser_navigation: BrowserNavigationInput | None = None
     request_queue: RequestQueueBindingInput | None = None
+    egress_policy: EgressPolicyBindingInput | None = None
     runtime: RuntimeConfigurationInput = Field(
         default_factory=RuntimeConfigurationInput
     )
@@ -311,8 +311,10 @@ class CreateRunRequest(StrictModel):
             )
         )
         if external_surfaces > 1:
+            raise ValueError("A Run may use only one external or Queue intent surface.")
+        if self.egress_policy is not None and external_surfaces != 1:
             raise ValueError(
-                "A Run may use only one external or Queue intent surface."
+                "An egress-policy reference requires exactly one external or Queue intent surface."
             )
         if self.request_queue is not None:
             reserved_queue_keys = {
@@ -324,8 +326,7 @@ class CreateRunRequest(StrictModel):
             }
             if reserved_queue_keys.intersection(self.input):
                 raise ValueError(
-                    "Run input cannot populate reserved _rdc_queue or other "
-                    "Queue runtime keys."
+                    "Run input cannot populate reserved _rdc_queue or other Queue runtime keys."
                 )
         return self
 

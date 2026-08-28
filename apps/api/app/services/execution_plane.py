@@ -26,6 +26,10 @@ from ..core.worker_crypto import (
     worker_secret_aad,
 )
 from ..dataset_schemas import CreateDatasetRequest
+from ..egress_policy_protocol import (
+    EgressPolicyProtocolError,
+    validate_egress_policy,
+)
 from ..execution_recovery import (
     clamp_lease_expiry,
     execution_deadline_at,
@@ -98,8 +102,7 @@ def _sandbox_attestation_allowed(attestation: SandboxAttestation) -> bool:
         and attestation.max_memory_mb <= settings.sandbox_max_memory_mb
         and attestation.max_cpu_millis <= settings.sandbox_max_cpu_millis
         and attestation.max_pids <= settings.sandbox_max_pids
-        and attestation.max_ephemeral_disk_mb
-        <= settings.sandbox_max_ephemeral_disk_mb
+        and attestation.max_ephemeral_disk_mb <= settings.sandbox_max_ephemeral_disk_mb
         and attestation.max_build_seconds <= settings.sandbox_max_build_seconds
         and attestation.max_run_seconds <= settings.sandbox_max_run_seconds
     )
@@ -111,17 +114,13 @@ def _egress_policy_payload() -> dict[str, object]:
         "mode": "brokered",
         "allowed_schemes": ["https"],
         "allowed_methods": ["GET", "HEAD"],
-        "allowed_hosts": list(
-            settings.sandbox_canary_web_egress_allowed_hosts
-        ),
+        "allowed_hosts": list(settings.sandbox_canary_web_egress_allowed_hosts),
         "deny_ip_literals": True,
         "require_global_dns": True,
         "revalidate_redirects": True,
         "container_network": "none",
         "max_requests": settings.sandbox_canary_web_egress_max_requests,
-        "max_response_bytes": (
-            settings.sandbox_canary_web_egress_max_response_bytes
-        ),
+        "max_response_bytes": (settings.sandbox_canary_web_egress_max_response_bytes),
         "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
         "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
         "connect_timeout_seconds": (
@@ -133,8 +132,121 @@ def _egress_policy_payload() -> dict[str, object]:
     }
 
 
+def _bound_egress_policy(
+    input_reference: dict[str, object],
+) -> tuple[dict[str, object], str] | None:
+    stored = input_reference.get("project_egress_policy")
+    receipt = input_reference.get("project_egress_policy_receipt")
+    if stored is None and receipt is None:
+        return None
+    if not isinstance(stored, dict) or not isinstance(receipt, dict):
+        raise ValueError("Incomplete Project egress-policy binding.")
+    if set(receipt) != {
+        "schema_version",
+        "policy_id",
+        "revision_id",
+        "revision_number",
+        "policy_digest",
+        "runtime_policy_digest",
+        "credential_configured",
+        "binding_digest",
+    }:
+        raise ValueError("Unexpected Project egress-policy receipt fields.")
+    if (
+        receipt.get("schema_version") != "rdc.run-egress-policy-receipt/v1"
+        or receipt.get("credential_configured") is not False
+        or type(receipt.get("revision_number")) is not int
+        or int(receipt["revision_number"]) < 1
+    ):
+        raise ValueError("Invalid Project egress-policy receipt.")
+    try:
+        UUID(str(receipt["policy_id"]))
+        UUID(str(receipt["revision_id"]))
+    except (KeyError, ValueError) as exc:
+        raise ValueError("Invalid Project egress-policy identifiers.") from exc
+    receipt_without_digest = {
+        key: value for key, value in receipt.items() if key != "binding_digest"
+    }
+    if receipt.get("binding_digest") != canonical_fingerprint(receipt_without_digest):
+        raise ValueError("Project egress-policy binding digest mismatch.")
+    required_runtime = {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_schemes": ["https"],
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "revalidate_redirects": True,
+        "container_network": "none",
+    }
+    if any(stored.get(key) != value for key, value in required_runtime.items()):
+        raise ValueError("Unsafe Project egress-policy runtime envelope.")
+    hosts = stored.get("allowed_hosts")
+    methods = stored.get("allowed_methods")
+    if (
+        not isinstance(hosts, list)
+        or not hosts
+        or not all(isinstance(host, str) for host in hosts)
+        or hosts != sorted(set(hosts))
+        or not isinstance(methods, list)
+        or not methods
+        or not all(isinstance(method, str) for method in methods)
+        or methods != sorted(set(methods))
+        or not set(methods) <= {"GET", "HEAD"}
+    ):
+        raise ValueError("Invalid Project egress-policy hosts or methods.")
+    ceiling = _egress_policy_payload()
+    if not set(hosts) <= set(cast(list[str], ceiling["allowed_hosts"])):
+        raise ValueError("Project egress policy exceeds the host ceiling.")
+    numeric_minimums = {
+        "max_requests": 1,
+        "max_response_bytes": 65_536,
+        "max_total_bytes": 65_536,
+        "max_redirects": 0,
+        "connect_timeout_seconds": 1,
+        "request_timeout_seconds": 1,
+    }
+    if any(
+        type(stored.get(key)) is not int
+        or int(stored[key]) < minimum
+        or int(stored[key]) > cast(int, ceiling[key])
+        for key, minimum in numeric_minimums.items()
+    ):
+        raise ValueError("Project egress policy exceeds a numeric ceiling.")
+    runtime_digest = canonical_fingerprint(stored)
+    if receipt.get("runtime_policy_digest") != runtime_digest:
+        raise ValueError("Project runtime-policy digest mismatch.")
+    try:
+        validated = validate_egress_policy(
+            allowed_hosts=hosts,
+            allowed_methods=methods,
+            max_requests=cast(int, stored["max_requests"]),
+            max_response_bytes=cast(int, stored["max_response_bytes"]),
+            max_total_bytes=cast(int, stored["max_total_bytes"]),
+            max_redirects=cast(int, stored["max_redirects"]),
+            connect_timeout_seconds=cast(
+                int, stored["connect_timeout_seconds"]
+            ),
+            request_timeout_seconds=cast(
+                int, stored["request_timeout_seconds"]
+            ),
+        )
+    except EgressPolicyProtocolError as exc:
+        raise ValueError(
+            "Project policy revision failed protocol validation."
+        ) from exc
+    if (
+        validated.allowed_hosts != hosts
+        or validated.allowed_methods != methods
+        or receipt.get("policy_digest") != validated.policy_digest
+    ):
+        raise ValueError("Project policy-revision digest mismatch.")
+    return stored, str(receipt["binding_digest"])
+
+
 def _browser_navigation_canary_receipt_allowed(
     input_reference: dict[str, object],
+    *,
+    runtime_egress_policy: dict[str, object] | None = None,
 ) -> bool:
     if not settings.sandbox_canary_browser_live_navigation_enabled:
         return False
@@ -155,7 +267,7 @@ def _browser_navigation_canary_receipt_allowed(
         return False
     current_browser_policy = _browser_policy_payload()
     current_browser_digest = canonical_fingerprint(current_browser_policy)
-    current_egress_policy = _browser_egress_policy_payload()
+    current_egress_policy = _browser_egress_policy_payload(runtime_egress_policy)
     current_egress_digest = canonical_fingerprint(current_egress_policy)
     if (
         stored_browser_policy != current_browser_policy
@@ -197,11 +309,7 @@ def _canary_constraints(
         "ephemeral_disk_mb": settings.sandbox_canary_max_ephemeral_disk_mb,
         "build_timeout_seconds": settings.sandbox_canary_max_build_seconds,
         "run_timeout_seconds": settings.sandbox_canary_max_run_seconds,
-        "network": (
-            "brokered-web-egress"
-            if network == "web-egress"
-            else "none"
-        ),
+        "network": ("brokered-web-egress" if network == "web-egress" else "none"),
         "browser": browser,
         "dataset": dataset,
         "key_value_store": key_value_store,
@@ -258,10 +366,7 @@ def _canary_activation(
     network = str(capabilities.get("network", ""))
     if network not in {"none", "web-egress"}:
         return None
-    if (
-        network == "web-egress"
-        and not settings.sandbox_canary_web_egress_enabled
-    ):
+    if network == "web-egress" and not settings.sandbox_canary_web_egress_enabled:
         return None
     browser = capabilities.get("browser")
     if not isinstance(browser, bool):
@@ -284,14 +389,27 @@ def _canary_activation(
         queue_runtime_enabled and network == "web-egress" and browser
     )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled
-        and network == "web-egress"
-        and not browser
+        queue_runtime_enabled and network == "web-egress" and not browser
+    )
+    input_reference = payload.get("input_reference")
+    if not isinstance(input_reference, dict):
+        input_reference = {}
+    try:
+        bound_egress = _bound_egress_policy(input_reference)
+    except ValueError:
+        return None
+    if bound_egress is not None and network != "web-egress":
+        return None
+    effective_egress_policy = (
+        bound_egress[0] if bound_egress is not None else _egress_policy_payload()
     )
     egress_policy_digest = (
-        canonical_fingerprint(_egress_policy_payload())
+        canonical_fingerprint(effective_egress_policy)
         if network == "web-egress"
         else None
+    )
+    project_egress_policy_binding_digest = (
+        bound_egress[1] if bound_egress is not None else None
     )
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
@@ -303,12 +421,10 @@ def _canary_activation(
     ):
         return None
     current_browser_policy_digest = (
-        canonical_fingerprint(_browser_policy_payload())
-        if browser
-        else None
+        canonical_fingerprint(_browser_policy_payload()) if browser else None
     )
     current_browser_egress_digest = (
-        canonical_fingerprint(_browser_egress_policy_payload())
+        canonical_fingerprint(_browser_egress_policy_payload(effective_egress_policy))
         if queue_browser_runtime_enabled
         else None
     )
@@ -349,6 +465,7 @@ def _canary_activation(
             browser_egress_policy_digest=current_browser_egress_digest,
             request_queue_dataset_enabled=queue_dataset_runtime_enabled,
             request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
+            project_egress_policy_binding_digest=(project_egress_policy_binding_digest),
         )
         is None
     ):
@@ -360,12 +477,16 @@ def _canary_activation(
         or "DATASET_APPEND" not in worker.capabilities
     ):
         return None
-    if kv_runtime_enabled and key_value_store_capability(
-        worker,
-        payload,
-        key_value_store_enabled=True,
-        request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
-    ) is None:
+    if (
+        kv_runtime_enabled
+        and key_value_store_capability(
+            worker,
+            payload,
+            key_value_store_enabled=True,
+            request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
+        )
+        is None
+    ):
         return None
 
     browser_policy_digest: str | None = None
@@ -382,7 +503,10 @@ def _canary_activation(
         if queue_browser_runtime_enabled:
             browser_policy_digest = current_browser_policy_digest
         elif "browser_navigation" in input_reference:
-            if not _browser_navigation_canary_receipt_allowed(input_reference):
+            if not _browser_navigation_canary_receipt_allowed(
+                input_reference,
+                runtime_egress_policy=effective_egress_policy,
+            ):
                 return None
             browser_policy_digest = canonical_fingerprint(_browser_policy_payload())
         else:
@@ -443,9 +567,7 @@ def _canary_activation(
         capability_profile = "controlled-browser"
     else:
         capability_profile = (
-            "brokered-web-egress"
-            if network == "web-egress"
-            else "offline-minimal"
+            "brokered-web-egress" if network == "web-egress" else "offline-minimal"
         )
     return SandboxActivation(
         agent_version_id=UUID(configured_version_id),
@@ -455,6 +577,7 @@ def _canary_activation(
         constraints_digest=canonical_fingerprint(constraints),
         capability_profile=capability_profile,
         egress_policy_digest=egress_policy_digest,
+        project_egress_policy_binding_digest=(project_egress_policy_binding_digest),
         browser_policy_digest=browser_policy_digest,
         dataset_write_enabled=dataset,
         key_value_store_enabled=kv_runtime_enabled,
@@ -464,7 +587,6 @@ def _canary_activation(
         request_queue_dataset_enabled=queue_dataset_runtime_enabled,
         request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
     )
-
 
 
 def _dataset_append_capability(
@@ -607,10 +729,7 @@ def _sandbox_claim_policy(
     network = str(capabilities.get("network", ""))
     if network not in {"none", "web-egress"}:
         return None
-    if (
-        network == "web-egress"
-        and not settings.sandbox_canary_web_egress_enabled
-    ):
+    if network == "web-egress" and not settings.sandbox_canary_web_egress_enabled:
         return None
     browser = capabilities.get("browser")
     if not isinstance(browser, bool):
@@ -633,14 +752,27 @@ def _sandbox_claim_policy(
         queue_runtime_enabled and network == "web-egress" and browser
     )
     queue_http_runtime_enabled = (
-        queue_runtime_enabled
-        and network == "web-egress"
-        and not browser
+        queue_runtime_enabled and network == "web-egress" and not browser
+    )
+    input_reference = payload.get("input_reference")
+    if not isinstance(input_reference, dict):
+        input_reference = {}
+    try:
+        bound_egress = _bound_egress_policy(input_reference)
+    except ValueError:
+        return None
+    if bound_egress is not None and network != "web-egress":
+        return None
+    effective_egress_policy = (
+        bound_egress[0] if bound_egress is not None else _egress_policy_payload()
     )
     egress_policy_digest = (
-        canonical_fingerprint(_egress_policy_payload())
+        canonical_fingerprint(effective_egress_policy)
         if network == "web-egress"
         else None
+    )
+    project_egress_policy_binding_digest = (
+        bound_egress[1] if bound_egress is not None else None
     )
     if work_kind == "RUN_START" and dataset and kv_runtime_enabled:
         return None
@@ -652,12 +784,10 @@ def _sandbox_claim_policy(
     ):
         return None
     current_browser_policy_digest = (
-        canonical_fingerprint(_browser_policy_payload())
-        if browser
-        else None
+        canonical_fingerprint(_browser_policy_payload()) if browser else None
     )
     current_browser_egress_digest = (
-        canonical_fingerprint(_browser_egress_policy_payload())
+        canonical_fingerprint(_browser_egress_policy_payload(effective_egress_policy))
         if queue_browser_runtime_enabled
         else None
     )
@@ -698,6 +828,7 @@ def _sandbox_claim_policy(
             browser_egress_policy_digest=current_browser_egress_digest,
             request_queue_dataset_enabled=queue_dataset_runtime_enabled,
             request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
+            project_egress_policy_binding_digest=(project_egress_policy_binding_digest),
         )
         is None
     ):
@@ -709,12 +840,16 @@ def _sandbox_claim_policy(
         or "DATASET_APPEND" not in worker.capabilities
     ):
         return None
-    if kv_runtime_enabled and key_value_store_capability(
-        worker,
-        payload,
-        key_value_store_enabled=True,
-        request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
-    ) is None:
+    if (
+        kv_runtime_enabled
+        and key_value_store_capability(
+            worker,
+            payload,
+            key_value_store_enabled=True,
+            request_queue_key_value_store_enabled=queue_kv_runtime_enabled,
+        )
+        is None
+    ):
         return None
     if browser:
         if (
@@ -730,7 +865,10 @@ def _sandbox_claim_policy(
             not queue_browser_runtime_enabled
             and "browser_navigation" in input_reference
         ):
-            if not _browser_navigation_canary_receipt_allowed(input_reference):
+            if not _browser_navigation_canary_receipt_allowed(
+                input_reference,
+                runtime_egress_policy=effective_egress_policy,
+            ):
                 return None
         elif not queue_browser_runtime_enabled and (
             not isinstance(input_reference.get("browser"), dict)
@@ -739,12 +877,8 @@ def _sandbox_claim_policy(
         ):
             return None
 
-    memory_mb = int(
-        resources.get("memoryMb", settings.sandbox_max_memory_mb)
-    )
-    cpu_millis = int(
-        resources.get("cpuUnits", settings.sandbox_max_cpu_millis)
-    )
+    memory_mb = int(resources.get("memoryMb", settings.sandbox_max_memory_mb))
+    cpu_millis = int(resources.get("cpuUnits", settings.sandbox_max_cpu_millis))
     pids = int(resources.get("maxProcesses", settings.sandbox_max_pids))
     disk_mb = int(
         resources.get(
@@ -976,20 +1110,16 @@ async def heartbeat_worker(
             message="The internal credential is invalid.",
         )
     now = datetime.now(UTC)
-    recovery_pending = (
-        worker.last_lost_at is not None
-        and (
-            worker.last_recovered_at is None
-            or worker.last_recovered_at < worker.last_lost_at
-        )
+    recovery_pending = worker.last_lost_at is not None and (
+        worker.last_recovered_at is None
+        or worker.last_recovered_at < worker.last_lost_at
     )
     if recovery_pending and payload.recovery is None:
         raise ApiError(
             status_code=409,
             code="WORKER_RECOVERY_REQUIRED",
             message=(
-                "The worker must complete managed-runtime cleanup before "
-                "it can recover."
+                "The worker must complete managed-runtime cleanup before it can recover."
             ),
         )
     previous_startup_id = worker.metadata_json.get("recovery_startup_id")
@@ -1003,9 +1133,7 @@ async def heartbeat_worker(
     }
     _apply_sandbox_attestation(worker, payload.sandbox, now=now)
     recovery_startup_id = (
-        str(payload.recovery.startup_id)
-        if payload.recovery is not None
-        else None
+        str(payload.recovery.startup_id) if payload.recovery is not None else None
     )
     if (
         recovery_pending
@@ -1017,18 +1145,13 @@ async def heartbeat_worker(
             code="WORKER_RECOVERY_REPORT_REPLAYED",
             message="The worker recovery report was already accepted.",
         )
-    if (
-        payload.recovery is not None
-        and recovery_startup_id != previous_startup_id
-    ):
+    if payload.recovery is not None and recovery_startup_id != previous_startup_id:
         worker.last_cleanup_at = now
         worker.cleanup_generation += 1
         worker.metadata_json = {
             **dict(worker.metadata_json),
             "recovery_startup_id": recovery_startup_id,
-            "managed_containers_removed": (
-                payload.recovery.managed_containers_removed
-            ),
+            "managed_containers_removed": (payload.recovery.managed_containers_removed),
             "workspace_directories_removed": (
                 payload.recovery.workspace_directories_removed
             ),
@@ -1248,9 +1371,7 @@ async def _reset_expired_source(
                 BuildDispatchOutbox.id == lease.source_outbox_id
             )
         )
-        build = await session.scalar(
-            select(Build).where(Build.id == lease.build_id)
-        )
+        build = await session.scalar(select(Build).where(Build.id == lease.build_id))
         retry = execution_retry_allowed(
             requested=not deadline_exceeded,
             outcome="FAILED",
@@ -1275,9 +1396,7 @@ async def _reset_expired_source(
             source.updated_at = now
         if build is not None:
             build.status = (
-                "QUEUED"
-                if retry
-                else "TIMED_OUT" if deadline_exceeded else "FAILED"
+                "QUEUED" if retry else "TIMED_OUT" if deadline_exceeded else "FAILED"
             )
             build.error_code = None if retry else failure_code
             build.error_message = (
@@ -1299,9 +1418,7 @@ async def _reset_expired_source(
         return next_attempt_at, False
 
     source = await session.scalar(
-        select(RunCommandOutbox).where(
-            RunCommandOutbox.id == lease.source_outbox_id
-        )
+        select(RunCommandOutbox).where(RunCommandOutbox.id == lease.source_outbox_id)
     )
     run = await session.scalar(select(Run).where(Run.id == lease.run_id))
     if (
@@ -1348,9 +1465,7 @@ async def _reset_expired_source(
     previous = run.status
     if lease.work_kind == "RUN_START":
         run.status = (
-            "QUEUED"
-            if retry
-            else "TIMED_OUT" if deadline_exceeded else "FAILED"
+            "QUEUED" if retry else "TIMED_OUT" if deadline_exceeded else "FAILED"
         )
         run.failure_code = None if retry else failure_code
         run.failure_summary = (
@@ -1370,9 +1485,7 @@ async def _reset_expired_source(
     elif not retry:
         run.status = "FAILED"
         run.failure_code = (
-            "CANCEL_DEADLINE_EXCEEDED"
-            if deadline_exceeded
-            else "CANCEL_LEASE_EXPIRED"
+            "CANCEL_DEADLINE_EXCEEDED" if deadline_exceeded else "CANCEL_LEASE_EXPIRED"
         )
         run.failure_summary = (
             "The cancellation deadline was exceeded."
@@ -1514,9 +1627,7 @@ async def reap_expired_leases(
                 "worker_lost": failure_code == "WORKER_LOST",
                 "retry_scheduled": next_attempt_at is not None,
                 "next_attempt_at": (
-                    next_attempt_at.isoformat()
-                    if next_attempt_at is not None
-                    else None
+                    next_attempt_at.isoformat() if next_attempt_at is not None else None
                 ),
             },
         )
@@ -1535,9 +1646,7 @@ async def _build_claim_payload(
     *,
     source: BuildDispatchOutbox,
 ) -> tuple[dict[str, object], Build]:
-    build = await session.scalar(
-        select(Build).where(Build.id == source.build_id)
-    )
+    build = await session.scalar(select(Build).where(Build.id == source.build_id))
     if build is None or build.status != "QUEUED":
         raise ApiError(
             status_code=409,
@@ -1591,9 +1700,7 @@ async def _build_claim_payload(
             "sha256_digest": source_object.sha256_digest,
             "size_bytes": source_object.size_bytes,
             "media_type": source_object.media_type,
-            "download_grant_path": (
-                "/internal/v1/leases/{lease_id}/source-download"
-            ),
+            "download_grant_path": ("/internal/v1/leases/{lease_id}/source-download"),
             "available": True,
         },
         "execution_enabled": False,
@@ -1748,8 +1855,7 @@ async def _select_source(
         )
         query = query.where(active_project_leases < project_limit)
     source = await session.scalar(
-        query
-        .order_by(
+        query.order_by(
             RunCommandOutbox.available_at.asc(),
             RunCommandOutbox.id.asc(),
         )
@@ -1773,9 +1879,7 @@ def _execution_timeout_seconds(
     elif work_kind == "RUN_START":
         runtime = source.payload.get("runtime")
         raw_timeout = (
-            runtime.get("timeout_seconds")
-            if isinstance(runtime, dict)
-            else None
+            runtime.get("timeout_seconds") if isinstance(runtime, dict) else None
         )
         ceiling = settings.sandbox_max_run_seconds
     else:
@@ -1862,11 +1966,7 @@ async def _lock_project_admission(
         .execution_options(populate_existing=True)
         .with_for_update()
     )
-    if (
-        project is None
-        or project.status != "ACTIVE"
-        or project.deleted_at is not None
-    ):
+    if project is None or project.status != "ACTIVE" or project.deleted_at is not None:
         raise ApiError(
             status_code=409,
             code="PROJECT_EXECUTION_DISABLED",
@@ -1920,12 +2020,9 @@ async def claim_work(
             message="The internal credential is invalid.",
         )
     worker = locked_worker
-    recovery_pending = (
-        worker.last_lost_at is not None
-        and (
-            worker.last_recovered_at is None
-            or worker.last_recovered_at < worker.last_lost_at
-        )
+    recovery_pending = worker.last_lost_at is not None and (
+        worker.last_recovered_at is None
+        or worker.last_recovered_at < worker.last_lost_at
     )
     if recovery_pending:
         raise ApiError(
@@ -2092,33 +2189,26 @@ async def claim_work(
             "project_max_active_leases": project.max_active_leases,
             "project_slot_consumed": kind in PROJECT_EXECUTION_SLOT_KINDS,
         }
-        claim_payload["dataset_append_capability"] = (
-            _dataset_append_capability(
-                worker,
-                claim_payload,
-                dataset_write_enabled=(
-                    activation is not None
-                    and activation.dataset_write_enabled
-                ),
-                request_queue_dataset_enabled=(
-                    activation is not None
-                    and activation.request_queue_dataset_enabled
-                ),
-            )
+        claim_payload["dataset_append_capability"] = _dataset_append_capability(
+            worker,
+            claim_payload,
+            dataset_write_enabled=(
+                activation is not None and activation.dataset_write_enabled
+            ),
+            request_queue_dataset_enabled=(
+                activation is not None and activation.request_queue_dataset_enabled
+            ),
         )
-        claim_payload["key_value_store_capability"] = (
-            key_value_store_capability(
-                worker,
-                claim_payload,
-                key_value_store_enabled=(
-                    activation is not None
-                    and activation.key_value_store_enabled
-                ),
-                request_queue_key_value_store_enabled=(
-                    activation is not None
-                    and activation.request_queue_key_value_store_enabled
-                ),
-            )
+        claim_payload["key_value_store_capability"] = key_value_store_capability(
+            worker,
+            claim_payload,
+            key_value_store_enabled=(
+                activation is not None and activation.key_value_store_enabled
+            ),
+            request_queue_key_value_store_enabled=(
+                activation is not None
+                and activation.request_queue_key_value_store_enabled
+            ),
         )
         claim_payload["request_queue_capability"] = request_queue_capability(
             worker,
@@ -2127,38 +2217,49 @@ async def claim_work(
                 activation is not None and activation.request_queue_enabled
             ),
             request_queue_http_enabled=(
-                activation is not None
-                and activation.request_queue_http_enabled
+                activation is not None and activation.request_queue_http_enabled
             ),
             egress_policy_digest=(
                 activation.egress_policy_digest
-                if activation is not None
-                and activation.request_queue_http_enabled
+                if activation is not None and activation.request_queue_http_enabled
                 else None
             ),
             request_queue_browser_enabled=(
-                activation is not None
-                and activation.request_queue_browser_enabled
+                activation is not None and activation.request_queue_browser_enabled
             ),
             browser_policy_digest=(
                 activation.browser_policy_digest
-                if activation is not None
-                and activation.request_queue_browser_enabled
+                if activation is not None and activation.request_queue_browser_enabled
                 else None
             ),
             browser_egress_policy_digest=(
-                canonical_fingerprint(_browser_egress_policy_payload())
+                str(
+                    cast(dict[str, object], claim_payload["input_reference"])[
+                        "request_queue_browser_egress_policy_digest"
+                    ]
+                )
                 if activation is not None
                 and activation.request_queue_browser_enabled
+                and isinstance(claim_payload.get("input_reference"), dict)
+                and isinstance(
+                    cast(dict[str, object], claim_payload["input_reference"]).get(
+                        "request_queue_browser_egress_policy_digest"
+                    ),
+                    str,
+                )
                 else None
             ),
             request_queue_dataset_enabled=(
-                activation is not None
-                and activation.request_queue_dataset_enabled
+                activation is not None and activation.request_queue_dataset_enabled
             ),
             request_queue_key_value_store_enabled=(
                 activation is not None
                 and activation.request_queue_key_value_store_enabled
+            ),
+            project_egress_policy_binding_digest=(
+                activation.project_egress_policy_binding_digest
+                if activation is not None
+                else None
             ),
         )
         lease.payload_digest = canonical_fingerprint(claim_payload)
@@ -2182,18 +2283,14 @@ async def claim_work(
                 "worker_max_concurrency": worker.max_concurrency,
                 "project_active_before_claim": active_project_count,
                 "project_max_active_leases": project.max_active_leases,
-                "project_slot_consumed": (
-                    kind in PROJECT_EXECUTION_SLOT_KINDS
-                ),
+                "project_slot_consumed": (kind in PROJECT_EXECUTION_SLOT_KINDS),
                 "execution_enabled": execution_enabled,
                 "sandbox_attestation_digest": worker.sandbox_attestation_digest,
                 "activation_mode": (
                     activation.mode if activation is not None else "disabled"
                 ),
                 "activation_agent_version_id": (
-                    str(activation.agent_version_id)
-                    if activation is not None
-                    else None
+                    str(activation.agent_version_id) if activation is not None else None
                 ),
             },
         )
@@ -2244,8 +2341,7 @@ async def append_worker_dataset_items(
     snapshot = dict(lease.payload_snapshot)
     activation = snapshot.get("activation")
     dataset_write_enabled = (
-        isinstance(activation, dict)
-        and activation.get("dataset_write_enabled") is True
+        isinstance(activation, dict) and activation.get("dataset_write_enabled") is True
     )
     expected_capability = _dataset_append_capability(
         worker,
@@ -2258,8 +2354,7 @@ async def append_worker_dataset_items(
     )
     if (
         expected_capability is None
-        or snapshot.get("dataset_append_capability")
-        != expected_capability
+        or snapshot.get("dataset_append_capability") != expected_capability
         or str(snapshot.get("run_id", "")) != str(lease.run_id)
     ):
         raise ApiError(
@@ -2277,10 +2372,8 @@ async def append_worker_dataset_items(
     )
     if (
         run is None
-        or str(run.agent_version_id)
-        != settings.sandbox_canary_agent_version_id.strip()
-        or str(snapshot.get("agent_version_id", ""))
-        != str(run.agent_version_id)
+        or str(run.agent_version_id) != settings.sandbox_canary_agent_version_id.strip()
+        or str(snapshot.get("agent_version_id", "")) != str(run.agent_version_id)
     ):
         raise ApiError(
             status_code=404,
@@ -2327,9 +2420,7 @@ async def renew_lease(
     request_id: str,
 ) -> ExecutionLeaseSummary:
     now = datetime.now(UTC)
-    requested = max(now, lease.expires_at) + timedelta(
-        seconds=payload.extend_seconds
-    )
+    requested = max(now, lease.expires_at) + timedelta(seconds=payload.extend_seconds)
     extended_until = clamp_lease_expiry(
         proposed=requested,
         claimed_at=lease.claimed_at,
@@ -2413,9 +2504,7 @@ async def update_lease_status(
                 message="The Run is awaiting cancellation convergence.",
             )
         allowed = (
-            {"STARTING", "RUNNING"}
-            if lease.work_kind == "RUN_START"
-            else {"ABORTING"}
+            {"STARTING", "RUNNING"} if lease.work_kind == "RUN_START" else {"ABORTING"}
         )
         if payload.status not in allowed:
             raise ApiError(
@@ -2695,11 +2784,9 @@ def _validate_activation_provenance(
                 code="ARTIFACT_LINEAGE_INVALID",
                 message="Build lease source lineage is unavailable.",
             )
-        if (
-            provenance.get("source_sha256") != source.get("sha256_digest")
-            or provenance.get("agent_version_id")
-            != snapshot.get("agent_version_id")
-        ):
+        if provenance.get("source_sha256") != source.get(
+            "sha256_digest"
+        ) or provenance.get("agent_version_id") != snapshot.get("agent_version_id"):
             raise ApiError(
                 status_code=422,
                 code="ARTIFACT_LINEAGE_INVALID",
@@ -2715,10 +2802,9 @@ def _validate_activation_provenance(
                 code="ARTIFACT_LINEAGE_INVALID",
                 message="Run lease image lineage is unavailable.",
             )
-        if (
-            provenance.get("image_digest") != artifact.get("digest")
-            or provenance.get("run_id") != snapshot.get("run_id")
-        ):
+        if provenance.get("image_digest") != artifact.get("digest") or provenance.get(
+            "run_id"
+        ) != snapshot.get("run_id"):
             raise ApiError(
                 status_code=422,
                 code="ARTIFACT_LINEAGE_INVALID",
@@ -2845,9 +2931,7 @@ async def _source_for_lease(
         )
         return source
     source = await session.scalar(
-        select(RunCommandOutbox).where(
-            RunCommandOutbox.id == lease.source_outbox_id
-        )
+        select(RunCommandOutbox).where(RunCommandOutbox.id == lease.source_outbox_id)
     )
     return cast(RunCommandOutbox | None, source)
 
@@ -2862,9 +2946,7 @@ async def complete_lease(
 ) -> ExecutionLeaseSummary:
     now = datetime.now(UTC)
     if lease.work_kind == "RUN_START" and lease.run_id is not None:
-        cancelling_run = await session.scalar(
-            select(Run).where(Run.id == lease.run_id)
-        )
+        cancelling_run = await session.scalar(select(Run).where(Run.id == lease.run_id))
         if (
             cancelling_run is not None
             and cancelling_run.cancel_requested_at is not None
@@ -2904,9 +2986,7 @@ async def complete_lease(
     )
     next_attempt_at: datetime | None = None
     registrations = (
-        [payload.artifact]
-        if payload.artifact is not None
-        else list(payload.artifacts)
+        [payload.artifact] if payload.artifact is not None else list(payload.artifacts)
     )
     registered: list[ExecutionArtifact] = []
     for registration in registrations:
@@ -2967,9 +3047,7 @@ async def complete_lease(
                     message="A passed, available container image artifact is required.",
                 )
             build.status = "SUCCEEDED"
-            build.artifact_digest = (
-                f"{artifact.digest_algorithm}:{artifact.digest}"
-            )
+            build.artifact_digest = f"{artifact.digest_algorithm}:{artifact.digest}"
             build.error_code = None
             build.error_message = None
         elif payload.outcome == "TIMED_OUT":
@@ -3068,9 +3146,7 @@ async def complete_lease(
             payload={"previous_status": previous, "status": run.status},
         )
         terminal_type = (
-            "run.completed"
-            if run.status in {"SUCCEEDED", "ABORTED"}
-            else "run.failed"
+            "run.completed" if run.status in {"SUCCEEDED", "ABORTED"} else "run.failed"
         )
         await append_run_event(
             session,
@@ -3083,19 +3159,13 @@ async def complete_lease(
             },
         )
         lease.status = (
-            "COMPLETED"
-            if run.status in {"SUCCEEDED", "ABORTED"}
-            else "FAILED"
+            "COMPLETED" if run.status in {"SUCCEEDED", "ABORTED"} else "FAILED"
         )
         lease.completed_at = now
         lease.failure_code = run.failure_code
         lease.failure_summary = run.failure_summary
         if source is not None:
-            source.status = (
-                "DELIVERED"
-                if lease.status == "COMPLETED"
-                else "FAILED"
-            )
+            source.status = "DELIVERED" if lease.status == "COMPLETED" else "FAILED"
             source.delivered_at = now
             source.last_error_code = run.failure_code
             source.updated_at = now
@@ -3129,9 +3199,7 @@ async def complete_lease(
             "outcome": payload.outcome,
             "retryable": retry,
             "next_attempt_at": (
-                next_attempt_at.isoformat()
-                if next_attempt_at is not None
-                else None
+                next_attempt_at.isoformat() if next_attempt_at is not None else None
             ),
             "artifact_id": str(artifact.id) if artifact is not None else None,
         },
@@ -3211,11 +3279,11 @@ async def issue_secret_envelope(
             message="The immutable Agent version was not found.",
         )
     declared_raw = version.manifest.get("secrets", [])
-    declared = {
-        str(name)
-        for name in declared_raw
-        if isinstance(name, str)
-    } if isinstance(declared_raw, list) else set()
+    declared = (
+        {str(name) for name in declared_raw if isinstance(name, str)}
+        if isinstance(declared_raw, list)
+        else set()
+    )
     requested = set(payload.names)
     if not requested.issubset(declared):
         raise ApiError(
@@ -3224,9 +3292,7 @@ async def issue_secret_envelope(
             message="The Agent version did not declare every requested secret.",
         )
     try:
-        worker_public_key = decode_worker_public_key(
-            payload.worker_public_key_b64
-        )
+        worker_public_key = decode_worker_public_key(payload.worker_public_key_b64)
     except ValueError as exc:
         raise ApiError(
             status_code=422,
@@ -3383,9 +3449,9 @@ async def issue_secret_envelope(
     return SecretEnvelopeResponse(
         grant_id=grant.id,
         algorithm=grant.algorithm,
-        ephemeral_public_key_b64=base64.b64encode(
-            grant.ephemeral_public_key
-        ).decode("ascii"),
+        ephemeral_public_key_b64=base64.b64encode(grant.ephemeral_public_key).decode(
+            "ascii"
+        ),
         nonce_b64=base64.b64encode(grant.nonce).decode("ascii"),
         ciphertext_b64=base64.b64encode(grant.ciphertext).decode("ascii"),
         expires_at=grant.expires_at,
@@ -3401,9 +3467,7 @@ async def list_project_leases(
     cursor: CursorPosition | None,
     limit: int,
 ) -> tuple[list[ExecutionLease], bool]:
-    statement = select(ExecutionLease).where(
-        ExecutionLease.project_id == project_id
-    )
+    statement = select(ExecutionLease).where(ExecutionLease.project_id == project_id)
     if cursor is not None:
         statement = statement.where(
             or_(

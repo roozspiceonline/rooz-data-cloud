@@ -408,7 +408,8 @@ def main() -> None:
     for marker in [
         "_egress_policy_payload",
         "sandbox_canary_web_egress_enabled",
-        "canonical_fingerprint(_egress_policy_payload())",
+        "canonical_fingerprint(effective_egress_policy)",
+        "_bound_egress_policy",
         '"brokered_web_egress": network == "web-egress"',
     ]:
         require(marker in service, "control-plane guard missing: " + marker)

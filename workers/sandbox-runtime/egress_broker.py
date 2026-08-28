@@ -119,11 +119,7 @@ def _decode_body(
         charset = "utf-8"
         for item in content_type.split(";")[1:]:
             name, separator, value = item.strip().partition("=")
-            if (
-                separator
-                and name.casefold() == "charset"
-                and value.strip()
-            ):
+            if separator and name.casefold() == "charset" and value.strip():
                 charset = value.strip().strip('"').strip("'")
                 break
         try:
@@ -198,9 +194,9 @@ def broker_validated_resource_once(
     connection_factory: ConnectionFactory = _default_connection,
 ) -> tuple[int, dict[str, str], bytes, str | None]:
     normalized_method = method.strip().upper()
-    if normalized_method not in {"GET", "HEAD"}:
+    if normalized_method not in policy.allowed_methods:
         raise EgressPolicyError(
-            "Validated broker request permits GET and HEAD only."
+            "Validated broker request method is not allowed by policy."
         )
     return _request_once(
         target=target,
@@ -220,6 +216,11 @@ def _fetch(
     connection_factory: ConnectionFactory,
     budget: dict[str, int],
 ) -> BrokerResponse:
+    normalized_method = method.strip().upper()
+    if normalized_method not in policy.allowed_methods:
+        raise EgressPolicyError(
+            "Broker request method is not allowed by the active policy."
+        )
     current_url = url
     redirect_count = 0
 
@@ -231,29 +232,23 @@ def _fetch(
 
         status, headers, body, location = _request_once(
             target=target,
-            method=method,
+            method=normalized_method,
             policy=policy,
             connection_factory=connection_factory,
         )
 
         if status in _REDIRECT_STATUSES:
             if not location:
-                raise EgressPolicyError(
-                    "Redirect response did not include Location."
-                )
+                raise EgressPolicyError("Redirect response did not include Location.")
             if redirect_count >= policy.max_redirects:
-                raise EgressPolicyError(
-                    "Web-egress redirect budget was exceeded."
-                )
+                raise EgressPolicyError("Web-egress redirect budget was exceeded.")
             redirect_count += 1
             current_url = urljoin(target.url, location)
             continue
 
         budget["bytes"] += len(body)
         if budget["bytes"] > policy.max_total_bytes:
-            raise EgressPolicyError(
-                "Web-egress total byte budget was exceeded."
-            )
+            raise EgressPolicyError("Web-egress total byte budget was exceeded.")
 
         content_type = headers.get("content-type", "")
         body_text, body_base64 = _decode_body(body, content_type)
@@ -282,9 +277,7 @@ def broker_web_requests(
     if not isinstance(raw_requests, list):
         raise EgressPolicyError("_rdc_web_requests must be a list.")
     if len(raw_requests) > policy.max_requests:
-        raise EgressPolicyError(
-            "Requested web fetches exceed the request budget."
-        )
+        raise EgressPolicyError("Requested web fetches exceed the request budget.")
 
     budget = {"requests": 0, "bytes": 0}
     responses: list[dict[str, object]] = []

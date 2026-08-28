@@ -13,6 +13,11 @@ from ..core.config import get_settings
 from ..core.errors import ApiError
 from ..core.pagination import CursorPosition
 from ..core.security import canonical_fingerprint
+from ..egress_policy_protocol import (
+    EgressPolicyProtocolError,
+    ValidatedEgressPolicy,
+    validate_egress_policy,
+)
 from ..kv_worker_protocol import (
     KVWorkerProtocolError,
     validate_kv_read_request,
@@ -20,6 +25,8 @@ from ..kv_worker_protocol import (
 from ..models import (
     AgentVersion,
     Build,
+    EgressPolicy,
+    EgressPolicyRevision,
     IdempotencyRecord,
     RequestQueue,
     Run,
@@ -122,9 +129,7 @@ def json_run_snapshot(record: Run) -> dict[str, object]:
             else None
         ),
         "cancel_deadline_at": (
-            record.cancel_deadline_at.isoformat()
-            if record.cancel_deadline_at
-            else None
+            record.cancel_deadline_at.isoformat() if record.cancel_deadline_at else None
         ),
         "created_at": record.created_at.isoformat(),
         "updated_at": record.updated_at.isoformat(),
@@ -205,17 +210,13 @@ def _web_egress_policy_payload() -> dict[str, object]:
         "mode": "brokered",
         "allowed_schemes": ["https"],
         "allowed_methods": ["GET", "HEAD"],
-        "allowed_hosts": list(
-            settings.sandbox_canary_web_egress_allowed_hosts
-        ),
+        "allowed_hosts": list(settings.sandbox_canary_web_egress_allowed_hosts),
         "deny_ip_literals": True,
         "require_global_dns": True,
         "revalidate_redirects": True,
         "container_network": "none",
         "max_requests": settings.sandbox_canary_web_egress_max_requests,
-        "max_response_bytes": (
-            settings.sandbox_canary_web_egress_max_response_bytes
-        ),
+        "max_response_bytes": (settings.sandbox_canary_web_egress_max_response_bytes),
         "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
         "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
         "connect_timeout_seconds": (
@@ -227,13 +228,200 @@ def _web_egress_policy_payload() -> dict[str, object]:
     }
 
 
-def _browser_egress_policy_payload() -> dict[str, object]:
+def _revision_runtime_egress_policy_payload(
+    policy: ValidatedEgressPolicy,
+) -> dict[str, object]:
+    return {
+        "schema_version": "rdc.egress/v1",
+        "mode": "brokered",
+        "allowed_schemes": ["https"],
+        "allowed_methods": policy.allowed_methods,
+        "allowed_hosts": policy.allowed_hosts,
+        "deny_ip_literals": True,
+        "require_global_dns": True,
+        "revalidate_redirects": True,
+        "container_network": "none",
+        "max_requests": policy.max_requests,
+        "max_response_bytes": policy.max_response_bytes,
+        "max_total_bytes": policy.max_total_bytes,
+        "max_redirects": policy.max_redirects,
+        "connect_timeout_seconds": policy.connect_timeout_seconds,
+        "request_timeout_seconds": policy.request_timeout_seconds,
+    }
+
+
+def _revision_within_canary_ceiling(policy: ValidatedEgressPolicy) -> bool:
     settings = get_settings()
+    return (
+        set(policy.allowed_hosts)
+        <= {
+            host.strip().rstrip(".").casefold()
+            for host in settings.sandbox_canary_web_egress_allowed_hosts
+        }
+        and set(policy.allowed_methods) <= {"GET", "HEAD"}
+        and policy.max_requests <= settings.sandbox_canary_web_egress_max_requests
+        and policy.max_response_bytes
+        <= settings.sandbox_canary_web_egress_max_response_bytes
+        and policy.max_total_bytes <= settings.sandbox_canary_web_egress_max_total_bytes
+        and policy.max_redirects <= settings.sandbox_canary_web_egress_max_redirects
+        and policy.connect_timeout_seconds
+        <= settings.sandbox_canary_web_egress_connect_timeout_seconds
+        and policy.request_timeout_seconds
+        <= settings.sandbox_canary_web_egress_request_timeout_seconds
+    )
+
+
+async def _resolve_run_egress_policy(
+    session: AsyncSession,
+    *,
+    policy_id: UUID,
+    organization_id: UUID,
+    project_id: UUID,
+) -> tuple[dict[str, object], dict[str, object]]:
+    policy = await session.scalar(
+        select(EgressPolicy)
+        .where(
+            EgressPolicy.id == policy_id,
+            EgressPolicy.organization_id == organization_id,
+            EgressPolicy.project_id == project_id,
+            EgressPolicy.status == "ACTIVE",
+            EgressPolicy.active_revision_id.is_not(None),
+        )
+        .with_for_update()
+    )
+    if policy is None or policy.active_revision_id is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+    revision = await session.scalar(
+        select(EgressPolicyRevision).where(
+            EgressPolicyRevision.id == policy.active_revision_id,
+            EgressPolicyRevision.policy_id == policy.id,
+            EgressPolicyRevision.organization_id == organization_id,
+            EgressPolicyRevision.project_id == project_id,
+        )
+    )
+    if revision is None:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_POLICY_ACTIVE_REVISION_INVALID",
+            message="The active egress-policy revision is unavailable.",
+        )
+    if revision.credential_secret_id is not None:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_POLICY_CREDENTIAL_DELIVERY_UNAVAILABLE",
+            message=(
+                "Credential-bound egress policies are not eligible for "
+                "runtime binding until isolated credential delivery is enabled."
+            ),
+        )
+    try:
+        validated = validate_egress_policy(
+            allowed_hosts=list(revision.allowed_hosts),
+            allowed_methods=list(revision.allowed_methods),
+            max_requests=revision.max_requests,
+            max_response_bytes=revision.max_response_bytes,
+            max_total_bytes=revision.max_total_bytes,
+            max_redirects=revision.max_redirects,
+            connect_timeout_seconds=revision.connect_timeout_seconds,
+            request_timeout_seconds=revision.request_timeout_seconds,
+        )
+    except EgressPolicyProtocolError as exc:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_POLICY_ACTIVE_REVISION_INVALID",
+            message="The active egress-policy revision failed validation.",
+        ) from exc
+    if validated.policy_digest != revision.policy_digest:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_POLICY_ACTIVE_REVISION_INVALID",
+            message="The active egress-policy revision digest is invalid.",
+        )
+    if not _revision_within_canary_ceiling(validated):
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_POLICY_EXCEEDS_CANARY_CEILING",
+            message="The active egress policy exceeds the runtime canary ceiling.",
+        )
+    runtime_policy = _revision_runtime_egress_policy_payload(validated)
+    receipt_without_digest: dict[str, object] = {
+        "schema_version": "rdc.run-egress-policy-receipt/v1",
+        "policy_id": str(policy.id),
+        "revision_id": str(revision.id),
+        "revision_number": revision.revision_number,
+        "policy_digest": revision.policy_digest,
+        "runtime_policy_digest": canonical_fingerprint(runtime_policy),
+        "credential_configured": False,
+    }
+    receipt = {
+        **receipt_without_digest,
+        "binding_digest": canonical_fingerprint(receipt_without_digest),
+    }
+    return runtime_policy, receipt
+
+
+def _validate_bound_egress_intent(
+    payload: CreateRunRequest,
+    runtime_policy: dict[str, object],
+) -> None:
+    required_methods: set[str] = set()
+    target_urls: list[str] = []
+    if payload.web_fetch is not None:
+        required_methods.update(request.method for request in payload.web_fetch.requests)
+        target_urls.extend(request.url for request in payload.web_fetch.requests)
+    elif payload.browser is not None:
+        required_methods.add("GET")
+        target_urls.append(payload.browser.start_url)
+    elif payload.browser_navigation is not None:
+        required_methods.add("GET")
+        target_urls.extend(
+            str(step.url)
+            for step in payload.browser_navigation.steps
+            if step.type == "goto"
+        )
+    elif payload.request_queue is not None:
+        required_methods.add("GET")
+    allowed_methods = set(cast(list[str], runtime_policy["allowed_methods"]))
+    allowed_hosts = set(cast(list[str], runtime_policy["allowed_hosts"]))
+    normalized_targets: set[str] = set()
+    try:
+        for url in target_urls:
+            hostname = urlsplit(url).hostname
+            if hostname is None:
+                raise ValueError
+            normalized_targets.add(
+                hostname.strip().rstrip(".").casefold().encode("idna").decode("ascii")
+            )
+    except (UnicodeError, ValueError) as exc:
+        raise ApiError(
+            status_code=422,
+            code="EGRESS_POLICY_INTENT_DENIED",
+            message="The Run intent is not authorized by the active egress policy.",
+        ) from exc
+    if (
+        not required_methods <= allowed_methods
+        or not normalized_targets <= allowed_hosts
+    ):
+        raise ApiError(
+            status_code=422,
+            code="EGRESS_POLICY_INTENT_DENIED",
+            message="The Run intent is not authorized by the active egress policy.",
+        )
+
+
+def _browser_egress_policy_payload(
+    runtime_policy: dict[str, object] | None = None,
+) -> dict[str, object]:
+    effective = runtime_policy or _web_egress_policy_payload()
     return {
         "schema_version": "rdc.browser-egress-policy/v1",
         "mode": "gateway-live-canary",
         "allowed_schemes": ["https"],
-        "allowed_methods": ["GET", "HEAD"],
+        "allowed_methods": effective["allowed_methods"],
         "allowed_resource_types": [
             "document",
             "fetch",
@@ -243,9 +431,7 @@ def _browser_egress_policy_payload() -> dict[str, object]:
             "stylesheet",
             "xhr",
         ],
-        "allowed_hosts": sorted(
-            settings.sandbox_canary_web_egress_allowed_hosts
-        ),
+        "allowed_hosts": effective["allowed_hosts"],
         "deny_ip_literals": True,
         "require_global_dns": True,
         "pin_validated_address": True,
@@ -262,18 +448,12 @@ def _browser_egress_policy_payload() -> dict[str, object]:
         "webrtc_enabled": False,
         "proxy_override_enabled": False,
         "persistent_cookies_enabled": False,
-        "max_requests": settings.sandbox_canary_web_egress_max_requests,
-        "max_resource_bytes": (
-            settings.sandbox_canary_web_egress_max_response_bytes
-        ),
-        "max_total_bytes": settings.sandbox_canary_web_egress_max_total_bytes,
-        "max_redirects": settings.sandbox_canary_web_egress_max_redirects,
-        "connect_timeout_seconds": (
-            settings.sandbox_canary_web_egress_connect_timeout_seconds
-        ),
-        "request_timeout_seconds": (
-            settings.sandbox_canary_web_egress_request_timeout_seconds
-        ),
+        "max_requests": effective["max_requests"],
+        "max_resource_bytes": effective["max_response_bytes"],
+        "max_total_bytes": effective["max_total_bytes"],
+        "max_redirects": effective["max_redirects"],
+        "connect_timeout_seconds": effective["connect_timeout_seconds"],
+        "request_timeout_seconds": effective["request_timeout_seconds"],
         "transport_wired": True,
         "browser_network": "none",
     }
@@ -470,10 +650,7 @@ def _normalize_browser_navigation_hostname(value: str) -> str:
             or len(label) > 63
             or label.startswith("-")
             or label.endswith("-")
-            or not all(
-                character.isalnum() or character == "-"
-                for character in label
-            )
+            or not all(character.isalnum() or character == "-" for character in label)
             for label in labels
         )
     ):
@@ -499,14 +676,13 @@ def _browser_navigation_receipt(
             status_code=409,
             code="BROWSER_NAVIGATION_POLICY_UNAVAILABLE",
             message=(
-                "Browser navigation intent requires an operator hostname "
-                "allowlist."
+                "Browser navigation intent requires an operator hostname allowlist."
             ),
         )
     allowed_hosts = {
-        _normalize_browser_navigation_hostname(str(host))
-        for host in allowed_hosts_raw
+        _normalize_browser_navigation_hostname(str(host)) for host in allowed_hosts_raw
     }
+
     def require_policy_int(name: str) -> int:
         value = browser_policy.get(name)
         if isinstance(value, bool) or not isinstance(value, int):
@@ -514,17 +690,14 @@ def _browser_navigation_receipt(
                 status_code=409,
                 code="BROWSER_NAVIGATION_POLICY_UNAVAILABLE",
                 message=(
-                    "Browser navigation policy field is not a valid integer: "
-                    + name
+                    "Browser navigation policy field is not a valid integer: " + name
                 ),
             )
         return value
 
     max_pages = require_policy_int("max_pages")
     max_actions = require_policy_int("max_actions")
-    navigation_timeout_seconds = require_policy_int(
-        "navigation_timeout_seconds"
-    )
+    navigation_timeout_seconds = require_policy_int("navigation_timeout_seconds")
     max_dom_bytes = require_policy_int("max_dom_bytes")
     navigation_timeout_ms = navigation_timeout_seconds * 1000
 
@@ -561,16 +734,13 @@ def _browser_navigation_receipt(
                     code="BROWSER_NAVIGATION_POLICY_REJECTED",
                     message="Browser goto URL requires a hostname.",
                 )
-            hostname = _normalize_browser_navigation_hostname(
-                parsed.hostname
-            )
+            hostname = _normalize_browser_navigation_hostname(parsed.hostname)
             if hostname not in allowed_hosts:
                 raise ApiError(
                     status_code=422,
                     code="BROWSER_NAVIGATION_HOST_NOT_ALLOWED",
                     message=(
-                        "Browser navigation hostname is not "
-                        "operator-allowlisted."
+                        "Browser navigation hostname is not operator-allowlisted."
                     ),
                 )
         elif step_type == "wait_for_selector":
@@ -583,9 +753,7 @@ def _browser_navigation_receipt(
                 raise ApiError(
                     status_code=422,
                     code="BROWSER_NAVIGATION_POLICY_REJECTED",
-                    message=(
-                        "Browser selector wait exceeds operator policy."
-                    ),
+                    message=("Browser selector wait exceeds operator policy."),
                 )
         elif step_type == "extract_html":
             max_bytes = step.get("max_bytes")
@@ -597,9 +765,7 @@ def _browser_navigation_receipt(
                 raise ApiError(
                     status_code=422,
                     code="BROWSER_NAVIGATION_POLICY_REJECTED",
-                    message=(
-                        "Browser HTML extraction exceeds operator policy."
-                    ),
+                    message=("Browser HTML extraction exceeds operator policy."),
                 )
 
     if not 1 <= goto_count <= max_pages:
@@ -620,7 +786,6 @@ def _browser_navigation_receipt(
         "browser_network": "none",
         "browser_egress_gateway_required": True,
     }
-
 
 
 def _manifest_resource(version: AgentVersion, key: str) -> int:
@@ -663,9 +828,7 @@ def _runtime_configuration(
             raise ApiError(
                 status_code=422,
                 code="RUNTIME_LIMIT_EXCEEDED",
-                message=(
-                    f"Requested {key} exceeds the immutable Agent version limit."
-                ),
+                message=(f"Requested {key} exceeds the immutable Agent version limit."),
             )
         effective[key] = value
     return effective
@@ -796,9 +959,7 @@ async def create_run(
         else None
     )
     browser = (
-        payload.browser.model_dump(mode="json")
-        if payload.browser is not None
-        else None
+        payload.browser.model_dump(mode="json") if payload.browser is not None else None
     )
     browser_navigation = (
         payload.browser_navigation.model_dump(mode="json")
@@ -810,13 +971,33 @@ async def create_run(
         if payload.request_queue is not None
         else None
     )
+    project_egress_policy: dict[str, object] | None = None
+    project_egress_policy_receipt: dict[str, object] | None = None
+    if payload.egress_policy is not None:
+        if _manifest_network(version) != "web-egress":
+            raise ApiError(
+                status_code=422,
+                code="EGRESS_POLICY_CAPABILITY_REQUIRED",
+                message=(
+                    "An egress-policy binding requires immutable network=web-egress."
+                ),
+            )
+        (
+            project_egress_policy,
+            project_egress_policy_receipt,
+        ) = await _resolve_run_egress_policy(
+            session,
+            policy_id=payload.egress_policy.policy_id,
+            organization_id=version.organization_id,
+            project_id=version.project_id,
+        )
+        _validate_bound_egress_intent(payload, project_egress_policy)
     if web_fetch is not None and _manifest_network(version) != "web-egress":
         raise ApiError(
             status_code=422,
             code="WEB_FETCH_CAPABILITY_REQUIRED",
             message=(
-                "This immutable Agent version does not declare "
-                "network=web-egress."
+                "This immutable Agent version does not declare network=web-egress."
             ),
         )
 
@@ -836,19 +1017,13 @@ async def create_run(
     if request_queue is not None:
         capabilities = version.manifest.get("capabilities")
         queue_network = (
-            capabilities.get("network")
-            if isinstance(capabilities, dict)
-            else None
+            capabilities.get("network") if isinstance(capabilities, dict) else None
         )
         queue_browser = (
-            capabilities.get("browser")
-            if isinstance(capabilities, dict)
-            else None
+            capabilities.get("browser") if isinstance(capabilities, dict) else None
         )
         queue_dataset = (
-            capabilities.get("dataset")
-            if isinstance(capabilities, dict)
-            else None
+            capabilities.get("dataset") if isinstance(capabilities, dict) else None
         )
         queue_key_value_store = (
             capabilities.get("keyValueStore")
@@ -892,13 +1067,15 @@ async def create_run(
                 request_queue_browser_policy
             )
             request_queue_browser_egress_policy = (
-                _browser_egress_policy_payload()
+                _browser_egress_policy_payload(project_egress_policy)
+                if project_egress_policy is not None
+                else _browser_egress_policy_payload()
             )
-            request_queue_browser_egress_policy_digest = (
-                canonical_fingerprint(request_queue_browser_egress_policy)
+            request_queue_browser_egress_policy_digest = canonical_fingerprint(
+                request_queue_browser_egress_policy
             )
-            request_queue_browser_live_canary = (
-                _request_queue_browser_canary_enabled(version)
+            request_queue_browser_live_canary = _request_queue_browser_canary_enabled(
+                version
             )
             queue_binding_receipt = {
                 "schema_version": "rdc.request-queue-binding-receipt/v3",
@@ -916,13 +1093,13 @@ async def create_run(
                 "direct_object_storage_access": False,
             }
         elif queue_network == "web-egress":
-            request_queue_egress_policy = _web_egress_policy_payload()
+            request_queue_egress_policy = (
+                project_egress_policy or _web_egress_policy_payload()
+            )
             request_queue_egress_policy_digest = canonical_fingerprint(
                 request_queue_egress_policy
             )
-            request_queue_http_live_canary = (
-                _request_queue_http_canary_enabled(version)
-            )
+            request_queue_http_live_canary = _request_queue_http_canary_enabled(version)
             queue_binding_receipt = {
                 "schema_version": "rdc.request-queue-binding-receipt/v2",
                 "binding_digest": canonical_fingerprint(request_queue),
@@ -945,8 +1122,8 @@ async def create_run(
                 "direct_object_storage_access": False,
             }
         if queue_dataset:
-            request_queue_dataset_live_canary = (
-                _request_queue_dataset_canary_enabled(version)
+            request_queue_dataset_live_canary = _request_queue_dataset_canary_enabled(
+                version
             )
             if queue_browser:
                 request_queue_browser_live_canary = (
@@ -958,8 +1135,7 @@ async def create_run(
                 )
             elif queue_network == "web-egress":
                 request_queue_http_live_canary = (
-                    request_queue_http_live_canary
-                    and request_queue_dataset_live_canary
+                    request_queue_http_live_canary and request_queue_dataset_live_canary
                 )
                 queue_binding_receipt["dispatch_enabled"] = (
                     request_queue_http_live_canary
@@ -1019,9 +1195,7 @@ async def create_run(
                     request_queue_http_live_canary
                 )
             request_queue_key_value_store_receipt = {
-                "schema_version": (
-                    "rdc.request-queue-key-value-store-receipt/v1"
-                ),
+                "schema_version": ("rdc.request-queue-key-value-store-receipt/v1"),
                 "queue_id": str(queue.id),
                 "agent_version_id": str(version.id),
                 "queue_binding_receipt_digest": canonical_fingerprint(
@@ -1066,20 +1240,20 @@ async def create_run(
         browser_policy = _browser_policy_payload()
         browser_policy_digest = canonical_fingerprint(browser_policy)
         if browser_navigation is not None:
-            browser_navigation_live_canary = (
-                _browser_navigation_live_canary_enabled(version)
+            browser_navigation_live_canary = _browser_navigation_live_canary_enabled(
+                version
             )
-            browser_egress_policy = _browser_egress_policy_payload()
-            browser_egress_policy_digest = canonical_fingerprint(
-                browser_egress_policy
+            browser_egress_policy = (
+                _browser_egress_policy_payload(project_egress_policy)
+                if project_egress_policy is not None
+                else _browser_egress_policy_payload()
             )
+            browser_egress_policy_digest = canonical_fingerprint(browser_egress_policy)
             browser_navigation_receipt = _browser_navigation_receipt(
                 browser_navigation,
                 browser_policy=browser_policy,
                 browser_policy_digest=browser_policy_digest,
-                browser_egress_policy_digest=(
-                    browser_egress_policy_digest
-                ),
+                browser_egress_policy_digest=(browser_egress_policy_digest),
                 execution_enabled=browser_navigation_live_canary,
             )
 
@@ -1096,9 +1270,7 @@ async def create_run(
             "browser_egress_policy_digest": browser_egress_policy_digest,
             "request_queue": request_queue,
             "queue_binding_receipt": queue_binding_receipt,
-            "request_queue_egress_policy_digest": (
-                request_queue_egress_policy_digest
-            ),
+            "request_queue_egress_policy_digest": (request_queue_egress_policy_digest),
             "request_queue_browser_policy_digest": (
                 request_queue_browser_policy_digest
             ),
@@ -1109,6 +1281,7 @@ async def create_run(
             "request_queue_key_value_store_receipt": (
                 request_queue_key_value_store_receipt
             ),
+            "project_egress_policy_receipt": project_egress_policy_receipt,
             "runtime": runtime,
         }
     )
@@ -1149,6 +1322,9 @@ async def create_run(
         "kind": "inline",
         "value": payload.input,
     }
+    if project_egress_policy is not None:
+        input_reference["project_egress_policy"] = project_egress_policy
+        input_reference["project_egress_policy_receipt"] = project_egress_policy_receipt
     if web_fetch is not None:
         input_reference["web_fetch"] = web_fetch
     if browser is not None:
@@ -1157,15 +1333,11 @@ async def create_run(
         input_reference["browser_policy_digest"] = browser_policy_digest
     if browser_navigation is not None:
         input_reference["browser_navigation"] = browser_navigation
-        input_reference["browser_navigation_receipt"] = (
-            browser_navigation_receipt
-        )
+        input_reference["browser_navigation_receipt"] = browser_navigation_receipt
         input_reference["browser_policy"] = browser_policy
         input_reference["browser_policy_digest"] = browser_policy_digest
         input_reference["browser_egress_policy"] = browser_egress_policy
-        input_reference["browser_egress_policy_digest"] = (
-            browser_egress_policy_digest
-        )
+        input_reference["browser_egress_policy_digest"] = browser_egress_policy_digest
     if request_queue is not None:
         input_reference["request_queue"] = request_queue
         input_reference["queue_binding_receipt"] = queue_binding_receipt
@@ -1178,9 +1350,7 @@ async def create_run(
                 request_queue_key_value_store_receipt
             )
         if request_queue_egress_policy is not None:
-            input_reference["request_queue_egress_policy"] = (
-                request_queue_egress_policy
-            )
+            input_reference["request_queue_egress_policy"] = request_queue_egress_policy
             input_reference["request_queue_egress_policy_digest"] = (
                 request_queue_egress_policy_digest
             )
@@ -1199,12 +1369,10 @@ async def create_run(
             )
 
     navigation_receipt_only = (
-        browser_navigation is not None
-        and not browser_navigation_live_canary
+        browser_navigation is not None and not browser_navigation_live_canary
     )
     queue_http_receipt_only = (
-        request_queue_egress_policy is not None
-        and not request_queue_http_live_canary
+        request_queue_egress_policy is not None and not request_queue_http_live_canary
     )
     queue_browser_receipt_only = (
         request_queue_browser_policy is not None
@@ -1216,8 +1384,7 @@ async def create_run(
     )
     queue_key_value_store_receipt_only = (
         request_queue_key_value_store_receipt is not None
-        and request_queue_key_value_store_receipt.get("dispatch_enabled")
-        is not True
+        and request_queue_key_value_store_receipt.get("dispatch_enabled") is not True
     )
     initial_status = (
         "DRAFT"
@@ -1345,24 +1512,18 @@ async def create_run(
                 if browser_navigation_receipt is not None
                 else None
             ),
-            "browser_navigation_dispatch_enabled": (
-                browser_navigation_live_canary
-            ),
+            "browser_navigation_dispatch_enabled": (browser_navigation_live_canary),
             "browser_egress_policy_digest": browser_egress_policy_digest,
             "browser_egress_transport_wired": True,
             "request_queue_id": (
-                request_queue["queue_id"]
-                if request_queue is not None
-                else None
+                request_queue["queue_id"] if request_queue is not None else None
             ),
             "request_queue_binding_digest": (
                 queue_binding_receipt["binding_digest"]
                 if queue_binding_receipt is not None
                 else None
             ),
-            "request_queue_http_dispatch_enabled": (
-                request_queue_http_live_canary
-            ),
+            "request_queue_http_dispatch_enabled": (request_queue_http_live_canary),
             "request_queue_browser_dispatch_enabled": (
                 request_queue_browser_live_canary
             ),
@@ -1377,9 +1538,7 @@ async def create_run(
             ),
             "request_queue_key_value_store_dispatch_enabled": (
                 request_queue_key_value_store_receipt is not None
-                and request_queue_key_value_store_receipt.get(
-                    "dispatch_enabled"
-                )
+                and request_queue_key_value_store_receipt.get("dispatch_enabled")
                 is True
             ),
             "request_queue_key_value_store_receipt_digest": (
@@ -1387,14 +1546,17 @@ async def create_run(
                 if request_queue_key_value_store_receipt is not None
                 else None
             ),
-            "request_queue_egress_policy_digest": (
-                request_queue_egress_policy_digest
-            ),
+            "request_queue_egress_policy_digest": (request_queue_egress_policy_digest),
             "request_queue_browser_policy_digest": (
                 request_queue_browser_policy_digest
             ),
             "request_queue_browser_egress_policy_digest": (
                 request_queue_browser_egress_policy_digest
+            ),
+            "project_egress_policy_binding_digest": (
+                project_egress_policy_receipt["binding_digest"]
+                if project_egress_policy_receipt is not None
+                else None
             ),
         },
     )

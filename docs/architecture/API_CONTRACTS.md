@@ -1099,7 +1099,7 @@ idempotently appends the Agent's bounded `rdc.dataset-append/v1` output before
 completing the Queue claim. No Agent or Chromium database/object credentials
 are introduced.
 
-## Egress policy metadata
+## Egress policy metadata and runtime binding
 
 Authenticated Project routes create and list tenant policies; policy routes
 read metadata, append immutable revisions, activate an exact revision and
@@ -1107,5 +1107,14 @@ disable a policy. Creation requires `Idempotency-Key`. Mutation requests use an
 `expected_version` and return 409 on stale state. Policy specifications admit
 exact normalized HTTPS hostnames, `GET`/`HEAD`, bounded budgets and an optional
 same-Project secret reference. Revision responses expose
-`credential_configured`, never a secret identifier or value. Live worker and
-broker consumption is not part of this contract increment.
+`credential_configured`, never a secret identifier or value.
+
+An eligible Run may additionally carry only
+`egress_policy={schema_version: rdc.run-egress-policy/v1, policy_id}`. The
+server derives tenancy from the immutable Agent version, row-locks the ACTIVE
+policy and snapshots its exact current revision into
+`rdc.run-egress-policy-receipt/v1`. The binding digest is repeated in the
+sandbox activation and, for Queue acquisition, the lease-scoped
+`rdc.request-queue-worker-capability/v6`. Static worker canary configuration is
+always a maximum host/method/budget ceiling. Credential-bound revisions are
+not dispatchable until isolated credential delivery is implemented.

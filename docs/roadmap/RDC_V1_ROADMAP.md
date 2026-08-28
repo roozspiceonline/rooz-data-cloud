@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Tenant policy metadata, immutable revisions, activation/disable lifecycle, credential references and RLS implemented | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable ACTIVE revision binding implemented across Run lineage, activation, Queue capabilities and trusted worker/broker; credential delivery remains | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -73,13 +73,19 @@ row-locked activation and disable transitions select an exact revision;
 credential material remains in write-only Project secrets and API responses
 expose only whether a reference is configured. PostgreSQL RLS and reference
 triggers independently enforce organization, Project, revision and secret
-tenancy. Live Run/worker binding, credential delivery/rotation and broker
-enforcement remain active work and the existing canary allowlist is unchanged.
+tenancy. The second increment accepts only a policy resource reference on
+eligible Run creation, row-locks and resolves the current ACTIVE immutable
+revision, and persists canonical revision/runtime digests. The same binding
+digest reaches activation and Queue v6 worker capabilities; the trusted worker
+independently reconstructs it and the broker enforces its host, method and
+budget subset. The static canary remains an additional maximum ceiling.
+Credential-bound policies remain fail-closed and no secret material reaches
+Agent or Chromium.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: bind active revisions to Runs/workers and broker enforcement;
-   implement credential delivery/rotation without plaintext exposure.
+1. Proxy/egress: implement isolated credential delivery/rotation and
+   revocation convergence without plaintext exposure.
 2. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
 3. Observability: structured run/worker logs, diagnostics, metrics and safe
