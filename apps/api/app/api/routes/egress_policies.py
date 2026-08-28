@@ -18,6 +18,7 @@ from ...egress_policy_schemas import (
     CreateEgressPolicyRevisionRequest,
     DisableEgressPolicyRequest,
 )
+from ...services.egress_health import summarize_egress_health
 from ...services.egress_policies import (
     activate_egress_policy,
     create_egress_policy,
@@ -45,6 +46,21 @@ def _actor(context: AuthContext) -> tuple[str, str]:
             raise RuntimeError("API-key context is missing an API-key ID")
         return "api_key", str(context.principal.api_key_id)
     return "user", str(context.user.id)
+
+
+@router.get("/projects/{project_id}/egress-health/summary")
+async def get_egress_health_summary(
+    request: Request,
+    access: Annotated[ProjectAccess, Depends(require_project_permission("egress.read"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    window_hours: Annotated[int, Query(ge=1, le=24)] = 1,
+) -> dict[str, object]:
+    result = await summarize_egress_health(
+        db,
+        project_id=access.project.id,
+        window_hours=window_hours,
+    )
+    return success_payload(request, result)
 
 
 @router.post("/projects/{project_id}/egress-policies", status_code=status.HTTP_201_CREATED)

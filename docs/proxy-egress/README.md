@@ -27,12 +27,24 @@ Public endpoints are:
 - `GET/POST /api/v1/egress-policies/{policy_id}/revisions`
 - `POST /api/v1/egress-policies/{policy_id}/activate`
 - `POST /api/v1/egress-policies/{policy_id}/disable`
+- `GET /api/v1/projects/{project_id}/egress-health/summary`
 
 Policy and revision list cursors are signed and bound to the exact Project,
 status filter or policy resource; both collections are page-bounded.
 Organization and Project ownership always come from authenticated resources,
 never request bodies. `egress.create`, `egress.read` and `egress.update`
 permissions apply to session and scoped API-key principals.
+
+Lease-authenticated workers may append one immutable health observation through
+`POST /internal/v1/leases/{lease_id}/egress-health-observations`. The body
+contains only a client observation UUID and the bounded provider-neutral
+evidence schema. Organization, Project, Run, lease, worker, outcome and retry
+classification are server-derived. The `(lease, observation ID)` key is
+idempotent: an exact replay returns the original row and changed evidence
+returns `EGRESS_HEALTH_REPLAY_CONFLICT`. Targets, response content, credentials,
+provider identity and route-selection instructions are not accepted or stored.
+The public summary is permission-checked, tenant-RLS protected and accepts only
+a 1–24 hour aggregate window; it never returns raw evidence or per-Run rows.
 
 Eligible Run requests may supply only
 `egress_policy: {schema_version: rdc.run-egress-policy/v1, policy_id: ...}`.

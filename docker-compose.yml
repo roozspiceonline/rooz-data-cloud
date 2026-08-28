@@ -10,7 +10,9 @@ services:
     ports:
       - "127.0.0.1:${RDC_POSTGRES_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # PostgreSQL 18 stores clusters under a major-version directory and
+      # requires the volume at the parent for safe pg_upgrade boundaries.
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test:
         [

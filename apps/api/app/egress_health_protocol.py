@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -47,6 +49,23 @@ class EgressHealthEvidence(BaseModel):
         ):
             raise ValueError("Transport failures cannot carry HTTP evidence.")
         return self
+
+
+class EgressHealthObservationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    observation_id: UUID
+    evidence: EgressHealthEvidence
+
+
+class EgressHealthObservationResult(BaseModel):
+    id: UUID
+    observation_id: UUID
+    outcome: EgressOutcome
+    healthy: bool
+    retryable: bool
+    replayed: bool
+    observed_at: datetime
 
 
 @dataclass(frozen=True)
