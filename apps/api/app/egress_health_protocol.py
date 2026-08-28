@@ -64,6 +64,8 @@ class EgressHealthObservationResult(BaseModel):
     outcome: EgressOutcome
     healthy: bool
     retryable: bool
+    provider_key: str
+    region_key: str
     replayed: bool
     observed_at: datetime
 

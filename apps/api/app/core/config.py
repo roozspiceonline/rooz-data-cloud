@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     sandbox_canary_web_egress_max_redirects: int = 3
     sandbox_canary_web_egress_connect_timeout_seconds: int = 5
     sandbox_canary_web_egress_request_timeout_seconds: int = 15
+    egress_route_provider_key: str = "static-canary"
+    egress_route_region_key: str = "local"
+    egress_health_min_route_samples: int = 5
 
     sandbox_canary_browser_enabled: bool = False
     sandbox_canary_browser_live_navigation_enabled: bool = False
@@ -221,6 +224,15 @@ class Settings(BaseSettings):
         if not 1 <= self.schedule_dispatch_batch_size <= 500:
             raise ValueError(
                 "Schedule dispatch batch size must be between 1 and 500."
+            )
+        route_key_pattern = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+        if not route_key_pattern.fullmatch(self.egress_route_provider_key):
+            raise ValueError("Egress provider key must be a bounded lowercase slug.")
+        if not route_key_pattern.fullmatch(self.egress_route_region_key):
+            raise ValueError("Egress region key must be a bounded lowercase slug.")
+        if not 5 <= self.egress_health_min_route_samples <= 1000:
+            raise ValueError(
+                "Egress route health requires between 5 and 1000 samples."
             )
         if self.sandbox_required_profile != "rdc.sandbox/v1":
             raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")

@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Immutable binding, revocation, credential envelopes and lease-scoped health observation persistence implemented | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -95,11 +95,15 @@ observations bound to an authenticated active Run lease. PostgreSQL RLS and an
 exact-reference trigger independently enforce tenant/Project/Run/worker
 lineage; a bounded Project aggregate exposes no target or raw evidence and does
 not grant retry or routing authority.
+The seventh increment stamps validated server-configured provider/region keys
+and exposes a 1–24 hour Project route aggregate with minimum-sample suppression
+and a 32-dimension cap. Sparse groups, raw evidence and execution lineage remain
+hidden; the aggregate cannot select a route or authorize retry.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: add production provider health, upstream rotation canaries and
-   live adversarial canaries.
+1. Proxy/egress: add upstream rotation canaries and live adversarial canaries;
+   keep adaptive routing disabled until those gates pass.
 2. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
 3. Observability: structured run/worker logs, diagnostics, metrics and safe
