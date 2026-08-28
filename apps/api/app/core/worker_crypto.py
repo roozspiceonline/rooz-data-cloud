@@ -35,6 +35,15 @@ def worker_secret_aad(*, lease_id: str, worker_id: str, run_id: str) -> bytes:
     return f"rdc/worker-secret-envelope/v1:{lease_id}:{worker_id}:{run_id}".encode()
 
 
+def worker_egress_credential_aad(
+    *, lease_id: str, worker_id: str, run_id: str, policy_binding_digest: str
+) -> bytes:
+    return (
+        "rdc/worker-egress-credential-envelope/v1:"
+        f"{lease_id}:{worker_id}:{run_id}:{policy_binding_digest}"
+    ).encode()
+
+
 def encrypt_secret_payload_for_worker(
     plaintext: bytes,
     *,

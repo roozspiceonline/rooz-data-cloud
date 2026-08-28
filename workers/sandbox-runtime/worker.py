@@ -57,6 +57,7 @@ from queue_worker_protocol import (
 from rdc_worker_client import (
     RdcWorkerClient,
     WorkerProtocolError,
+    decrypt_egress_credential_envelope,
     decrypt_secret_envelope,
     generate_worker_key_pair,
 )
@@ -152,7 +153,7 @@ def _effective_worker_egress_policy(
         raise SandboxPolicyError("Project egress-policy receipt is invalid.") from exc
     if (
         receipt.get("schema_version") != "rdc.run-egress-policy-receipt/v1"
-        or receipt.get("credential_configured") is not False
+        or type(receipt.get("credential_configured")) is not bool
         or revision_number < 1
     ):
         raise SandboxPolicyError("Project egress-policy receipt is unsafe.")
@@ -1077,6 +1078,49 @@ def _build(
                 config.request_queue_key_value_store_enabled
             ),
         )
+        egress_authorization: str | None = None
+        input_reference = payload.get("input_reference")
+        receipt = (
+            input_reference.get("project_egress_policy_receipt")
+            if isinstance(input_reference, dict)
+            else None
+        )
+        if isinstance(receipt, dict) and receipt.get("credential_configured") is True:
+            if (
+                activation.get("capability_profile") == "controlled-browser"
+                or activation.get("request_queue_browser_enabled") is True
+            ):
+                raise SandboxPolicyError(
+                    "Credential-bound egress is unavailable to browser execution."
+                )
+            if (
+                activation.get("capability_profile") != "brokered-web-egress"
+                and activation.get("request_queue_http_enabled") is not True
+            ):
+                raise SandboxPolicyError(
+                    "Credential-bound egress requires the trusted HTTP broker."
+                )
+            binding_digest = receipt.get("binding_digest")
+            if not isinstance(binding_digest, str):
+                raise SandboxPolicyError(
+                    "Credential-bound egress lacks a binding digest."
+                )
+            key_pair = generate_worker_key_pair()
+            envelope = client.request_egress_credential_envelope(
+                lease_id,
+                token,
+                policy_binding_digest=binding_digest,
+                key_pair=key_pair,
+            )
+            worker = _data(client.worker())
+            egress_authorization = decrypt_egress_credential_envelope(
+                envelope,
+                key_pair=key_pair,
+                lease_id=lease_id,
+                worker_id=str(worker["id"]),
+                run_id=str(payload["run_id"]),
+                policy_binding_digest=binding_digest,
+            )
         source_zip = workspace / "source.zip"
         source_dir = workspace / "source"
         source_dir.mkdir(mode=0o700)
@@ -1474,6 +1518,7 @@ def _run(
                 broker_output = broker_web_requests(
                     broker_input,
                     policy=egress_policy,
+                    authorization=egress_authorization,
                 )
                 fetch_result = phase1j_broker_result_adapter(
                     queue_fetch,
@@ -1618,6 +1663,7 @@ def _run(
                     broker_output = broker_web_requests(
                         broker_input,
                         policy=egress_policy,
+                        authorization=egress_authorization,
                     )
                     web_fetch_result = phase1j_broker_result_adapter(
                         web_fetch,
@@ -1657,6 +1703,7 @@ def _run(
                 input_value = broker_web_requests(
                     input_value,
                     policy=egress_policy,
+                    authorization=egress_authorization,
                 )
         secrets: dict[str, object] = {}
         names = [str(value) for value in manifest.get("secrets", [])]

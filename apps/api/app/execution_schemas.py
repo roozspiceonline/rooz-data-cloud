@@ -437,6 +437,21 @@ class SecretEnvelopeResponse(BaseModel):
     environment: SecretEnvironment
 
 
+class EgressCredentialEnvelopeRequest(StrictModel):
+    policy_binding_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    worker_public_key_b64: str = Field(min_length=40, max_length=100)
+
+
+class EgressCredentialEnvelopeResponse(BaseModel):
+    grant_id: UUID
+    algorithm: str
+    ephemeral_public_key_b64: str
+    nonce_b64: str
+    ciphertext_b64: str
+    expires_at: datetime
+    policy_binding_digest: str
+
+
 class ExecutionLeaseSummary(BaseModel):
     id: UUID
     worker_id: UUID

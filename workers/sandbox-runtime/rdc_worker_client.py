@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -335,6 +336,27 @@ class RdcWorkerClient:
             raise WorkerProtocolError("Secret-envelope response was empty.")
         return response
 
+    def request_egress_credential_envelope(
+        self,
+        lease_id: str,
+        lease_token: str,
+        *,
+        policy_binding_digest: str,
+        key_pair: WorkerKeyPair,
+    ) -> dict[str, Any]:
+        response = self._request(
+            "POST",
+            f"/internal/v1/leases/{lease_id}/egress-credential-envelope",
+            {
+                "policy_binding_digest": policy_binding_digest,
+                "worker_public_key_b64": key_pair.public_key_b64,
+            },
+            lease_token=lease_token,
+        )
+        if response is None:
+            raise WorkerProtocolError("Egress credential-envelope response was empty.")
+        return response
+
 
 def generate_worker_key_pair() -> WorkerKeyPair:
     return WorkerKeyPair(private_key=X25519PrivateKey.generate())
@@ -378,3 +400,76 @@ def decrypt_secret_envelope(
     if not isinstance(result, dict):
         raise WorkerProtocolError("Secret-envelope payload was invalid.")
     return result
+
+
+def decrypt_egress_credential_envelope(
+    envelope: dict[str, Any],
+    *,
+    key_pair: WorkerKeyPair,
+    lease_id: str,
+    worker_id: str,
+    run_id: str,
+    policy_binding_digest: str,
+) -> str:
+    data = envelope["data"]
+    if (
+        data["algorithm"] != "X25519-HKDF-SHA256-AES-256-GCM"
+        or data.get("policy_binding_digest") != policy_binding_digest
+    ):
+        raise WorkerProtocolError("Egress credential-envelope binding is invalid.")
+    peer = X25519PublicKey.from_public_bytes(
+        base64.b64decode(data["ephemeral_public_key_b64"], validate=True)
+    )
+    shared_secret = key_pair.private_key.exchange(peer)
+    key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"rdc/execution-secret-envelope/v1",
+    ).derive(shared_secret)
+    aad = (
+        "rdc/worker-egress-credential-envelope/v1:"
+        f"{lease_id}:{worker_id}:{run_id}:{policy_binding_digest}"
+    ).encode()
+    plaintext = AESGCM(key).decrypt(
+        base64.b64decode(data["nonce_b64"], validate=True),
+        base64.b64decode(data["ciphertext_b64"], validate=True),
+        aad,
+    )
+    try:
+        result = json.loads(plaintext)
+    finally:
+        mutable = bytearray(plaintext)
+        for index in range(len(mutable)):
+            mutable[index] = 0
+    expected = {
+        "schema_version": "rdc.egress-credential/v1",
+        "lease_id": lease_id,
+        "run_id": run_id,
+        "policy_binding_digest": policy_binding_digest,
+    }
+    if (
+        not isinstance(result, dict)
+        or any(result.get(key) != value for key, value in expected.items())
+        or set(result) != {*expected, "authorization", "expires_at"}
+        or not isinstance(result.get("authorization"), str)
+        or not result["authorization"]
+        or len(result["authorization"]) > 8192
+        or "\r" in result["authorization"]
+        or "\n" in result["authorization"]
+    ):
+        raise WorkerProtocolError("Egress credential-envelope payload was invalid.")
+    try:
+        envelope_expiry = datetime.fromisoformat(str(result["expires_at"]))
+        response_expiry = datetime.fromisoformat(str(data["expires_at"]))
+    except (KeyError, ValueError) as exc:
+        raise WorkerProtocolError(
+            "Egress credential-envelope expiry was invalid."
+        ) from exc
+    if (
+        envelope_expiry.tzinfo is None
+        or envelope_expiry != response_expiry
+        or envelope_expiry <= datetime.now(UTC)
+    ):
+        raise WorkerProtocolError("Egress credential-envelope expired.")
+    return str(result["authorization"])

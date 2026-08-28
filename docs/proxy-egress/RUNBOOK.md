@@ -9,7 +9,8 @@
    and binding receipt `rdc.run-egress-policy-receipt/v1`.
 3. Create a DRAFT policy with a unique `Idempotency-Key`; inspect only metadata
    and the canonical digest. If authentication is required, reference a
-   same-Project write-only secret.
+   same-Project write-only secret whose value is the complete safe
+   `Authorization` header value (for example, `Bearer ...`).
 4. Activate the intended revision using the latest policy version. A 409 means
    the operator must reload and review the new lineage before retrying.
 5. Create an eligible Run using only the policy ID. Confirm Run lineage,
@@ -18,6 +19,10 @@
 6. Rotate by creating a revision, reviewing its normalized hosts and digest,
    then explicitly activating it. Never edit a revision or replace secret
    material through a policy endpoint.
+7. For credential-bound web fetches, confirm only the internal lease endpoint
+   issues `execution.egress_credential_envelope.issued`, expiry is at most 60
+   seconds, and neither Run events nor Agent output contains a secret name,
+   reference, ciphertext or plaintext. Chromium use must remain denied.
 
 ## Incident response
 
@@ -41,9 +46,11 @@ Runs admitted before the policy transition serialize ahead of that transition;
 use the static canary kill switch for immediate in-flight containment.
 
 Treat `EGRESS_POLICY_ACTIVE_REVISION_INVALID`,
-`EGRESS_POLICY_EXCEEDS_CANARY_CEILING`, worker binding-digest mismatches and
-Queue v6 receipt mismatches as security events. Do not bypass the static
-ceiling or re-enable credential-bound Runs during incident repair.
+`EGRESS_POLICY_EXCEEDS_CANARY_CEILING`, `EGRESS_CREDENTIAL_BINDING_INVALID`,
+worker binding-digest mismatches and Queue v6 receipt mismatches as security
+events. Do not bypass the static ceiling. Rotate the Project secret and disable
+the policy/static canary for immediate containment; database grant revocation
+cannot retract a value already decrypted by an active trusted worker.
 
 ## Verification and rollback
 

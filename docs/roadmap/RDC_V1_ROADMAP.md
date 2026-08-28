@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Immutable ACTIVE revision binding and queued-work disable/rotation convergence implemented across Run, lease and trusted worker/broker; credential delivery remains | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable binding, queued revocation and short-lived worker/broker credential envelopes implemented; production provider health remains | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -83,11 +83,15 @@ Credential-bound policies remain fail-closed and no secret material reaches
 Agent or Chromium. The third increment revalidates the bound policy under row
 lock at `RUN_START` admission and terminally fails stale, disabled, rotated,
 cross-tenant or tampered snapshots before any lease is issued.
+The fourth increment resolves credential references only inside the trusted
+lease service, encrypts the complete Authorization value to an ephemeral worker
+key with lease/Run/policy AAD, injects it only in the broker, denies Chromium,
+and serializes secret replacement with grant issuance and revocation.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: implement isolated credential delivery/rotation and
-   revocation convergence without plaintext exposure.
+1. Proxy/egress: add production provider health, upstream rotation canaries and
+   live adversarial canaries.
 2. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
 3. Observability: structured run/worker logs, diagnostics, metrics and safe

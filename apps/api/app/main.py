@@ -193,6 +193,7 @@ async def foundation_status() -> dict[str, object]:
         "egress_policy_rls_enabled": True,
         "egress_policy_live_binding_enabled": True,
         "egress_policy_binding_receipt": "rdc.run-egress-policy-receipt/v1",
+        "egress_policy_worker_credential_envelopes_enabled": True,
         "egress_policy_plaintext_credentials_exposed": False,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,

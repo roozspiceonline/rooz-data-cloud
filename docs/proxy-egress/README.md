@@ -52,17 +52,26 @@ configured static canary allowlist and every request/byte/redirect/timeout
 budget remain a maximum ceiling: a Project policy can narrow access but cannot
 widen it. The broker enforces revision methods as well as hosts and budgets.
 
-Credential-bound revisions remain fail-closed with
-`EGRESS_POLICY_CREDENTIAL_DELIVERY_UNAVAILABLE`. No secret reference or
-material enters Run lineage, Agent input, Chromium, activation or Queue
-capabilities. Isolated credential-envelope delivery and rotation convergence
-remain separate work.
+Credential-bound revisions persist only `credential_configured=true`; the
+secret reference and material never enter Run lineage, Agent input, Chromium,
+activation or Queue capabilities. At execution time the lease-authenticated
+trusted worker submits the policy binding digest and an ephemeral X25519 public
+key. The server locks and revalidates the Run, ACTIVE policy, exact revision and
+same-tenant secret before returning an AES-GCM envelope bound to the worker,
+lease, Run and policy digest for at most 60 seconds. Its decrypted value is used
+only as the broker's complete `Authorization` header value and is never added to
+Agent input or broker output. Credential-bound Chromium paths fail closed.
+
+Secret replacement serializes with envelope issuance, revokes outstanding
+database grants, and changes the idempotency fingerprint by secret version.
+Already decrypted authorization values remain bounded by the envelope/lease
+TTL; the operator egress kill switch is the immediate containment mechanism.
 
 Immediately before a bound `RUN_START` consumes a lease, admission locks the
 Run and referenced policy and requires the policy to remain `ACTIVE` with the
 same revision selected. Disablement, rotation, deletion, cross-tenant
-substitution, receipt tampering, digest mismatch or a newly credential-bound
-revision terminally fails the Run and START outbox with
+substitution, receipt tampering, digest mismatch or a changed credential
+presence terminally fails the Run and START outbox with
 `EGRESS_POLICY_BINDING_REVOKED`; no lease or worker capability is issued. The
 immutable original Run snapshot is retained as audit lineage. Unbound legacy
 static-canary Runs keep their existing behavior.

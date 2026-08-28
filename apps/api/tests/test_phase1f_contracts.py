@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 import pytest
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -14,6 +15,7 @@ from app.core.permissions import role_has_permission, validate_scopes
 from app.core.security import issue_lease_token, issue_worker_token
 from app.core.worker_crypto import (
     encrypt_secret_payload_for_worker,
+    worker_egress_credential_aad,
     worker_secret_aad,
 )
 from app.execution_schemas import RegisterWorkerRequest, SecretEnvelopeRequest
@@ -163,6 +165,47 @@ def test_secret_envelope_round_trip_uses_x25519_and_aead() -> None:
     )
     assert decrypted == plaintext
     assert envelope.algorithm == "X25519-HKDF-SHA256-AES-256-GCM"
+
+
+def test_egress_credential_envelope_is_bound_to_policy_and_lease() -> None:
+    private_key = X25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    binding_digest = "a" * 64
+    aad = worker_egress_credential_aad(
+        lease_id="lease-id",
+        worker_id="worker-id",
+        run_id="run-id",
+        policy_binding_digest=binding_digest,
+    )
+    plaintext = b'{"authorization":"Bearer private"}'
+    envelope = encrypt_secret_payload_for_worker(
+        plaintext,
+        worker_public_key=public_key,
+        aad=aad,
+    )
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
+
+    shared = private_key.exchange(
+        X25519PublicKey.from_public_bytes(envelope.ephemeral_public_key)
+    )
+    key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"rdc/execution-secret-envelope/v1",
+    ).derive(shared)
+    assert AESGCM(key).decrypt(envelope.nonce, envelope.ciphertext, aad) == plaintext
+    wrong_aad = worker_egress_credential_aad(
+        lease_id="other-lease",
+        worker_id="worker-id",
+        run_id="run-id",
+        policy_binding_digest=binding_digest,
+    )
+    with pytest.raises(InvalidTag):
+        AESGCM(key).decrypt(envelope.nonce, envelope.ciphertext, wrong_aad)
 
 
 def test_phase1f_routes_keep_internal_protocol_out_of_public_openapi() -> None:
