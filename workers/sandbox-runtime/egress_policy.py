@@ -14,6 +14,14 @@ class EgressPolicyError(RuntimeError):
 
 
 Resolver = Callable[..., list[tuple[object, ...]]]
+FORBIDDEN_SUFFIXES = (
+    ".example",
+    ".internal",
+    ".invalid",
+    ".local",
+    ".localhost",
+    ".test",
+)
 
 
 @dataclass(frozen=True)
@@ -44,8 +52,8 @@ def normalize_hostname(value: str) -> str:
     labels = normalized.split(".")
     if len(labels) < 2:
         raise EgressPolicyError("Single-label egress hostnames are not allowed.")
-    if normalized.endswith(".local"):
-        raise EgressPolicyError("Local-network egress hostnames are not allowed.")
+    if normalized == "localhost" or normalized.endswith(FORBIDDEN_SUFFIXES):
+        raise EgressPolicyError("Special-use egress hostnames are not allowed.")
     for label in labels:
         if not label or len(label) > 63:
             raise EgressPolicyError("Egress hostname contains an invalid label.")
@@ -54,9 +62,7 @@ def normalize_hostname(value: str) -> str:
                 "Egress hostname label cannot start or end with '-'."
             )
         if not all(character.isalnum() or character == "-" for character in label):
-            raise EgressPolicyError(
-                "Egress hostname contains unsupported characters."
-            )
+            raise EgressPolicyError("Egress hostname contains unsupported characters.")
     return normalized
 
 
@@ -64,9 +70,7 @@ def _require_global_address(value: str) -> None:
     try:
         address = ipaddress.ip_address(value)
     except ValueError as exc:
-        raise EgressPolicyError(
-            "DNS resolver returned an invalid IP address."
-        ) from exc
+        raise EgressPolicyError("DNS resolver returned an invalid IP address.") from exc
     if not address.is_global:
         raise EgressPolicyError(
             "Egress destination resolved to a non-global network address."
@@ -100,15 +104,14 @@ def resolve_public_addresses(
         addresses.append(address)
 
     if not addresses:
-        raise EgressPolicyError(
-            "Egress hostname resolved to no usable addresses."
-        )
+        raise EgressPolicyError("Egress hostname resolved to no usable addresses.")
     return tuple(sorted(set(addresses)))
 
 
 @dataclass(frozen=True)
 class EgressPolicy:
     allowed_hosts: tuple[str, ...]
+    allowed_methods: tuple[str, ...] = ("GET", "HEAD")
     max_requests: int = 8
     max_response_bytes: int = 1_048_576
     max_total_bytes: int = 4_194_304
@@ -121,6 +124,7 @@ class EgressPolicy:
         cls,
         allowed_hosts: Iterable[str],
         *,
+        allowed_methods: Iterable[str] = ("GET", "HEAD"),
         max_requests: int = 8,
         max_response_bytes: int = 1_048_576,
         max_total_bytes: int = 4_194_304,
@@ -131,14 +135,15 @@ class EgressPolicy:
         normalized = tuple(
             sorted({normalize_hostname(value) for value in allowed_hosts})
         )
+        methods = tuple(sorted({value.strip().upper() for value in allowed_methods}))
         if not normalized:
             raise EgressPolicyError("Egress allowlist cannot be empty.")
         if len(normalized) > 32:
             raise EgressPolicyError("Egress allowlist cannot exceed 32 hosts.")
+        if not methods or not set(methods) <= {"GET", "HEAD"}:
+            raise EgressPolicyError("Egress methods must be GET or HEAD.")
         if not 1 <= max_requests <= 32:
-            raise EgressPolicyError(
-                "Egress request budget is outside the safe range."
-            )
+            raise EgressPolicyError("Egress request budget is outside the safe range.")
         if not 1_024 <= max_response_bytes <= 8_388_608:
             raise EgressPolicyError(
                 "Per-response egress byte limit is outside the safe range."
@@ -155,6 +160,7 @@ class EgressPolicy:
             raise EgressPolicyError("Request timeout is outside the safe range.")
         return cls(
             allowed_hosts=normalized,
+            allowed_methods=methods,
             max_requests=max_requests,
             max_response_bytes=max_response_bytes,
             max_total_bytes=max_total_bytes,
@@ -168,7 +174,7 @@ class EgressPolicy:
             "schema_version": "rdc.egress/v1",
             "mode": "brokered",
             "allowed_schemes": ["https"],
-            "allowed_methods": ["GET", "HEAD"],
+            "allowed_methods": list(self.allowed_methods),
             "allowed_hosts": list(self.allowed_hosts),
             "deny_ip_literals": True,
             "require_global_dns": True,
@@ -206,24 +212,18 @@ class EgressPolicy:
         if parsed.scheme.casefold() != "https":
             raise EgressPolicyError("Phase 1J permits HTTPS URLs only.")
         if parsed.username is not None or parsed.password is not None:
-            raise EgressPolicyError(
-                "Credentials in egress URLs are not allowed."
-            )
+            raise EgressPolicyError("Credentials in egress URLs are not allowed.")
         if not parsed.hostname:
             raise EgressPolicyError("Egress URL is missing a hostname.")
 
         host = normalize_hostname(parsed.hostname)
         if host not in self.allowed_hosts:
-            raise EgressPolicyError(
-                "Egress hostname is not operator-allowlisted."
-            )
+            raise EgressPolicyError("Egress hostname is not operator-allowlisted.")
 
         try:
             port = parsed.port
         except ValueError as exc:
-            raise EgressPolicyError(
-                "Egress URL contains an invalid port."
-            ) from exc
+            raise EgressPolicyError("Egress URL contains an invalid port.") from exc
         if port not in (None, 443):
             raise EgressPolicyError("Phase 1J permits HTTPS port 443 only.")
 

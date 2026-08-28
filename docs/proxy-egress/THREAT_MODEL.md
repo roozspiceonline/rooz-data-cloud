@@ -29,13 +29,22 @@ proxy responses and all external network data are untrusted.
   object-storage or policy credential.
 - Idempotency abuse: creation locks a tenant/principal/endpoint/key digest and
   conflicts when the same key has a different canonical request fingerprint.
-- Premature activation: persisted `ACTIVE` currently represents operator policy
-  selection only. Foundation status explicitly reports live binding disabled;
-  no worker or broker consumes these rows yet.
+- Caller-authored or stale binding: Run input accepts a strict policy resource
+  reference only. The server row-locks an exact same-tenant/same-Project ACTIVE
+  policy and resolves its current revision; DRAFT, DISABLED, missing,
+  cross-tenant and cross-Project references return the same not-found outcome.
+- Snapshot tampering: the receipt binds policy ID, revision ID and number,
+  canonical revision digest, runtime digest and credential absence. Activation,
+  Queue v6 capabilities and the trusted worker compare the same binding digest;
+  any missing, extra or changed field fails closed.
+- Canary widening: both control plane and worker require exact hosts and methods
+  to be subsets of their static canary and require every numeric budget to be no
+  greater. Runtime policy selection cannot expand general egress.
+- Method escalation: the broker and browser gateway enforce the revision's
+  GET/HEAD subset; a GET-only revision cannot issue HEAD.
 
 ## Residual work before live enforcement
 
-Bind an exact active revision and digest into Run/lease receipts; validate it in
-the worker and broker; resolve public addresses with redirect revalidation;
-deliver credentials only as short-lived worker-bound envelopes; define
-revocation/rotation convergence; and add live adversarial SSRF and proxy tests.
+Deliver credentials only as short-lived worker/broker-bound envelopes; define
+revocation/rotation convergence for already queued immutable snapshots; and add
+production proxy-provider health, rotation and live adversarial canaries.

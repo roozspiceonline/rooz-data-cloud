@@ -17,8 +17,14 @@ need("apps/api/app/services/egress_policies.py", "acquire_idempotency_lock", "wi
 need("apps/api/app/api/routes/egress_policies.py", 'require_project_permission("egress.create")', 'require_egress_policy_permission("egress.update")', 'Header(alias="Idempotency-Key")')
 need("apps/api/migrations/versions/20260822_0022_egress_policies.py", "ENABLE ROW LEVEL SECURITY", "egress_policy_revisions_immutable", "credential tenancy mismatch", "methods are not canonical", "host is not canonical", "active revision mismatch", "security.rdc_egress_policy_org")
 need("apps/api/tests/test_egress_policy_contracts.py", "test_policy_rejects_unsafe_or_ambiguous_hosts", "credential_secret_id")
+need("apps/api/app/run_schemas.py", "EgressPolicyBindingInput", "rdc.run-egress-policy/v1")
+need("apps/api/app/services/runs.py", "_resolve_run_egress_policy", "with_for_update()", "EGRESS_POLICY_EXCEEDS_CANARY_CEILING", "EGRESS_POLICY_CREDENTIAL_DELIVERY_UNAVAILABLE")
+need("apps/api/app/services/execution_plane.py", "_bound_egress_policy", "project_egress_policy_binding_digest")
+need("apps/api/app/services/worker_request_queue.py", "rdc.request-queue-worker-capability/v6", "project_egress_policy_binding_digest")
+need("workers/sandbox-runtime/worker.py", "_effective_worker_egress_policy", "Project policy-revision digest mismatch")
+need("apps/api/tests/test_egress_policy_runtime_binding.py", "test_create_run_persists_server_resolved_policy_snapshot", "test_worker_independently_reconstructs_and_enforces_ceiling", "test_queue_capability_binds_same_project_revision_receipt")
 need("apps/api/tests/test_egress_policy_postgres.py", "test_rls_and_resolver_hide_other_tenant", "test_service_idempotency_rotation_and_optimistic_lifecycle")
-need("apps/api/app/main.py", '"egress_policy_live_binding_enabled": False', '"egress_policy_plaintext_credentials_exposed": False')
+need("apps/api/app/main.py", '"egress_policy_live_binding_enabled": True', '"egress_policy_plaintext_credentials_exposed": False')
 for path in ("docs/proxy-egress/README.md", "docs/proxy-egress/THREAT_MODEL.md", "docs/proxy-egress/RUNBOOK.md"):
     need(path, "Proxy/Egress")
 

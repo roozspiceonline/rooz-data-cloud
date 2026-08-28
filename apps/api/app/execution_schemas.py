@@ -76,6 +76,10 @@ class SandboxActivation(StrictModel):
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
+    project_egress_policy_binding_digest: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
     browser_policy_digest: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
@@ -95,9 +99,7 @@ class SandboxActivation(StrictModel):
             self.capability_profile == "brokered-web-egress"
             and self.egress_policy_digest is None
         ):
-            raise ValueError(
-                "Brokered web egress requires an egress-policy digest."
-            )
+            raise ValueError("Brokered web egress requires an egress-policy digest.")
         if (
             self.capability_profile == "brokered-web-egress"
             and self.browser_policy_digest is not None
@@ -107,13 +109,9 @@ class SandboxActivation(StrictModel):
             )
         if self.capability_profile == "controlled-browser":
             if self.egress_policy_digest is None:
-                raise ValueError(
-                    "Controlled browser requires an egress-policy digest."
-                )
+                raise ValueError("Controlled browser requires an egress-policy digest.")
             if self.browser_policy_digest is None:
-                raise ValueError(
-                    "Controlled browser requires a browser-policy digest."
-                )
+                raise ValueError("Controlled browser requires a browser-policy digest.")
         if self.capability_profile == "offline-minimal":
             if self.egress_policy_digest is not None:
                 raise ValueError(
@@ -123,6 +121,17 @@ class SandboxActivation(StrictModel):
                 raise ValueError(
                     "Offline-minimal activation cannot carry a browser-policy digest."
                 )
+            if self.project_egress_policy_binding_digest is not None:
+                raise ValueError(
+                    "Offline-minimal activation cannot carry a Project egress-policy binding."
+                )
+        if (
+            self.project_egress_policy_binding_digest is not None
+            and self.egress_policy_digest is None
+        ):
+            raise ValueError(
+                "A Project egress-policy binding requires an effective egress-policy digest."
+            )
         if self.request_queue_http_enabled and (
             not self.request_queue_enabled
             or self.capability_profile != "brokered-web-egress"
@@ -160,8 +169,7 @@ class SandboxActivation(StrictModel):
             not self.request_queue_enabled or not self.key_value_store_enabled
         ):
             raise ValueError(
-                "Queue Key-Value Store composition requires Queue and "
-                "Key-Value Store access."
+                "Queue Key-Value Store composition requires Queue and Key-Value Store access."
             )
         if (
             self.request_queue_enabled
@@ -169,8 +177,7 @@ class SandboxActivation(StrictModel):
             and not self.request_queue_key_value_store_enabled
         ):
             raise ValueError(
-                "Queue and Key-Value Store access require an explicit "
-                "composition receipt."
+                "Queue and Key-Value Store access require an explicit composition receipt."
             )
         return self
 
@@ -253,9 +260,7 @@ class RegisteredWorkerResponse(BaseModel):
 
 
 class WorkerRecoveryReport(StrictModel):
-    schema_version: Literal["rdc.worker-recovery/v1"] = (
-        "rdc.worker-recovery/v1"
-    )
+    schema_version: Literal["rdc.worker-recovery/v1"] = "rdc.worker-recovery/v1"
     startup_id: UUID
     forced_cleanup_completed: Literal[True] = True
     managed_containers_removed: int = Field(ge=0, le=256)

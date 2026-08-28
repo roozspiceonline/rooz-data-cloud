@@ -50,6 +50,7 @@ need(
     '"rdc.request-queue-worker-capability/v3"',
     '"rdc.request-queue-worker-capability/v4"',
     '"rdc.request-queue-worker-capability/v5"',
+    '"rdc.request-queue-worker-capability/v6"',
     "request_queue_http_enabled",
     "request_queue_browser_enabled",
     "request_queue_dataset_enabled",
