@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Immutable ACTIVE revision binding implemented across Run lineage, activation, Queue capabilities and trusted worker/broker; credential delivery remains | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable ACTIVE revision binding and queued-work disable/rotation convergence implemented across Run, lease and trusted worker/broker; credential delivery remains | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -80,7 +80,9 @@ digest reaches activation and Queue v6 worker capabilities; the trusted worker
 independently reconstructs it and the broker enforces its host, method and
 budget subset. The static canary remains an additional maximum ceiling.
 Credential-bound policies remain fail-closed and no secret material reaches
-Agent or Chromium.
+Agent or Chromium. The third increment revalidates the bound policy under row
+lock at `RUN_START` admission and terminally fails stale, disabled, rotated,
+cross-tenant or tampered snapshots before any lease is issued.
 
 ## Remaining RDC v1 workstreams
 

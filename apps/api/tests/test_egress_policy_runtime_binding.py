@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -486,3 +486,131 @@ async def test_active_revision_resolution_is_tenant_scoped_and_canonical(
         )
     assert error.value.status_code == 404
     assert error.value.code == "RESOURCE_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("policy_status", "selected_revision", "expected"),
+    [
+        ("ACTIVE", True, True),
+        ("DISABLED", True, False),
+        ("ACTIVE", False, False),
+    ],
+)
+async def test_execution_admission_converges_disabled_or_rotated_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    policy_status: str,
+    selected_revision: bool,
+    expected: bool,
+) -> None:
+    policy = _runtime_policy()
+    receipt = _receipt(policy)
+    organization_id, project_id, run_id = uuid4(), uuid4(), uuid4()
+    policy_id = UUID(str(receipt["policy_id"]))
+    revision_id = UUID(str(receipt["revision_id"]))
+    run = SimpleNamespace(
+        id=run_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        status="QUEUED",
+        input_reference={
+            "project_egress_policy": policy,
+            "project_egress_policy_receipt": receipt,
+        },
+        failure_code=None,
+        failure_summary=None,
+        finished_at=None,
+        updated_at=None,
+        version=1,
+    )
+    policy_record = SimpleNamespace(
+        id=policy_id,
+        status=policy_status,
+        active_revision_id=(
+            revision_id if selected_revision else uuid4()
+        ),
+    )
+    revision = SimpleNamespace(
+        id=revision_id,
+        revision_number=receipt["revision_number"],
+        policy_digest=receipt["policy_digest"],
+        credential_secret_id=None,
+    )
+    source = SimpleNamespace(
+        run_id=run_id,
+        status="PENDING",
+        attempts=0,
+        claimed_at=None,
+        last_error_code=None,
+        updated_at=None,
+    )
+    scalar_results: list[object] = [run, policy_record, revision]
+    if not expected:
+        scalar_results.extend([None, None])
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=scalar_results),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    monkeypatch.setattr(execution_plane, "_egress_policy_payload", _ceiling)
+    result = await execution_plane._bound_run_egress_policy_is_current(
+        session,  # type: ignore[arg-type]
+        source=source,  # type: ignore[arg-type]
+        now=execution_plane.datetime.now(execution_plane.UTC),
+        request_id="binding-admission",
+    )
+    assert result is expected
+    assert "FOR UPDATE" in str(session.scalar.await_args_list[0].args[0])
+    assert "FOR UPDATE" in str(session.scalar.await_args_list[1].args[0])
+    if expected:
+        assert source.status == "PENDING"
+        assert run.status == "QUEUED"
+    else:
+        assert source.status == "FAILED"
+        assert source.last_error_code == "EGRESS_POLICY_BINDING_REVOKED"
+        assert run.status == "FAILED"
+        assert run.failure_code == "EGRESS_POLICY_BINDING_REVOKED"
+        added_types = {type(call.args[0]).__name__ for call in session.add.call_args_list}
+        assert {"RunEvent", "AuditEvent"} <= added_types
+
+
+@pytest.mark.asyncio
+async def test_execution_admission_rejects_incomplete_bound_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = uuid4()
+    run = SimpleNamespace(
+        id=run_id,
+        organization_id=uuid4(),
+        project_id=uuid4(),
+        status="QUEUED",
+        input_reference={"project_egress_policy": _runtime_policy()},
+        failure_code=None,
+        failure_summary=None,
+        finished_at=None,
+        updated_at=None,
+        version=1,
+    )
+    source = SimpleNamespace(
+        run_id=run_id,
+        status="PENDING",
+        attempts=0,
+        claimed_at=None,
+        last_error_code=None,
+        updated_at=None,
+    )
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[run, None, None, None, None]),
+        execute=AsyncMock(),
+        flush=AsyncMock(),
+        add=Mock(),
+    )
+    monkeypatch.setattr(execution_plane, "_egress_policy_payload", _ceiling)
+    assert not await execution_plane._bound_run_egress_policy_is_current(
+        session,  # type: ignore[arg-type]
+        source=source,  # type: ignore[arg-type]
+        now=execution_plane.datetime.now(execution_plane.UTC),
+        request_id="binding-integrity",
+    )
+    assert run.failure_code == "EGRESS_POLICY_BINDING_REVOKED"
