@@ -43,9 +43,9 @@ claimed URL through the existing brokered HTTPS policy while the Agent remains
 networkless. See
 [the Scraping Runtime documentation](docs/scraping-runtime/README.md).
 
-The active proxy/egress workstream now persists tenant-scoped Project policy
+The active proxy/egress workstream persists tenant-scoped Project policy
 metadata and immutable exact-host revisions with bounded methods and budgets.
-Activation and disable operations are race-safe, credentials remain references
-to write-only Project secrets, and PostgreSQL RLS plus tenancy triggers enforce
-the boundary independently. Live worker/broker binding remains disabled. See
+Run/worker/broker binding, queued revocation convergence and short-lived
+worker-encrypted credential delivery are merged; Agent and browser credential
+isolation remains enforced. Production provider health remains active work. See
 [the Proxy/Egress documentation](docs/proxy-egress/README.md).

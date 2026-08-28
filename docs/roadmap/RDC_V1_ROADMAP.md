@@ -24,7 +24,7 @@ test gates pass on the exact merged commit.
 
 | Workstream | Status | Dependency |
 | --- | --- | --- |
-| Proxy/egress | Immutable binding, queued revocation and short-lived worker/broker credential envelopes implemented; production provider health remains | Scraping runtime and write-only Project secrets |
+| Proxy/egress | Immutable binding, revocation and credential envelopes implemented; bounded provider-neutral health classification in progress | Scraping runtime and write-only Project secrets |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -87,6 +87,9 @@ The fourth increment resolves credential references only inside the trusted
 lease service, encrypts the complete Authorization value to an ephemeral worker
 key with lease/Run/policy AAD, injects it only in the broker, denies Chromium,
 and serializes secret replacement with grant issuance and revocation.
+The fifth increment begins provider health with a strict deterministic outcome
+taxonomy over bounded status/latency/size/boolean evidence. It deliberately
+does not persist targets, select routes, authorize retries or widen egress.
 
 ## Remaining RDC v1 workstreams
 
