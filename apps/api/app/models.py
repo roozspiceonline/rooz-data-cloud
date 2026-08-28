@@ -900,6 +900,8 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     healthy: Mapped[bool] = mapped_column(Boolean, nullable=False)
     retryable: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    region_key: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 

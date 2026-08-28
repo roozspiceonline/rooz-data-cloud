@@ -2,10 +2,11 @@
 
 ## Safe rollout
 
-1. Apply migrations through `20260828_0023`. Confirm the policy tables and
+1. Apply migrations through `20260828_0024`. Confirm the policy tables and
    `control.egress_health_observations` have RLS enabled, and confirm the health
    table has tenant-select, worker-select/insert, exact-lease guard and
-   immutable update/delete triggers.
+   immutable update/delete triggers. Confirm the route columns reject invalid
+   slugs and the Project/route/time index exists.
 2. Keep existing Queue HTTP/browser canary allowlists unchanged. Confirm
    `/api/v1/system/foundation` reports `egress_policy_live_binding_enabled=true`
    and binding receipt `rdc.run-egress-policy-receipt/v1`.
@@ -29,6 +30,11 @@
    Confirm an exact observation-ID replay returns HTTP 200 with `replayed=true`,
    altered evidence returns `EGRESS_HEALTH_REPLAY_CONFLICT`, and the Project
    summary exposes counts only for a requested 1–24 hour window.
+9. Set `RDC_EGRESS_ROUTE_PROVIDER_KEY` and `RDC_EGRESS_ROUTE_REGION_KEY` to
+   non-secret lowercase opaque slugs for the deployment route. Set
+   `RDC_EGRESS_HEALTH_MIN_ROUTE_SAMPLES` between 5 and 1000. Confirm the route
+   endpoint suppresses smaller cohorts, rejects excessive cardinality and does
+   not expose raw observation or execution lineage.
 
 ## Incident response
 
@@ -69,6 +75,6 @@ cannot retract a value already decrypted by an active trusted worker.
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
 provider-neutral `python scripts/verify-egress-health.py` protocol verifier, the
 full repository gates. A rollback rehearsal is `alembic downgrade
-20260822_0022` followed by `alembic upgrade head` on an isolated database.
-Downgrade deletes immutable observations, so production rollback requires an
-approved backup and evidence-preservation decision.
+20260828_0023` followed by `alembic upgrade head` on an isolated database.
+Downgrade removes route attribution but preserves immutable observations;
+production rollback still requires an approved evidence-preservation decision.

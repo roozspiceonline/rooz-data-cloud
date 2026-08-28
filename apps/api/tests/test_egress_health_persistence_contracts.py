@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.core.config import Settings
 from app.core.errors import ApiError
 from app.egress_health_protocol import EgressHealthObservationRequest
 from app.services.egress_health import _validate_reporting_context
@@ -111,3 +112,38 @@ def test_service_derives_ownership_and_classification_and_summary_is_bounded() -
     assert "EGRESS_HEALTH_REPLAY_CONFLICT" in service
     assert "Query(ge=1, le=24)" in route
     assert 'require_project_permission("egress.read")' in route
+    assert '"/projects/{project_id}/egress-health/routes"' in route
+    assert "summarize_egress_health_routes" in route
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("egress_route_provider_key", "Vendor Secret"),
+        ("egress_route_region_key", "https://region.invalid"),
+        ("egress_health_min_route_samples", 4),
+        ("egress_health_min_route_samples", 1001),
+    ],
+)
+def test_route_health_configuration_is_bounded(
+    field: str, value: object
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**{field: value})
+
+
+def test_route_dimension_migration_is_bounded_and_reversible() -> None:
+    source = (
+        ROOT
+        / "apps/api/migrations/versions/20260828_0024_egress_health_route_dimensions.py"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'down_revision: str | None = "20260828_0023"',
+        'server_default="legacy"',
+        'server_default="unknown"',
+        "ck_egress_health_observations_provider_key",
+        "ck_egress_health_observations_region_key",
+        "ix_egress_health_observations_project_route_time",
+        '"provider_key", schema="control"',
+    ):
+        assert marker in source

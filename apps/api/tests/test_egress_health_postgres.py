@@ -14,7 +14,10 @@ from app.core.database import engine, session_factory
 from app.core.errors import ApiError
 from app.egress_health_protocol import EgressHealthObservationRequest
 from app.models import ExecutionLease, WorkerIdentity
-from app.services.egress_health import record_egress_health_observation
+from app.services.egress_health import (
+    record_egress_health_observation,
+    summarize_egress_health_routes,
+)
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -80,6 +83,10 @@ async def test_service_is_idempotent_and_database_rows_are_immutable() -> None:
         first = await record_egress_health_observation(session, lease=lease, worker=worker, payload=payload, request_id="health-first")
         replay = await record_egress_health_observation(session, lease=lease, worker=worker, payload=payload, request_id="health-replay")
         assert first.outcome == "HTTP_429"
+        assert (first.provider_key, first.region_key) == (
+            "static-canary",
+            "local",
+        )
         assert replay.id == first.id and replay.replayed is True
         with pytest.raises(ApiError) as conflict:
             await record_egress_health_observation(
@@ -90,6 +97,41 @@ async def test_service_is_idempotent_and_database_rows_are_immutable() -> None:
                 request_id="health-conflict",
             )
         assert conflict.value.code == "EGRESS_HEALTH_REPLAY_CONFLICT"
+        for index in range(4):
+            await record_egress_health_observation(
+                session,
+                lease=lease,
+                worker=worker,
+                payload=EgressHealthObservationRequest.model_validate(
+                    {
+                        "observation_id": uuid4(),
+                        "evidence": {
+                            "http_status": 200,
+                            "response_bytes": 10,
+                            "latency_ms": index + 1,
+                        },
+                    }
+                ),
+                request_id=f"health-route-{index}",
+            )
+        summary = await summarize_egress_health_routes(
+            session,
+            project_id=lease.project_id,
+            window_hours=1,
+        )
+        assert summary["minimum_samples"] == 5
+        assert summary["routes"] == [
+            {
+                "provider_key": "static-canary",
+                "region_key": "local",
+                "total": 5,
+                "healthy": 4,
+                "unhealthy": 1,
+                "retryable": 1,
+                "healthy_basis_points": 8000,
+                "outcomes": {"HTTP_429": 1, "SUCCESS": 4},
+            }
+        ]
     with pytest.raises(DBAPIError, match="observations are immutable"):
         async with engine.begin() as connection:
             await connection.execute(text("UPDATE control.egress_health_observations SET healthy=false WHERE id=:id"), {"id": first.id})
@@ -106,6 +148,32 @@ async def test_service_is_idempotent_and_database_rows_are_immutable() -> None:
             )
         ).one()
         assert derived == ("HTTP_429", False, True)
+    async with session_factory() as session:
+        suppressed = await summarize_egress_health_routes(
+            session,
+            project_id=lease.project_id,
+            window_hours=1,
+        )
+        assert len(suppressed["routes"]) == 1
+    with pytest.raises(DBAPIError):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("INSERT INTO control.egress_health_observations (organization_id,project_id,run_id,lease_id,worker_id,client_observation_id,evidence,evidence_digest,outcome,healthy,retryable,provider_key,region_key) SELECT organization_id,project_id,run_id,id,worker_id,:client,CAST(:evidence AS jsonb),:digest,'SUCCESS',true,false,'Invalid Provider','local' FROM control.execution_leases WHERE id=:lease"),
+                {"client": uuid4(), "evidence": '{"http_status":200,"latency_ms":1}', "digest": "f" * 64, "lease": lease_id},
+            )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("INSERT INTO control.egress_health_observations (organization_id,project_id,run_id,lease_id,worker_id,client_observation_id,evidence,evidence_digest,outcome,healthy,retryable,provider_key,region_key) SELECT organization_id,project_id,run_id,id,worker_id,gen_random_uuid(),CAST(:evidence AS jsonb),:digest,'SUCCESS',true,false,'route-' || route_number::text,'local' FROM control.execution_leases CROSS JOIN generate_series(1,33) route_number WHERE id=:lease"),
+            {"evidence": '{"http_status":200,"latency_ms":1}', "digest": "1" * 64, "lease": lease_id},
+        )
+    async with session_factory() as session:
+        with pytest.raises(ApiError) as cardinality:
+            await summarize_egress_health_routes(
+                session,
+                project_id=lease.project_id,
+                window_hours=1,
+            )
+        assert cardinality.value.code == "EGRESS_HEALTH_ROUTE_CARDINALITY_EXCEEDED"
 
 
 async def test_cross_tenant_reference_is_rejected_and_rls_hides_rows() -> None:

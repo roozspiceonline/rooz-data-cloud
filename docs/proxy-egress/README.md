@@ -28,6 +28,7 @@ Public endpoints are:
 - `POST /api/v1/egress-policies/{policy_id}/activate`
 - `POST /api/v1/egress-policies/{policy_id}/disable`
 - `GET /api/v1/projects/{project_id}/egress-health/summary`
+- `GET /api/v1/projects/{project_id}/egress-health/routes`
 
 Policy and revision list cursors are signed and bound to the exact Project,
 status filter or policy resource; both collections are page-bounded.
@@ -45,6 +46,16 @@ returns `EGRESS_HEALTH_REPLAY_CONFLICT`. Targets, response content, credentials,
 provider identity and route-selection instructions are not accepted or stored.
 The public summary is permission-checked, tenant-RLS protected and accepts only
 a 1–24 hour aggregate window; it never returns raw evidence or per-Run rows.
+
+Each API deployment stamps a validated opaque provider and region key from
+operator configuration; callers and workers cannot choose either dimension.
+Migration `20260828_0024` attributes pre-existing observations to
+`legacy/unknown` and preserves immutable lineage. The route aggregate releases
+only groups with the configured minimum of 5–1000 observations, rejects more
+than 32 dimensions in a window, and returns integer basis-point health plus
+bounded outcome counts. It contains no target, raw evidence, Run/lease/worker
+identifier, credential or routing decision. Neither aggregate authorizes a
+retry or changes an active route.
 
 Eligible Run requests may supply only
 `egress_policy: {schema_version: rdc.run-egress-policy/v1, policy_id: ...}`.

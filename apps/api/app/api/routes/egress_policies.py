@@ -18,7 +18,10 @@ from ...egress_policy_schemas import (
     CreateEgressPolicyRevisionRequest,
     DisableEgressPolicyRequest,
 )
-from ...services.egress_health import summarize_egress_health
+from ...services.egress_health import (
+    summarize_egress_health,
+    summarize_egress_health_routes,
+)
 from ...services.egress_policies import (
     activate_egress_policy,
     create_egress_policy,
@@ -56,6 +59,21 @@ async def get_egress_health_summary(
     window_hours: Annotated[int, Query(ge=1, le=24)] = 1,
 ) -> dict[str, object]:
     result = await summarize_egress_health(
+        db,
+        project_id=access.project.id,
+        window_hours=window_hours,
+    )
+    return success_payload(request, result)
+
+
+@router.get("/projects/{project_id}/egress-health/routes")
+async def get_egress_health_routes(
+    request: Request,
+    access: Annotated[ProjectAccess, Depends(require_project_permission("egress.read"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    window_hours: Annotated[int, Query(ge=1, le=24)] = 1,
+) -> dict[str, object]:
+    result = await summarize_egress_health_routes(
         db,
         project_id=access.project.id,
         window_hours=window_hours,
