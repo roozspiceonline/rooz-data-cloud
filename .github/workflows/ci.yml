@@ -139,4 +139,5 @@ jobs:
       - run: python3 scripts/verify-scheduler.py
       - run: python3 scripts/verify-scraping-runtime.py
       - run: python3 scripts/verify-proxy-egress.py
+      - run: python3 scripts/verify-egress-health.py
       - run: docker compose config --quiet

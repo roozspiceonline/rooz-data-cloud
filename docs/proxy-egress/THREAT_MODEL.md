@@ -58,3 +58,9 @@ proxy responses and all external network data are untrusted.
 
 Add production proxy-provider health, upstream credential-rotation canaries and
 live adversarial canaries.
+
+The provider-health evidence is untrusted even when reported by an authenticated
+worker because status codes and challenge signals originate externally. The
+classification protocol accepts only bounded numeric/boolean evidence, rejects
+target URLs and arbitrary content, and cannot widen policy, select a route or
+authorize a retry. Persistence and routing decisions remain later increments.

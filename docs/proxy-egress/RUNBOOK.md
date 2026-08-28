@@ -55,6 +55,7 @@ cannot retract a value already decrypted by an active trusted worker.
 ## Verification and rollback
 
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
+provider-neutral `python scripts/verify-egress-health.py` protocol verifier, the
 full repository gates. A rollback rehearsal is `alembic downgrade
 20260822_0021` followed by `alembic upgrade head` on an isolated database.
 Downgrade deletes policy metadata, so production rollback requires an approved
