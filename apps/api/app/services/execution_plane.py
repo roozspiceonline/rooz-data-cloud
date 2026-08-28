@@ -23,6 +23,7 @@ from ..core.security import (
 from ..core.worker_crypto import (
     decode_worker_public_key,
     encrypt_secret_payload_for_worker,
+    worker_egress_credential_aad,
     worker_secret_aad,
 )
 from ..dataset_schemas import CreateDatasetRequest
@@ -44,6 +45,8 @@ from ..execution_schemas import (
     ArtifactUploadRequest,
     ClaimWorkRequest,
     CompleteLeaseRequest,
+    EgressCredentialEnvelopeRequest,
+    EgressCredentialEnvelopeResponse,
     ExecutionArtifactSummary,
     ExecutionLeaseSummary,
     LeaseClaim,
@@ -156,7 +159,7 @@ def _bound_egress_policy(
         raise ValueError("Unexpected Project egress-policy receipt fields.")
     if (
         receipt.get("schema_version") != "rdc.run-egress-policy-receipt/v1"
-        or receipt.get("credential_configured") is not False
+        or type(receipt.get("credential_configured")) is not bool
         or type(receipt.get("revision_number")) is not int
         or int(receipt["revision_number"]) < 1
     ):
@@ -1836,7 +1839,8 @@ async def _bound_run_egress_policy_is_current(
         and policy.active_revision_id == revision_id
         and receipt_dict.get("revision_number") == revision.revision_number
         and receipt_dict.get("policy_digest") == revision.policy_digest
-        and revision.credential_secret_id is None
+        and receipt_dict.get("credential_configured")
+        == (revision.credential_secret_id is not None)
     )
     if current:
         return True
@@ -3582,6 +3586,261 @@ async def issue_secret_envelope(
         expires_at=grant.expires_at,
         secret_names=list(grant.secret_names),
         environment=payload.environment,
+    )
+
+
+async def issue_egress_credential_envelope(
+    session: AsyncSession,
+    *,
+    lease: ExecutionLease,
+    worker: WorkerIdentity,
+    payload: EgressCredentialEnvelopeRequest,
+    request_id: str,
+) -> EgressCredentialEnvelopeResponse:
+    if lease.work_kind != "RUN_START" or lease.run_id is None:
+        raise ApiError(
+            status_code=409,
+            code="WORK_ITEM_STATE_CONFLICT",
+            message="Egress credentials require an active Run execution lease.",
+        )
+    if "SECRET_ENVELOPE" not in worker.capabilities:
+        raise ApiError(
+            status_code=403,
+            code="WORKER_CAPABILITY_DENIED",
+            message="The worker cannot request credential envelopes.",
+        )
+    run = await session.scalar(
+        select(Run).where(Run.id == lease.run_id).with_for_update()
+    )
+    if run is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The Run was not found.",
+        )
+    input_reference = dict(run.input_reference)
+    receipt = input_reference.get("project_egress_policy_receipt")
+    try:
+        binding = _bound_egress_policy(input_reference)
+        if binding is None or not isinstance(receipt, dict):
+            raise ValueError
+        policy_id = UUID(str(receipt["policy_id"]))
+        revision_id = UUID(str(receipt["revision_id"]))
+        if (
+            receipt.get("credential_configured") is not True
+            or receipt.get("binding_digest") != payload.policy_binding_digest
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_CREDENTIAL_BINDING_INVALID",
+            message="The Run egress credential binding is invalid.",
+        ) from exc
+    policy = await session.scalar(
+        select(EgressPolicy)
+        .where(
+            EgressPolicy.id == policy_id,
+            EgressPolicy.organization_id == lease.organization_id,
+            EgressPolicy.project_id == lease.project_id,
+        )
+        .with_for_update()
+    )
+    revision = await session.scalar(
+        select(EgressPolicyRevision).where(
+            EgressPolicyRevision.id == revision_id,
+            EgressPolicyRevision.policy_id == policy_id,
+            EgressPolicyRevision.organization_id == lease.organization_id,
+            EgressPolicyRevision.project_id == lease.project_id,
+        )
+    )
+    if (
+        policy is None
+        or revision is None
+        or policy.status != "ACTIVE"
+        or policy.active_revision_id != revision.id
+        or revision.revision_number != receipt.get("revision_number")
+        or revision.policy_digest != receipt.get("policy_digest")
+        or revision.credential_secret_id is None
+    ):
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_CREDENTIAL_BINDING_REVOKED",
+            message="The bound egress credential is no longer eligible.",
+        )
+    secret = await session.scalar(
+        select(ProjectSecret)
+        .where(
+            ProjectSecret.id == revision.credential_secret_id,
+            ProjectSecret.organization_id == lease.organization_id,
+            ProjectSecret.project_id == lease.project_id,
+        )
+        .with_for_update()
+    )
+    if secret is None:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_CREDENTIAL_UNAVAILABLE",
+            message="The bound egress credential is unavailable.",
+        )
+    try:
+        worker_public_key = decode_worker_public_key(payload.worker_public_key_b64)
+    except ValueError as exc:
+        raise ApiError(
+            status_code=422,
+            code="VALIDATION_FAILED",
+            message=str(exc),
+        ) from exc
+    public_key_digest = hashlib.sha256(worker_public_key).hexdigest()
+    fingerprint = canonical_fingerprint(
+        {
+            "purpose": "egress-authorization/v1",
+            "lease_id": str(lease.id),
+            "policy_binding_digest": payload.policy_binding_digest,
+            "secret_version": secret.version,
+            "worker_public_key_digest": public_key_digest,
+        }
+    )
+    now = datetime.now(UTC)
+    existing = await session.scalar(
+        select(SecretInjectionGrant).where(
+            SecretInjectionGrant.lease_id == lease.id,
+            SecretInjectionGrant.request_fingerprint == fingerprint,
+        )
+    )
+    if existing is not None:
+        if existing.expires_at <= now or existing.status != "ISSUED":
+            raise ApiError(
+                status_code=409,
+                code="EGRESS_CREDENTIAL_GRANT_EXPIRED",
+                message="The credential grant expired. Claim a new execution lease.",
+            )
+        return EgressCredentialEnvelopeResponse(
+            grant_id=existing.id,
+            algorithm=existing.algorithm,
+            ephemeral_public_key_b64=base64.b64encode(
+                existing.ephemeral_public_key
+            ).decode("ascii"),
+            nonce_b64=base64.b64encode(existing.nonce).decode("ascii"),
+            ciphertext_b64=base64.b64encode(existing.ciphertext).decode("ascii"),
+            expires_at=existing.expires_at,
+            policy_binding_digest=payload.policy_binding_digest,
+        )
+    if secret.master_key_version != settings.project_secret_master_key_version:
+        raise ApiError(
+            status_code=503,
+            code="SECRET_KEY_VERSION_UNAVAILABLE",
+            message="The egress credential key version is unavailable.",
+        )
+    raw = decrypt_project_secret(
+        ciphertext=secret.encrypted_value,
+        value_nonce=secret.value_nonce,
+        wrapped_data_key=secret.wrapped_data_key,
+        key_nonce=secret.key_nonce,
+        organization_id=secret.organization_id,
+        project_id=secret.project_id,
+        secret_id=secret.id,
+        name=secret.name,
+        version=secret.version,
+    )
+    try:
+        authorization = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_CREDENTIAL_INVALID",
+            message="The egress credential is not valid UTF-8.",
+        ) from exc
+    if (
+        not authorization
+        or len(authorization) > 8192
+        or "\r" in authorization
+        or "\n" in authorization
+    ):
+        raise ApiError(
+            status_code=409,
+            code="EGRESS_CREDENTIAL_INVALID",
+            message="The egress credential is not a safe Authorization value.",
+        )
+    expires_at = min(
+        lease.expires_at,
+        now + timedelta(seconds=settings.worker_secret_envelope_seconds),
+    )
+    plaintext = bytearray(
+        json.dumps(
+            {
+                "schema_version": "rdc.egress-credential/v1",
+                "lease_id": str(lease.id),
+                "run_id": str(run.id),
+                "policy_binding_digest": payload.policy_binding_digest,
+                "expires_at": expires_at.isoformat(),
+                "authorization": authorization,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    )
+    aad = worker_egress_credential_aad(
+        lease_id=str(lease.id),
+        worker_id=str(worker.id),
+        run_id=str(run.id),
+        policy_binding_digest=payload.policy_binding_digest,
+    )
+    try:
+        envelope = encrypt_secret_payload_for_worker(
+            bytes(plaintext), worker_public_key=worker_public_key, aad=aad
+        )
+    finally:
+        for index in range(len(plaintext)):
+            plaintext[index] = 0
+        authorization = ""
+    grant = SecretInjectionGrant(
+        worker_id=worker.id,
+        lease_id=lease.id,
+        organization_id=lease.organization_id,
+        project_id=lease.project_id,
+        run_id=run.id,
+        request_fingerprint=fingerprint,
+        secret_names=[secret.name],
+        environment=secret.environment,
+        algorithm=envelope.algorithm,
+        ephemeral_public_key=envelope.ephemeral_public_key,
+        nonce=envelope.nonce,
+        ciphertext=envelope.ciphertext,
+        worker_public_key_digest=envelope.worker_public_key_digest,
+        status="ISSUED",
+        issued_at=now,
+        expires_at=expires_at,
+    )
+    secret.last_used_at = now
+    session.add(grant)
+    await session.flush()
+    await append_audit_event(
+        session,
+        organization_id=lease.organization_id,
+        project_id=lease.project_id,
+        actor_type="worker",
+        actor_id=str(worker.id),
+        action="execution.egress_credential_envelope.issued",
+        resource_type="secret_injection_grant",
+        resource_id=str(grant.id),
+        request_id=request_id,
+        details={
+            "run_id": str(run.id),
+            "policy_binding_digest": payload.policy_binding_digest,
+            "expires_at": expires_at.isoformat(),
+        },
+    )
+    return EgressCredentialEnvelopeResponse(
+        grant_id=grant.id,
+        algorithm=grant.algorithm,
+        ephemeral_public_key_b64=base64.b64encode(grant.ephemeral_public_key).decode(
+            "ascii"
+        ),
+        nonce_b64=base64.b64encode(grant.nonce).decode("ascii"),
+        ciphertext_b64=base64.b64encode(grant.ciphertext).decode("ascii"),
+        expires_at=grant.expires_at,
+        policy_binding_digest=payload.policy_binding_digest,
     )
 
 

@@ -12,6 +12,7 @@ from ...execution_schemas import (
     ArtifactUploadRequest,
     ClaimWorkRequest,
     CompleteLeaseRequest,
+    EgressCredentialEnvelopeRequest,
     LeaseStatusUpdateRequest,
     RegisterWorkerRequest,
     RenewLeaseRequest,
@@ -26,6 +27,7 @@ from ...services.execution_plane import (
     complete_lease,
     heartbeat_worker,
     issue_artifact_upload_grant,
+    issue_egress_credential_envelope,
     issue_run_artifact_download_grant,
     issue_secret_envelope,
     register_worker,
@@ -181,6 +183,23 @@ async def issue_secret_envelope_route(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> dict[str, object]:
     result = await issue_secret_envelope(
+        db,
+        lease=access.lease,
+        worker=access.context.worker,
+        payload=payload,
+        request_id=request_id(request),
+    )
+    return success_payload(request, result.model_dump(mode="json"))
+
+
+@router.post("/leases/{lease_id}/egress-credential-envelope")
+async def issue_egress_credential_envelope_route(
+    payload: EgressCredentialEnvelopeRequest,
+    request: Request,
+    access: Annotated[LeaseAccess, Depends(require_lease_access)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    result = await issue_egress_credential_envelope(
         db,
         lease=access.lease,
         worker=access.context.worker,

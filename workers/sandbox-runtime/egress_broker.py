@@ -138,27 +138,38 @@ def _request_once(
     method: str,
     policy: EgressPolicy,
     connection_factory: ConnectionFactory,
+    authorization: str | None = None,
 ) -> tuple[int, dict[str, str], bytes, str | None]:
     parsed = urlsplit(target.url)
     path = parsed.path or "/"
     if parsed.query:
         path += "?" + parsed.query
 
+    if authorization is not None and (
+        not authorization
+        or len(authorization) > 8192
+        or "\r" in authorization
+        or "\n" in authorization
+    ):
+        raise EgressPolicyError("Broker Authorization credential is invalid.")
+    request_headers = {
+        "Host": target.hostname,
+        "User-Agent": "RDC-Phase1J-Canary/1.0",
+        "Accept": (
+            "text/html,application/json,text/plain,application/xml,"
+            "application/xhtml+xml;q=0.9,*/*;q=0.1"
+        ),
+        "Accept-Encoding": "identity",
+        "Connection": "close",
+    }
+    if authorization is not None:
+        request_headers["Authorization"] = authorization
     connection = connection_factory(target, policy)
     try:
         connection.request(
             method,
             path,
-            headers={
-                "Host": target.hostname,
-                "User-Agent": "RDC-Phase1J-Canary/1.0",
-                "Accept": (
-                    "text/html,application/json,text/plain,application/xml,"
-                    "application/xhtml+xml;q=0.9,*/*;q=0.1"
-                ),
-                "Accept-Encoding": "identity",
-                "Connection": "close",
-            },
+            headers=request_headers,
         )
         response = connection.getresponse()
         headers = _safe_headers(response)
@@ -192,6 +203,7 @@ def broker_validated_resource_once(
     method: str,
     policy: EgressPolicy,
     connection_factory: ConnectionFactory = _default_connection,
+    authorization: str | None = None,
 ) -> tuple[int, dict[str, str], bytes, str | None]:
     normalized_method = method.strip().upper()
     if normalized_method not in policy.allowed_methods:
@@ -203,6 +215,7 @@ def broker_validated_resource_once(
         method=normalized_method,
         policy=policy,
         connection_factory=connection_factory,
+        authorization=authorization,
     )
 
 
@@ -215,6 +228,7 @@ def _fetch(
     resolver,
     connection_factory: ConnectionFactory,
     budget: dict[str, int],
+    authorization: str | None,
 ) -> BrokerResponse:
     normalized_method = method.strip().upper()
     if normalized_method not in policy.allowed_methods:
@@ -235,6 +249,7 @@ def _fetch(
             method=normalized_method,
             policy=policy,
             connection_factory=connection_factory,
+            authorization=authorization,
         )
 
         if status in _REDIRECT_STATUSES:
@@ -271,6 +286,7 @@ def broker_web_requests(
     policy: EgressPolicy,
     resolver=socket.getaddrinfo,
     connection_factory: ConnectionFactory = _default_connection,
+    authorization: str | None = None,
 ) -> dict[str, object]:
     result = dict(input_value)
     raw_requests = result.pop("_rdc_web_requests", [])
@@ -308,6 +324,7 @@ def broker_web_requests(
             resolver=resolver,
             connection_factory=connection_factory,
             budget=budget,
+            authorization=authorization,
         )
         responses.append(response.as_dict())
 

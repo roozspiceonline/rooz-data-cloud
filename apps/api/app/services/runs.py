@@ -309,15 +309,6 @@ async def _resolve_run_egress_policy(
             code="EGRESS_POLICY_ACTIVE_REVISION_INVALID",
             message="The active egress-policy revision is unavailable.",
         )
-    if revision.credential_secret_id is not None:
-        raise ApiError(
-            status_code=409,
-            code="EGRESS_POLICY_CREDENTIAL_DELIVERY_UNAVAILABLE",
-            message=(
-                "Credential-bound egress policies are not eligible for "
-                "runtime binding until isolated credential delivery is enabled."
-            ),
-        )
     try:
         validated = validate_egress_policy(
             allowed_hosts=list(revision.allowed_hosts),
@@ -355,7 +346,7 @@ async def _resolve_run_egress_policy(
         "revision_number": revision.revision_number,
         "policy_digest": revision.policy_digest,
         "runtime_policy_digest": canonical_fingerprint(runtime_policy),
-        "credential_configured": False,
+        "credential_configured": revision.credential_secret_id is not None,
     }
     receipt = {
         **receipt_without_digest,

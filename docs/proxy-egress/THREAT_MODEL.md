@@ -24,9 +24,12 @@ proxy responses and all external network data are untrusted.
   version. The active-revision trigger requires same policy and tenancy.
 - History rewriting: revision update/delete is rejected by PostgreSQL. Rotation
   appends a revision and requires explicit activation.
-- Credential disclosure: policies store only a Project-secret UUID; metadata and
-  audit output emits only a boolean. Agent/Chromium receive no database,
-  object-storage or policy credential.
+- Credential disclosure: policies store only a Project-secret UUID; metadata,
+  Run lineage and audit output emit only a boolean or policy binding digest.
+  Plaintext is decrypted server-side only long enough to create a short-lived
+  worker-key-encrypted envelope and is injected solely into trusted broker
+  request headers. Agent/Chromium receive no database, object-storage or policy
+  credential; credential-bound browser paths fail closed.
 - Idempotency abuse: creation locks a tenant/principal/endpoint/key digest and
   conflicts when the same key has a different canonical request fingerprint.
 - Caller-authored or stale binding: Run input accepts a strict policy resource
@@ -34,7 +37,7 @@ proxy responses and all external network data are untrusted.
   policy and resolves its current revision; DRAFT, DISABLED, missing,
   cross-tenant and cross-Project references return the same not-found outcome.
 - Snapshot tampering: the receipt binds policy ID, revision ID and number,
-  canonical revision digest, runtime digest and credential absence. Activation,
+  canonical revision digest, runtime digest and credential presence. Activation,
   Queue v6 capabilities and the trusted worker compare the same binding digest;
   any missing, extra or changed field fails closed.
 - Canary widening: both control plane and worker require exact hosts and methods
@@ -46,8 +49,12 @@ proxy responses and all external network data are untrusted.
   policy row locks in one transaction and rechecks ACTIVE plus the exact
   selected revision before creating a lease. Disable/rotate and claim therefore
   serialize; stale work terminally fails without a capability receipt.
+- Credential rotation race: issuance locks policy and secret rows, binds the
+  encrypted grant to secret version plus worker/lease/Run/policy digest, and
+  replacement revokes outstanding grants. Previously decrypted values are
+  bounded by the shorter of lease expiry and the 60-second envelope TTL.
 
 ## Residual work before live enforcement
 
-Deliver credentials only as short-lived worker/broker-bound envelopes, and add
-production proxy-provider health, secret rotation and live adversarial canaries.
+Add production proxy-provider health, upstream credential-rotation canaries and
+live adversarial canaries.

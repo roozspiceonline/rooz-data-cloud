@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -13,7 +14,8 @@ from pydantic import ValidationError
 from app.core.errors import ApiError
 from app.core.security import canonical_fingerprint
 from app.egress_policy_protocol import validate_egress_policy
-from app.models import Run
+from app.execution_schemas import EgressCredentialEnvelopeRequest
+from app.models import Run, SecretInjectionGrant
 from app.run_schemas import CreateRunRequest
 from app.services import execution_plane, runs
 from app.services.worker_request_queue import request_queue_capability
@@ -244,6 +246,51 @@ def test_broker_enforces_revision_method_subset() -> None:
             },
             policy=policy,
         )
+
+    class Response:
+        status = 200
+
+        @staticmethod
+        def getheaders() -> list[tuple[str, str]]:
+            return [("Content-Type", "application/json")]
+
+        @staticmethod
+        def getheader(name: str) -> str | None:
+            return None
+
+        @staticmethod
+        def read(_limit: int) -> bytes:
+            return b"{}"
+
+    class Connection:
+        headers: dict[str, str] = {}
+
+        def request(
+            self, _method: str, _path: str, *, headers: dict[str, str]
+        ) -> None:
+            self.headers = headers
+
+        @staticmethod
+        def getresponse() -> Response:
+            return Response()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    connection = Connection()
+    broker_validated_resource_once(
+        target=ValidatedTarget(
+            url="https://api.example.com/",
+            hostname="api.example.com",
+            addresses=("93.184.216.34",),
+        ),
+        method="GET",
+        policy=policy,
+        authorization="Bearer private-value",
+        connection_factory=lambda _target, _policy: connection,  # type: ignore[arg-type]
+    )
+    assert connection.headers["Authorization"] == "Bearer private-value"
 
 
 def test_queue_capability_binds_same_project_revision_receipt(
@@ -476,6 +523,20 @@ async def test_active_revision_resolution_is_tenant_scoped_and_canonical(
     assert receipt["revision_id"] == str(revision_id)
     assert receipt["runtime_policy_digest"] == canonical_fingerprint(runtime)
 
+    credential_id = uuid4()
+    revision.credential_secret_id = credential_id
+    credential_session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[policy, revision])
+    )
+    _, credential_receipt = await runs._resolve_run_egress_policy(
+        credential_session,  # type: ignore[arg-type]
+        policy_id=policy_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    assert credential_receipt["credential_configured"] is True
+    assert str(credential_id) not in str(credential_receipt)
+
     missing = SimpleNamespace(scalar=AsyncMock(return_value=None))
     with pytest.raises(ApiError) as error:
         await runs._resolve_run_egress_policy(
@@ -614,3 +675,116 @@ async def test_execution_admission_rejects_incomplete_bound_snapshot(
         request_id="binding-integrity",
     )
     assert run.failure_code == "EGRESS_POLICY_BINDING_REVOKED"
+
+
+@pytest.mark.asyncio
+async def test_egress_credential_envelope_is_lease_and_binding_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_policy = _runtime_policy()
+    receipt = _receipt(runtime_policy)
+    receipt["credential_configured"] = True
+    receipt["binding_digest"] = canonical_fingerprint(
+        {key: value for key, value in receipt.items() if key != "binding_digest"}
+    )
+    organization_id, project_id, run_id, lease_id, worker_id, secret_id = (
+        uuid4() for _ in range(6)
+    )
+    run = SimpleNamespace(
+        id=run_id,
+        input_reference={
+            "project_egress_policy": runtime_policy,
+            "project_egress_policy_receipt": receipt,
+        },
+    )
+    revision_id = UUID(str(receipt["revision_id"]))
+    policy_record = SimpleNamespace(
+        status="ACTIVE",
+        active_revision_id=revision_id,
+    )
+    revision = SimpleNamespace(
+        id=revision_id,
+        revision_number=receipt["revision_number"],
+        policy_digest=receipt["policy_digest"],
+        credential_secret_id=secret_id,
+    )
+    secret = SimpleNamespace(
+        id=secret_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        name="PROXY_AUTH",
+        environment="production",
+        version=4,
+        encrypted_value=b"ciphertext",
+        value_nonce=b"nonce",
+        wrapped_data_key=b"key",
+        key_nonce=b"key-nonce",
+        master_key_version=execution_plane.settings.project_secret_master_key_version,
+        last_used_at=None,
+    )
+    lease = SimpleNamespace(
+        id=lease_id,
+        work_kind="RUN_START",
+        run_id=run_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        expires_at=datetime.now(UTC) + timedelta(minutes=1),
+    )
+    worker_record = SimpleNamespace(
+        id=worker_id,
+        capabilities=["RUN_START", "SECRET_ENVELOPE"],
+    )
+    worker_module = _worker_module()
+    key_pair = worker_module.generate_worker_key_pair()
+    def add_record(record: object) -> None:
+        if isinstance(record, SecretInjectionGrant) and record.id is None:
+            record.id = uuid4()
+
+    session = SimpleNamespace(
+        scalar=AsyncMock(side_effect=[run, policy_record, revision, secret, None]),
+        flush=AsyncMock(),
+        add=Mock(side_effect=add_record),
+    )
+    monkeypatch.setattr(execution_plane, "_egress_policy_payload", _ceiling)
+    monkeypatch.setattr(
+        execution_plane,
+        "decrypt_project_secret",
+        lambda **_kwargs: b"Bearer private-value",
+    )
+    response = await execution_plane.issue_egress_credential_envelope(
+        session,  # type: ignore[arg-type]
+        lease=lease,  # type: ignore[arg-type]
+        worker=worker_record,  # type: ignore[arg-type]
+        payload=EgressCredentialEnvelopeRequest.model_validate(
+            {
+                "policy_binding_digest": receipt["binding_digest"],
+                "worker_public_key_b64": key_pair.public_key_b64,
+            }
+        ),
+        request_id="egress-credential",
+    )
+    assert response.policy_binding_digest == receipt["binding_digest"]
+    assert "private-value" not in response.ciphertext_b64
+    assert worker_module.decrypt_egress_credential_envelope(
+        {"data": response.model_dump(mode="json")},
+        key_pair=key_pair,
+        lease_id=str(lease_id),
+        worker_id=str(worker_id),
+        run_id=str(run_id),
+        policy_binding_digest=str(receipt["binding_digest"]),
+    ) == "Bearer private-value"
+    grant = next(
+        call.args[0]
+        for call in session.add.call_args_list
+        if isinstance(call.args[0], SecretInjectionGrant)
+    )
+    assert grant.lease_id == lease_id
+    assert grant.secret_names == ["PROXY_AUTH"]
+    audits = [
+        call.args[0]
+        for call in session.add.call_args_list
+        if type(call.args[0]).__name__ == "AuditEvent"
+    ]
+    assert audits
+    assert "PROXY_AUTH" not in str(audits[0].details)
+    assert str(secret_id) not in str(audits[0].details)

@@ -22,6 +22,7 @@ from ..models import (
     BuildDispatchOutbox,
     IdempotencyRecord,
     ProjectSecret,
+    SecretInjectionGrant,
     StorageObject,
 )
 from .identity_tenancy import append_audit_event
@@ -267,6 +268,24 @@ async def replace_project_secret(
             )
         return dict(existing.response_snapshot)
 
+    locked = await session.scalar(
+        select(ProjectSecret)
+        .where(
+            ProjectSecret.id == record.id,
+            ProjectSecret.organization_id == record.organization_id,
+            ProjectSecret.project_id == record.project_id,
+        )
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if locked is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+    record = locked
+
     if record.version != expected_version:
         raise ApiError(
             status_code=409,
@@ -295,6 +314,21 @@ async def replace_project_secret(
     record.version = next_version
     now = datetime.now(UTC)
     record.updated_at = now
+    grants = list(
+        (
+            await session.scalars(
+                select(SecretInjectionGrant)
+                .where(
+                    SecretInjectionGrant.project_id == record.project_id,
+                    SecretInjectionGrant.status == "ISSUED",
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    for grant in grants:
+        if record.name in grant.secret_names:
+            grant.status = "REVOKED"
     snapshot = secret_metadata(record)
     json_snapshot = {
         **snapshot,
