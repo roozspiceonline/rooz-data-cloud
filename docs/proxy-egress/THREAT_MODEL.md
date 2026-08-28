@@ -42,9 +42,12 @@ proxy responses and all external network data are untrusted.
   greater. Runtime policy selection cannot expand general egress.
 - Method escalation: the broker and browser gateway enforce the revision's
   GET/HEAD subset; a GET-only revision cannot issue HEAD.
+- Queued-work revocation race: `RUN_START` admission holds the Run, outbox and
+  policy row locks in one transaction and rechecks ACTIVE plus the exact
+  selected revision before creating a lease. Disable/rotate and claim therefore
+  serialize; stale work terminally fails without a capability receipt.
 
 ## Residual work before live enforcement
 
-Deliver credentials only as short-lived worker/broker-bound envelopes; define
-revocation/rotation convergence for already queued immutable snapshots; and add
-production proxy-provider health, rotation and live adversarial canaries.
+Deliver credentials only as short-lived worker/broker-bound envelopes, and add
+production proxy-provider health, secret rotation and live adversarial canaries.

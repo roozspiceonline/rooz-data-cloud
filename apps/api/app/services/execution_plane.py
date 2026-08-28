@@ -63,6 +63,8 @@ from ..models import (
     Build,
     BuildDispatchOutbox,
     Dataset,
+    EgressPolicy,
+    EgressPolicyRevision,
     ExecutionArtifact,
     ExecutionLease,
     Project,
@@ -1780,6 +1782,117 @@ async def _run_claim_payload(
     return payload, run
 
 
+async def _bound_run_egress_policy_is_current(
+    session: AsyncSession,
+    *,
+    source: RunCommandOutbox,
+    now: datetime,
+    request_id: str,
+) -> bool:
+    run = await session.scalar(
+        select(Run).where(Run.id == source.run_id).with_for_update()
+    )
+    if run is None:
+        return True
+    input_reference = dict(run.input_reference)
+    stored_policy = input_reference.get("project_egress_policy")
+    receipt = input_reference.get("project_egress_policy_receipt")
+    if receipt is None and stored_policy is None:
+        return True
+    receipt_dict = receipt if isinstance(receipt, dict) else {}
+    binding_valid = True
+    try:
+        _bound_egress_policy(input_reference)
+        if not isinstance(receipt, dict):
+            raise ValueError
+        policy_id = UUID(str(receipt["policy_id"]))
+        revision_id = UUID(str(receipt["revision_id"]))
+    except (KeyError, TypeError, ValueError):
+        binding_valid = False
+        policy_id = UUID(int=0)
+        revision_id = UUID(int=0)
+    policy = await session.scalar(
+        select(EgressPolicy)
+        .where(
+            EgressPolicy.id == policy_id,
+            EgressPolicy.organization_id == run.organization_id,
+            EgressPolicy.project_id == run.project_id,
+        )
+        .with_for_update()
+    )
+    revision = await session.scalar(
+        select(EgressPolicyRevision).where(
+            EgressPolicyRevision.id == revision_id,
+            EgressPolicyRevision.policy_id == policy_id,
+            EgressPolicyRevision.organization_id == run.organization_id,
+            EgressPolicyRevision.project_id == run.project_id,
+        )
+    )
+    current = (
+        binding_valid
+        and policy is not None
+        and revision is not None
+        and policy.status == "ACTIVE"
+        and policy.active_revision_id == revision_id
+        and receipt_dict.get("revision_number") == revision.revision_number
+        and receipt_dict.get("policy_digest") == revision.policy_digest
+        and revision.credential_secret_id is None
+    )
+    if current:
+        return True
+
+    previous_status = run.status
+    source.status = "FAILED"
+    source.attempts += 1
+    source.claimed_at = now
+    source.last_error_code = "EGRESS_POLICY_BINDING_REVOKED"
+    source.updated_at = now
+    run.status = "FAILED"
+    run.failure_code = "EGRESS_POLICY_BINDING_REVOKED"
+    run.failure_summary = (
+        "The bound egress policy is no longer active at execution admission."
+    )
+    run.finished_at = now
+    run.updated_at = now
+    run.version += 1
+    await append_run_event(
+        session,
+        run=run,
+        event_type="run.status",
+        payload={"previous_status": previous_status, "status": "FAILED"},
+    )
+    await append_run_event(
+        session,
+        run=run,
+        event_type="run.failed",
+        payload={
+            "failure_code": "EGRESS_POLICY_BINDING_REVOKED",
+            "retryable": False,
+        },
+    )
+    await append_audit_event(
+        session,
+        organization_id=run.organization_id,
+        project_id=run.project_id,
+        actor_type="system",
+        actor_id="execution-admission",
+        action="run.egress_policy_binding_revoked",
+        resource_type="run",
+        resource_id=str(run.id),
+        request_id=request_id,
+        details={
+            "policy_id": str(policy_id) if policy_id.int != 0 else None,
+            "revision_id": str(revision_id) if revision_id.int != 0 else None,
+            "binding_integrity_valid": binding_valid,
+            "policy_active": policy is not None and policy.status == "ACTIVE",
+            "same_revision_selected": (
+                policy is not None and policy.active_revision_id == revision_id
+            ),
+        },
+    )
+    return False
+
+
 async def _select_source(
     session: AsyncSession,
     *,
@@ -2072,6 +2185,18 @@ async def claim_work(
             project_id = source.project_id
             build_id = None
             run_id = source.run_id
+
+        if (
+            kind == "RUN_START"
+            and isinstance(source, RunCommandOutbox)
+            and not await _bound_run_egress_policy_is_current(
+                session,
+                source=source,
+                now=now,
+                request_id=request_id,
+            )
+        ):
+            return None
 
         project, active_project_count = await _lock_project_admission(
             session,

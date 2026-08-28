@@ -57,3 +57,12 @@ Credential-bound revisions remain fail-closed with
 material enters Run lineage, Agent input, Chromium, activation or Queue
 capabilities. Isolated credential-envelope delivery and rotation convergence
 remain separate work.
+
+Immediately before a bound `RUN_START` consumes a lease, admission locks the
+Run and referenced policy and requires the policy to remain `ACTIVE` with the
+same revision selected. Disablement, rotation, deletion, cross-tenant
+substitution, receipt tampering, digest mismatch or a newly credential-bound
+revision terminally fails the Run and START outbox with
+`EGRESS_POLICY_BINDING_REVOKED`; no lease or worker capability is issued. The
+immutable original Run snapshot is retained as audit lineage. Unbound legacy
+static-canary Runs keep their existing behavior.

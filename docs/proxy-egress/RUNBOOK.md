@@ -33,6 +33,13 @@ Investigate `egress_policy.created`, `egress_policy.revision_created`,
 and request ID. Version conflicts and cross-tenant 404s are expected defensive
 outcomes, not reasons to relax authorization or RLS.
 
+Queued bound Runs are rechecked at admission. After disable or revision
+rotation, confirm affected pending Runs become `FAILED` with
+`EGRESS_POLICY_BINDING_REVOKED`, their START outboxes become `FAILED`, the audit
+action is `run.egress_policy_binding_revoked`, and no execution lease exists.
+Runs admitted before the policy transition serialize ahead of that transition;
+use the static canary kill switch for immediate in-flight containment.
+
 Treat `EGRESS_POLICY_ACTIVE_REVISION_INVALID`,
 `EGRESS_POLICY_EXCEEDS_CANARY_CEILING`, worker binding-digest mismatches and
 Queue v6 receipt mismatches as security events. Do not bypass the static
