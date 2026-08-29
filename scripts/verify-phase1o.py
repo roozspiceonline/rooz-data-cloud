@@ -631,10 +631,11 @@ def verify_docs_and_baseline() -> None:
             )
 
     workflow = read(".github/workflows/ci.yml")
+    runner = read("scripts/run-verifiers.py")
     require(
-        "- run: python3 scripts/verify-phase1n.py\n"
-        "      - run: python3 scripts/verify-phase1o.py\n"
-        in workflow,
+        "run-verifiers.py" in workflow
+        and runner.index('"verify-phase1n.py"')
+        < runner.index('"verify-phase1o.py"'),
         "Phase 1O verifier not chained",
     )
 

@@ -107,6 +107,8 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-groups
       - run: uv run alembic upgrade head
+      - run: uv run alembic downgrade -1
+      - run: uv run alembic upgrade head
       - run: uv run ruff check .
       - run: uv run mypy app
       - run: uv run pytest
@@ -119,25 +121,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: python3 scripts/verify-scaffold.py
-      - run: python3 scripts/verify-phase1b.py
-      - run: python3 scripts/verify-phase1c.py
-      - run: python3 scripts/verify-phase1d.py
-      - run: python3 scripts/verify-phase1e.py
-      - run: python3 scripts/verify-phase1f.py
-      - run: python3 scripts/verify-phase1g.py
-      - run: python3 scripts/verify-phase1h.py
-      - run: python3 scripts/verify-phase1i.py
-      - run: python3 scripts/verify-phase1j.py
-      - run: python3 scripts/verify-phase1k.py
-      - run: python3 scripts/verify-phase1l.py
-      - run: python3 scripts/verify-phase1m.py
-      - run: python3 scripts/verify-phase1n.py
-      - run: python3 scripts/verify-phase1o.py
-      - run: python3 scripts/verify-phase1p.py
-      - run: python3 scripts/verify-execution-recovery.py
-      - run: python3 scripts/verify-scheduler.py
-      - run: python3 scripts/verify-scraping-runtime.py
-      - run: python3 scripts/verify-proxy-egress.py
-      - run: python3 scripts/verify-egress-health.py
+      - run: python3 scripts/run-verifiers.py
       - run: docker compose config --quiet

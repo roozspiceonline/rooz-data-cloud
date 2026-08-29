@@ -122,7 +122,11 @@ def main() -> None:
     )
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    require("verify-phase1f.py" in workflow, "CI does not run Phase 1F verifier")
+    runner = (ROOT / "scripts/run-verifiers.py").read_text(encoding="utf-8")
+    require(
+        "run-verifiers.py" in workflow and '"verify-phase1f.py"' in runner,
+        "CI does not run Phase 1F verifier",
+    )
 
     print("RDC_PHASE1F_VERIFICATION_PASSED")
 
