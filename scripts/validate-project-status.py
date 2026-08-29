@@ -74,7 +74,7 @@ def main() -> None:
         for stream in workstreams.values()
         if isinstance(stream, dict) and "current_issue" in stream
     ]
-    if not referenced_issues or any(
+    if any(
         not isinstance(issue, int) or issue < 1 for issue in referenced_issues
     ):
         raise SystemExit("A referenced active product issue is invalid")

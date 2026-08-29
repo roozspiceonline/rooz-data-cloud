@@ -69,6 +69,30 @@ need(
     "test_compact_evidence_migration_reduces_write_amplification",
 )
 need("apps/api/app/services/egress_health.py", "evidence=None", "latency_ms=")
+need(
+    "apps/api/migrations/versions/20260829_0026_egress_credential_canaries.py",
+    "uq_egress_credential_canary_binding",
+    "enforce_egress_credential_canary_insert",
+    "enforce_egress_credential_canary_transition",
+    "egress_credential_canary_transitions_immutable",
+    "ENABLE ROW LEVEL SECURITY",
+)
+need(
+    "apps/api/app/services/egress_credential_canaries.py",
+    "enqueue_credential_rotation_canaries",
+    "with_for_update(skip_locked=True)",
+    "complete_credential_rotation_canary",
+    "SECRET_VERSION_SUPERSEDED",
+)
+need(
+    "apps/api/app/services/builds_secrets.py",
+    "enqueue_credential_rotation_canaries",
+)
+need(
+    "apps/api/tests/test_egress_credential_canary_contracts.py",
+    "test_canary_migration_enforces_lineage_state_history_and_rls",
+    "test_canary_api_is_tenant_read_bounded_and_credential_free",
+)
 need("docker-compose.yml", "postgres:18-alpine", "postgres_data:/var/lib/postgresql")
 need("docs/proxy-egress/THREAT_MODEL.md", "immutable observation", "minimum sample")
 print("Egress health persistence verification passed")

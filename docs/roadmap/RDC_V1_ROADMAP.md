@@ -110,11 +110,17 @@ typed columns, removes routine telemetry audit duplication and four unused
 indexes while retaining immutable RLS/lease/replay lineage. It also adds a
 machine-readable migration/workstream status validator, one complete verifier
 runner with backward-compatible phase entrypoints, and Docker ignore controls.
+The eighth increment transactionally schedules credential-rotation canaries
+against exact active revision, secret version and operator target-digest
+lineage. Enqueue is idempotent, claims are race-safe and expiring, completion
+is token-fenced, PostgreSQL RLS protects both attempts and immutable transition
+history, and the tenant summary is credential/target-free. Live execution and
+adaptive routing remain disabled.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: add upstream rotation canaries and live adversarial canaries;
-   keep adaptive routing disabled until those gates pass.
+1. Proxy/egress: add the reviewed live credential-canary runner and live
+   adversarial canaries; keep adaptive routing disabled until those gates pass.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
 3. Events/webhooks: signed delivery, retry/idempotency, history and failure

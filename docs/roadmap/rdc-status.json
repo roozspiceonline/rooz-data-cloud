@@ -1,6 +1,6 @@
 {
   "schema_version": "rdc.project-status/v1",
-  "database_head": "20260828_0025",
+  "database_head": "20260829_0026",
   "canonical_roadmap": "docs/roadmap/RDC_V1_ROADMAP.md",
   "workstreams": {
     "identity_tenancy": {"status": "complete"},
@@ -9,10 +9,14 @@
     "scraping_runtime": {"status": "baseline_complete"},
     "proxy_egress": {
       "status": "active",
-      "current_issue": 93,
-      "remaining": ["credential_rotation_canary", "live_adversarial_canary"]
+      "last_delivery_issue": 93,
+      "remaining": ["credential_rotation_live_runner", "live_adversarial_canary"]
     },
-    "platform_efficiency": {"status": "active", "current_issue": 94},
+    "platform_efficiency": {
+      "status": "increment_complete",
+      "last_delivery_issue": 94,
+      "remaining": ["telemetry_rollups_retention", "advisory_changed_path_ci"]
+    },
     "events_webhooks": {"status": "not_started"},
     "observability": {"status": "not_started"},
     "usage_cost": {"status": "not_started"},

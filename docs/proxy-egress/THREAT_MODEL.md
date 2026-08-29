@@ -73,11 +73,23 @@ proxy responses and all external network data are untrusted.
   or tenant input. The public aggregate is tenant-authorized, window-bounded,
   capped at 32 dimensions and applies a configured minimum sample threshold.
   Low-volume dimensions are suppressed rather than exposing sparse route data.
+- Rotation-canary substitution or replay: enqueue is server-owned and
+  transactionally follows secret replacement. PostgreSQL derives exact tenant,
+  active revision, secret and current version lineage; the unique
+  revision/version/target-digest key makes replay harmless. Claims use
+  `FOR UPDATE SKIP LOCKED`, bounded expiry and an unguessable exact token.
+  Completion rechecks both current secret version and operator target digest.
+- Canary history rewriting or disclosure: terminal attempts cannot transition,
+  attempt lineage cannot change, deletes fail, and an append-only transition
+  table records every enqueue, claim, reclaim and result. Tenant reads are RLS
+  protected and the bounded API omits secret/target/claim identifiers. Canary
+  results cannot grant retry or routing authority.
 
 ## Residual work before live enforcement
 
-Add upstream credential-rotation canaries and live adversarial canaries before
-adaptive routing.
+Add a reviewed credential-using live runner and live adversarial canaries before
+adaptive routing. Durable rotation scheduling/results exist, but live execution
+and adaptive routing remain explicitly disabled.
 
 The provider-health evidence is untrusted even when reported by an authenticated
 worker because status codes and challenge signals originate externally. The

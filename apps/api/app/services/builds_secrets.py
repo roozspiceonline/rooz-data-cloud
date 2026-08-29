@@ -25,6 +25,7 @@ from ..models import (
     SecretInjectionGrant,
     StorageObject,
 )
+from .egress_credential_canaries import enqueue_credential_rotation_canaries
 from .identity_tenancy import append_audit_event
 
 settings = get_settings()
@@ -329,6 +330,12 @@ async def replace_project_secret(
     for grant in grants:
         if record.name in grant.secret_names:
             grant.status = "REVOKED"
+    await session.flush()
+    await enqueue_credential_rotation_canaries(
+        session,
+        secret=record,
+        request_id=request_id,
+    )
     snapshot = secret_metadata(record)
     json_snapshot = {
         **snapshot,

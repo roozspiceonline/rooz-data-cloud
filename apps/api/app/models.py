@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     MetaData,
@@ -912,6 +913,112 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
     provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
     region_key: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class EgressCredentialCanaryAttempt(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "egress_credential_canary_attempts"
+    __table_args__ = (
+        Index(
+            "ix_ecc_attempts_organization",
+            "organization_id",
+        ),
+        Index(
+            "ix_ecc_attempts_project_scheduled",
+            "project_id",
+            "scheduled_at",
+        ),
+        Index(
+            "ix_ecc_attempts_status_scheduled",
+            "status",
+            "scheduled_at",
+        ),
+        Index(
+            "ix_ecc_attempts_secret_version",
+            "credential_secret_id",
+            "secret_version",
+        ),
+        UniqueConstraint(
+            "policy_revision_id",
+            "secret_version",
+            "target_digest",
+            name="uq_egress_credential_canary_binding",
+        ),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    policy_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.egress_policies.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    policy_revision_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.egress_policy_revisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    credential_secret_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.project_secrets.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    secret_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    target_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    region_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(String(32))
+    healthy: Mapped[bool | None] = mapped_column(Boolean)
+    retryable: Mapped[bool | None] = mapped_column(Boolean)
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class EgressCredentialCanaryTransition(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "egress_credential_canary_transitions"
+    __table_args__ = (
+        Index(
+            "ix_ecc_transitions_organization",
+            "organization_id",
+        ),
+        Index(
+            "ix_ecc_transitions_project_observed",
+            "project_id",
+            "observed_at",
+        ),
+        UniqueConstraint(
+            "attempt_id",
+            "attempt_version",
+            name="uq_egress_credential_canary_transition_version",
+        ),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    attempt_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(
+            "control.egress_credential_canary_attempts.id", ondelete="RESTRICT"
+        ),
+        nullable=False,
+    )
+    attempt_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(16))
+    to_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    event: Mapped[str] = mapped_column(String(24), nullable=False)
+    outcome: Mapped[str | None] = mapped_column(String(32))
+    healthy: Mapped[bool | None] = mapped_column(Boolean)
+    retryable: Mapped[bool | None] = mapped_column(Boolean)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class RequestQueue(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,8 +20,15 @@ from app.egress_policy_schemas import (
     CreateEgressPolicyRequest,
     CreateEgressPolicyRevisionRequest,
 )
-from app.models import Project, RunCommandOutbox
+from app.models import Project, ProjectSecret, RunCommandOutbox
+from app.services import egress_credential_canaries as canary_service
 from app.services import execution_plane
+from app.services.egress_credential_canaries import (
+    claim_credential_rotation_canaries,
+    complete_credential_rotation_canary,
+    enqueue_credential_rotation_canaries,
+    list_credential_rotation_canaries,
+)
 from app.services.egress_policies import (
     activate_egress_policy,
     create_egress_policy,
@@ -329,6 +337,261 @@ async def test_service_idempotency_rotation_and_optimistic_lifecycle() -> None:
             )
         assert failure.value.status_code == 404
         await session.rollback()
+
+
+async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    user_id, org_id, project_id, secret_id, policy_id, revision_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.egress_policies SET status='ACTIVE',active_revision_id=:r,activated_at=CURRENT_TIMESTAMP WHERE id=:p"
+            ),
+            {"r": revision_id, "p": policy_id},
+        )
+    original = (
+        canary_service.settings.egress_credential_canary_enabled,
+        canary_service.settings.egress_credential_canary_target_url,
+    )
+    canary_service.settings.egress_credential_canary_enabled = True
+    canary_service.settings.egress_credential_canary_target_url = (
+        "https://canary.example.com/auth-check"
+    )
+    try:
+        async with session_factory() as session:
+            secret = await session.scalar(
+                select(ProjectSecret).where(ProjectSecret.id == secret_id)
+            )
+            assert secret is not None
+            assert await enqueue_credential_rotation_canaries(
+                session, secret=secret, request_id="canary-enqueue"
+            ) == 1
+            assert await enqueue_credential_rotation_canaries(
+                session, secret=secret, request_id="canary-replay"
+            ) == 0
+            now = datetime.now(UTC)
+            claimed = await claim_credential_rotation_canaries(
+                session, now=now, batch_size=10
+            )
+            assert len(claimed) == 1
+            attempt = claimed[0]
+            assert attempt.claim_token is not None
+            with pytest.raises(ApiError) as stale_claim:
+                await complete_credential_rotation_canary(
+                    session,
+                    attempt_id=attempt.id,
+                    claim_token=uuid4(),
+                    outcome="SUCCESS",
+                    now=now,
+                )
+            assert stale_claim.value.code == "EGRESS_CREDENTIAL_CANARY_CLAIM_STALE"
+            result = await complete_credential_rotation_canary(
+                session,
+                attempt_id=attempt.id,
+                claim_token=attempt.claim_token,
+                outcome="SUCCESS",
+                now=now,
+            )
+            assert (result.status, result.outcome, result.healthy) == (
+                "SUCCEEDED",
+                "SUCCESS",
+                True,
+            )
+            summaries = await list_credential_rotation_canaries(
+                session, project_id=project_id, limit=10
+            )
+            assert summaries[0]["status"] == "SUCCEEDED"
+            assert "credential_secret_id" not in summaries[0]
+            await session.commit()
+        async with engine.connect() as connection:
+            transitions = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT event FROM control.egress_credential_canary_transitions WHERE attempt_id=:a ORDER BY attempt_version"
+                        ),
+                        {"a": result.id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert transitions == ["ENQUEUED", "CLAIMED", "SUCCEEDED"]
+            assert await connection.scalar(
+                text(
+                    "SELECT count(*) FROM security.audit_events WHERE action='egress.credential_canary.enqueued' AND resource_id=:a"
+                ),
+                {"a": str(result.id)},
+            ) == 1
+        with pytest.raises(DBAPIError, match="transition is invalid"):
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE control.egress_credential_canary_attempts SET status='PENDING',version=version+1 WHERE id=:a"
+                    ),
+                    {"a": result.id},
+                )
+        with pytest.raises(DBAPIError, match="history is immutable"):
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "DELETE FROM control.egress_credential_canary_transitions WHERE attempt_id=:a"
+                    ),
+                    {"a": result.id},
+                )
+
+        _, foreign_org, foreign_project, _, _, _ = await _seed()
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='rdc_canary_rls_test') THEN CREATE ROLE rdc_canary_rls_test NOLOGIN; END IF; END $$"
+                )
+            )
+            await connection.execute(
+                text("GRANT USAGE ON SCHEMA control TO rdc_canary_rls_test")
+            )
+            await connection.execute(
+                text(
+                    "GRANT SELECT ON control.egress_credential_canary_attempts,control.egress_credential_canary_transitions TO rdc_canary_rls_test"
+                )
+            )
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("SET LOCAL ROLE rdc_canary_rls_test"))
+                await connection.execute(
+                    text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                    {"u": str(user_id)},
+                )
+                await connection.execute(
+                    text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                    {"o": str(org_id)},
+                )
+                assert await connection.scalar(
+                    text(
+                        "SELECT count(*) FROM control.egress_credential_canary_attempts WHERE organization_id=:o"
+                    ),
+                    {"o": foreign_org},
+                ) == 0
+                assert await connection.scalar(
+                    text(
+                        "SELECT count(*) FROM control.egress_credential_canary_transitions WHERE project_id=:p"
+                    ),
+                    {"p": foreign_project},
+                ) == 0
+                assert await connection.scalar(
+                    text(
+                        "SELECT count(*) FROM control.egress_credential_canary_attempts WHERE project_id=:p"
+                    ),
+                    {"p": foreign_project},
+                ) == 0
+        finally:
+            async with engine.begin() as connection:
+                await connection.execute(text("DROP OWNED BY rdc_canary_rls_test"))
+                await connection.execute(text("DROP ROLE rdc_canary_rls_test"))
+    finally:
+        (
+            canary_service.settings.egress_credential_canary_enabled,
+            canary_service.settings.egress_credential_canary_target_url,
+        ) = original
+
+
+async def test_credential_rotation_canary_claim_is_single_winner() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    _, _, _, secret_id, policy_id, revision_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.egress_policies SET status='ACTIVE',active_revision_id=:r,activated_at=CURRENT_TIMESTAMP WHERE id=:p"
+            ),
+            {"r": revision_id, "p": policy_id},
+        )
+    original = (
+        canary_service.settings.egress_credential_canary_enabled,
+        canary_service.settings.egress_credential_canary_target_url,
+    )
+    canary_service.settings.egress_credential_canary_enabled = True
+    canary_service.settings.egress_credential_canary_target_url = (
+        "https://canary.example.com/auth-check"
+    )
+    try:
+        async with session_factory() as session:
+            secret = await session.scalar(
+                select(ProjectSecret).where(ProjectSecret.id == secret_id)
+            )
+            assert secret is not None
+            assert await enqueue_credential_rotation_canaries(
+                session, secret=secret, request_id="canary-race-enqueue"
+            ) == 1
+            await session.commit()
+
+        now = datetime.now(UTC)
+
+        async def claim_once() -> list[UUID]:
+            async with session_factory() as session:
+                claims = await claim_credential_rotation_canaries(
+                    session, now=now, batch_size=50
+                )
+                identifiers = [claim.id for claim in claims]
+                await session.commit()
+                return identifiers
+
+        winners = await asyncio.gather(claim_once(), claim_once())
+        flattened = [identifier for batch in winners for identifier in batch]
+        assert len(flattened) == 1
+    finally:
+        (
+            canary_service.settings.egress_credential_canary_enabled,
+            canary_service.settings.egress_credential_canary_target_url,
+        ) = original
+
+
+async def test_credential_canary_database_derives_exact_active_binding() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    _, org_id, project_id, secret_id, policy_id, revision_id = await _seed()
+    spoofed = uuid4()
+    statement = text(
+        "INSERT INTO control.egress_credential_canary_attempts "
+        "(organization_id,project_id,policy_id,policy_revision_id,credential_secret_id,secret_version,target_digest,provider_key,region_key) "
+        "VALUES (:spoof,:spoof,:spoof,:revision,:spoof,999,:digest,'static-canary','local') "
+        "RETURNING organization_id,project_id,policy_id,policy_revision_id,credential_secret_id,secret_version"
+    )
+    with pytest.raises(DBAPIError, match="binding is ineligible"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text("SELECT set_config('rdc.egress_canary_scheduler','1',true)")
+            )
+            await connection.execute(
+                statement,
+                {
+                    "spoof": spoofed,
+                    "revision": revision_id,
+                    "digest": "b" * 64,
+                },
+            )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.egress_policies SET status='ACTIVE',active_revision_id=:r,activated_at=CURRENT_TIMESTAMP WHERE id=:p"
+            ),
+            {"r": revision_id, "p": policy_id},
+        )
+        await connection.execute(
+            text("SELECT set_config('rdc.egress_canary_scheduler','1',true)")
+        )
+        derived = (
+            await connection.execute(
+                statement,
+                {
+                    "spoof": spoofed,
+                    "revision": revision_id,
+                    "digest": "b" * 64,
+                },
+            )
+        ).one()
+    assert derived == (org_id, project_id, policy_id, revision_id, secret_id, 1)
 
 
 async def _seed_bound_run() -> tuple[UUID, UUID, UUID, UUID]:
