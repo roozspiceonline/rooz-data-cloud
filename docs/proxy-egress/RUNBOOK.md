@@ -2,7 +2,7 @@
 
 ## Safe rollout
 
-1. Apply migrations through `20260828_0025`. Confirm the policy tables and
+1. Apply migrations through `20260829_0026`. Confirm the policy tables and
    `control.egress_health_observations` have RLS enabled, and confirm the health
    table has tenant-select, worker-select/insert, exact-lease guard and
    immutable update/delete triggers. Confirm the route columns reject invalid
@@ -37,6 +37,15 @@
    `RDC_EGRESS_HEALTH_MIN_ROUTE_SAMPLES` between 5 and 1000. Confirm the route
    endpoint suppresses smaller cohorts, rejects excessive cardinality and does
    not expose raw observation or execution lineage.
+10. Keep `RDC_EGRESS_CREDENTIAL_CANARY_ENABLED=false` until a reviewed live
+    runner exists. To validate persistence in an isolated environment, set one
+    credential-free HTTPS target with no query/user-info/fragment and bounded
+    claim/batch/attempt values. Rotate a secret bound to an ACTIVE revision and
+    confirm one replay-safe PENDING attempt plus immutable ENQUEUED history.
+    Confirm the public list omits secret version, target digest and claim token.
+11. Confirm `/api/v1/system/foundation` reports canary persistence/history true,
+    live executor false and adaptive routing false. Do not interpret a stored
+    SUCCEEDED result as authority to retry a Run or select a route.
 
 ## Incident response
 
@@ -59,6 +68,12 @@ URLs, response content, headers, provider credentials or raw external data. A
 spike in `HTTP_429`, `TIMEOUT` or `PROXY_FAILURE` is evidence for operator
 investigation only; it does not authorize an automatic retry or route change.
 
+For canary incidents, disable `RDC_EGRESS_CREDENTIAL_CANARY_ENABLED`, preserve
+attempt/transition rows and rotate the affected Project secret. Treat stale
+claims, `CONFIGURATION_ERROR`, `AUTH_REJECTED`, `SECRET_VERSION_SUPERSEDED` and
+unexpected claim churn as security or operator events. Never add target URLs,
+secret identifiers, authorization values or response bodies to results/logs.
+
 Queued bound Runs are rechecked at admission. After disable or revision
 rotation, confirm affected pending Runs become `FAILED` with
 `EGRESS_POLICY_BINDING_REVOKED`, their START outboxes become `FAILED`, the audit
@@ -76,8 +91,10 @@ cannot retract a value already decrypted by an active trusted worker.
 ## Verification and rollback
 
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
-provider-neutral `python scripts/verify-egress-health.py` protocol verifier, the
+provider-neutral `python scripts/verify-egress-health.py` protocol verifier, and the
 full repository gates. A rollback rehearsal is `alembic downgrade
-20260828_0024` followed by `alembic upgrade head` on an isolated database.
-Downgrade reconstructs bounded JSONB evidence and restores the legacy indexes;
-production rollback still requires an approved evidence-preservation decision.
+20260828_0025` followed by `alembic upgrade head` on an isolated database.
+Downgrade deletes canary attempts and immutable transition history; production
+rollback therefore requires an approved backup and evidence-preservation
+decision. A further downgrade of compact telemetry reconstructs bounded JSONB
+evidence and restores the legacy observation indexes.

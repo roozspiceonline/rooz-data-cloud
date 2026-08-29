@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     egress_route_provider_key: str = "static-canary"
     egress_route_region_key: str = "local"
     egress_health_min_route_samples: int = 5
+    egress_credential_canary_enabled: bool = False
+    egress_credential_canary_target_url: str = ""
+    egress_credential_canary_claim_seconds: int = 60
+    egress_credential_canary_batch_size: int = 50
+    egress_credential_canary_max_attempts: int = 3
 
     sandbox_canary_browser_enabled: bool = False
     sandbox_canary_browser_live_navigation_enabled: bool = False
@@ -234,6 +239,69 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Egress route health requires between 5 and 1000 samples."
             )
+        if not 15 <= self.egress_credential_canary_claim_seconds <= 300:
+            raise ValueError(
+                "Egress credential canary claims must last 15 to 300 seconds."
+            )
+        if not 1 <= self.egress_credential_canary_batch_size <= 100:
+            raise ValueError(
+                "Egress credential canary batches must contain 1 to 100 items."
+            )
+        if not 1 <= self.egress_credential_canary_max_attempts <= 5:
+            raise ValueError(
+                "Egress credential canaries allow 1 to 5 claim attempts."
+            )
+        canary_target = self.egress_credential_canary_target_url.strip()
+        if self.egress_credential_canary_enabled and not canary_target:
+            raise ValueError(
+                "Enabled egress credential canaries require an HTTPS target."
+            )
+        if canary_target:
+            parsed_target = urlsplit(canary_target)
+            target_host = parsed_target.hostname
+            if (
+                parsed_target.scheme != "https"
+                or target_host is None
+                or parsed_target.username is not None
+                or parsed_target.password is not None
+                or parsed_target.query
+                or parsed_target.fragment
+                or parsed_target.port not in {None, 443}
+            ):
+                raise ValueError(
+                    "Egress credential canary target must be credential-free HTTPS."
+                )
+            try:
+                ipaddress.ip_address(target_host)
+            except ValueError:
+                pass
+            else:
+                raise ValueError(
+                    "Egress credential canary target cannot use an IP literal."
+                )
+            normalized_target_host = target_host.rstrip(".").casefold()
+            labels = normalized_target_host.split(".")
+            if (
+                len(normalized_target_host) > 253
+                or len(labels) < 2
+                or normalized_target_host.endswith(".local")
+                or any(
+                    not label
+                    or len(label) > 63
+                    or label[0] == "-"
+                    or label[-1] == "-"
+                    or not all(
+                        character.isascii()
+                        and (character.isalnum() or character == "-")
+                        for character in label
+                    )
+                    for label in labels
+                )
+            ):
+                raise ValueError(
+                    "Egress credential canary target hostname is unsafe."
+                )
+            self.egress_credential_canary_target_url = canary_target
         if self.sandbox_required_profile != "rdc.sandbox/v1":
             raise ValueError("The Phase 1H sandbox profile must be rdc.sandbox/v1.")
         if not 128 <= self.sandbox_max_memory_mb <= 32768:

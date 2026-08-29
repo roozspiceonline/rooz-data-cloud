@@ -29,6 +29,7 @@ Public endpoints are:
 - `POST /api/v1/egress-policies/{policy_id}/disable`
 - `GET /api/v1/projects/{project_id}/egress-health/summary`
 - `GET /api/v1/projects/{project_id}/egress-health/routes`
+- `GET /api/v1/projects/{project_id}/egress-credential-canaries`
 
 Policy and revision list cursors are signed and bound to the exact Project,
 status filter or policy resource; both collections are page-bounded.
@@ -97,6 +98,22 @@ Secret replacement serializes with envelope issuance, revokes outstanding
 database grants, and changes the idempotency fingerprint by secret version.
 Already decrypted authorization values remain bounded by the envelope/lease
 TTL; the operator egress kill switch is the immediate containment mechanism.
+
+Migration `20260828_0025` adds the false-by-default credential-rotation canary
+foundation. When explicitly enabled with one credential-free HTTPS operator
+target, secret replacement transactionally enqueues one idempotent attempt for
+each ACTIVE bound revision. PostgreSQL derives organization, Project, policy,
+revision, secret and current secret version; claim/reclaim uses row locks and
+bounded leases, exact claim tokens fence completion, and every lifecycle change
+is appended to immutable transition history. Terminal results use a fixed
+outcome taxonomy and recheck the current secret version and target digest.
+
+The Project endpoint returns at most 100 sanitized attempt summaries and never
+returns a secret reference/version, target/digest, claim token, credential or
+external response. This increment deliberately supplies no live network
+executor: `egress_credential_canary_live_executor_enabled=false` and
+`egress_adaptive_routing_enabled=false` remain authoritative until a separately
+reviewed runner and live adversarial gates are complete.
 
 Immediately before a bound `RUN_START` consumes a lease, admission locks the
 Run and referenced policy and requires the policy to remain `ACTIVE` with the

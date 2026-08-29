@@ -195,6 +195,13 @@ async def foundation_status() -> dict[str, object]:
         "egress_policy_binding_receipt": "rdc.run-egress-policy-receipt/v1",
         "egress_policy_worker_credential_envelopes_enabled": True,
         "egress_policy_plaintext_credentials_exposed": False,
+        "egress_credential_canary_persistence_enabled": True,
+        "egress_credential_canary_history_immutable": True,
+        "egress_credential_canary_scheduling_enabled": (
+            settings.egress_credential_canary_enabled
+        ),
+        "egress_credential_canary_live_executor_enabled": False,
+        "egress_adaptive_routing_enabled": False,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,

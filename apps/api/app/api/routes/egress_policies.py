@@ -18,6 +18,9 @@ from ...egress_policy_schemas import (
     CreateEgressPolicyRevisionRequest,
     DisableEgressPolicyRequest,
 )
+from ...services.egress_credential_canaries import (
+    list_credential_rotation_canaries,
+)
 from ...services.egress_health import (
     summarize_egress_health,
     summarize_egress_health_routes,
@@ -77,6 +80,21 @@ async def get_egress_health_routes(
         db,
         project_id=access.project.id,
         window_hours=window_hours,
+    )
+    return success_payload(request, result)
+
+
+@router.get("/projects/{project_id}/egress-credential-canaries")
+async def get_egress_credential_canaries(
+    request: Request,
+    access: Annotated[ProjectAccess, Depends(require_project_permission("egress.read"))],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> dict[str, object]:
+    result = await list_credential_rotation_canaries(
+        db,
+        project_id=access.project.id,
+        limit=limit,
     )
     return success_payload(request, result)
 
