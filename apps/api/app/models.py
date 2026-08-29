@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     MetaData,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -889,13 +890,21 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
         ),
         {"schema": "control"},
     )
-    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False, index=True)
-    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False, index=True)
-    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.runs.id", ondelete="RESTRICT"), nullable=False, index=True)
-    lease_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.execution_leases.id", ondelete="RESTRICT"), nullable=False, index=True)
-    worker_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.worker_identities.id", ondelete="RESTRICT"), nullable=False, index=True)
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False)
+    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.runs.id", ondelete="RESTRICT"), nullable=False)
+    lease_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.execution_leases.id", ondelete="RESTRICT"), nullable=False)
+    worker_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.worker_identities.id", ondelete="RESTRICT"), nullable=False)
     client_observation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    evidence: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    evidence: Mapped[dict[str, object] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
+    transport_failure: Mapped[str | None] = mapped_column(String(32))
+    http_status: Mapped[int | None] = mapped_column(SmallInteger)
+    response_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    challenge_detected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    login_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     healthy: Mapped[bool] = mapped_column(Boolean, nullable=False)

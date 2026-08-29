@@ -147,3 +147,31 @@ def test_route_dimension_migration_is_bounded_and_reversible() -> None:
         '"provider_key", schema="control"',
     ):
         assert marker in source
+
+
+def test_compact_evidence_migration_reduces_write_amplification() -> None:
+    source = (
+        ROOT
+        / "apps/api/migrations/versions/20260828_0025_compact_egress_health.py"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'down_revision: str | None = "20260828_0024"',
+        "transport_failure",
+        "http_status",
+        "response_bytes",
+        "latency_ms",
+        "ck_egress_health_observations_compact_evidence",
+        "NEW.evidence := NULL",
+        "ix_egress_health_observations_worker_id",
+        "ix_egress_health_observations_lease_id_observed_at",
+        "DISABLE TRIGGER egress_health_observations_immutable",
+        "ENABLE TRIGGER egress_health_observations_immutable",
+    ):
+        assert marker in source
+    service = (ROOT / "apps/api/app/services/egress_health.py").read_text(
+        encoding="utf-8"
+    )
+    assert "evidence=None" in service
+    assert "transport_failure=payload.evidence.transport_failure" in service
+    assert "append_audit_event" not in service
+    assert "egress_health.observed" not in service

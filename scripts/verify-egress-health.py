@@ -41,6 +41,12 @@ need(
     "ix_egress_health_observations_project_route_time",
 )
 need(
+    "apps/api/migrations/versions/20260828_0025_compact_egress_health.py",
+    "ck_egress_health_observations_compact_evidence",
+    "NEW.evidence := NULL",
+    "ix_egress_health_observations_worker_id",
+)
+need(
     "apps/api/app/core/config.py",
     "egress_route_provider_key",
     "egress_route_region_key",
@@ -60,7 +66,9 @@ need(
     "apps/api/tests/test_egress_health_persistence_contracts.py",
     "test_persistence_migration_enforces_immutability_rls_and_exact_lease",
     "test_route_dimension_migration_is_bounded_and_reversible",
+    "test_compact_evidence_migration_reduces_write_amplification",
 )
+need("apps/api/app/services/egress_health.py", "evidence=None", "latency_ms=")
 need("docker-compose.yml", "postgres:18-alpine", "postgres_data:/var/lib/postgresql")
 need("docs/proxy-egress/THREAT_MODEL.md", "immutable observation", "minimum sample")
 print("Egress health persistence verification passed")

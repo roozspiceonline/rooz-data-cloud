@@ -15,7 +15,6 @@ from ..egress_health_protocol import (
     classify_egress_health,
 )
 from ..models import EgressHealthObservation, ExecutionLease, WorkerIdentity
-from .identity_tenancy import append_audit_event
 
 settings = get_settings()
 MAX_ROUTE_DIMENSIONS = 32
@@ -81,7 +80,13 @@ async def record_egress_health_observation(
         lease_id=lease.id,
         worker_id=worker.id,
         client_observation_id=payload.observation_id,
-        evidence=evidence,
+        evidence=None,
+        transport_failure=payload.evidence.transport_failure,
+        http_status=payload.evidence.http_status,
+        response_bytes=payload.evidence.response_bytes,
+        latency_ms=payload.evidence.latency_ms,
+        challenge_detected=payload.evidence.challenge_detected,
+        login_required=payload.evidence.login_required,
         evidence_digest=evidence_digest,
         outcome=classified.outcome,
         healthy=classified.healthy,
@@ -92,24 +97,6 @@ async def record_egress_health_observation(
     )
     session.add(record)
     await session.flush()
-    await append_audit_event(
-        session,
-        organization_id=lease.organization_id,
-        project_id=lease.project_id,
-        actor_type="worker",
-        actor_id=str(worker.id),
-        action="egress_health.observed",
-        resource_type="egress_health_observation",
-        resource_id=str(record.id),
-        request_id=request_id,
-        details={
-            "run_id": str(lease.run_id),
-            "lease_id": str(lease.id),
-            "outcome": classified.outcome,
-            "healthy": classified.healthy,
-            "retryable": classified.retryable,
-        },
-    )
     await session.commit()
     return _result(record, replayed=False)
 

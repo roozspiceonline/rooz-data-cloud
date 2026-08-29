@@ -63,6 +63,11 @@ proxy responses and all external network data are untrusted.
   target, body, headers, credential, provider identity or arbitrary extension.
   Stored values and audit details are bounded classifications only. Tenant users
   receive a bounded 1–24 hour Project aggregate, not raw observation lineage.
+- Telemetry growth and audit amplification: accepted evidence is normalized to
+  compact typed bounded columns and JSONB is cleared. The immutable observation
+  itself retains exact lease/Run/worker/digest lineage under RLS, so routine
+  samples do not duplicate that operational event in the security audit table.
+  Policy, credential, lifecycle and administrative actions remain audited.
 - Route-dimension spoofing or cardinality abuse: provider and region keys are
   validated lowercase operator configuration stamped by the API, never worker
   or tenant input. The public aggregate is tenant-authorized, window-bounded,
