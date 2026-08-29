@@ -118,6 +118,13 @@ class Settings(BaseSettings):
     egress_credential_canary_claim_seconds: int = 60
     egress_credential_canary_batch_size: int = 50
     egress_credential_canary_max_attempts: int = 3
+    egress_credential_canary_live_executor_enabled: bool = False
+    egress_credential_canary_poll_interval_seconds: float = 5.0
+    egress_credential_canary_connect_timeout_seconds: float = 5.0
+    egress_credential_canary_total_timeout_seconds: float = 15.0
+    egress_credential_canary_max_response_bytes: int = 65_536
+    egress_credential_canary_max_concurrency: int = 4
+    egress_credential_canary_max_retries: int = 0
 
     sandbox_canary_browser_enabled: bool = False
     sandbox_canary_browser_live_navigation_enabled: bool = False
@@ -251,6 +258,46 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Egress credential canaries allow 1 to 5 claim attempts."
             )
+        if not 0.5 <= self.egress_credential_canary_poll_interval_seconds <= 300:
+            raise ValueError(
+                "Egress credential canary polling must be between 0.5 and 300 seconds."
+            )
+        if not 0.1 <= self.egress_credential_canary_connect_timeout_seconds <= 10:
+            raise ValueError(
+                "Egress credential canary connect timeout is outside the safe bound."
+            )
+        if not (
+            self.egress_credential_canary_connect_timeout_seconds
+            <= self.egress_credential_canary_total_timeout_seconds
+            <= 30
+        ):
+            raise ValueError(
+                "Egress credential canary total timeout is outside the safe bound."
+            )
+        if not 1 <= self.egress_credential_canary_max_response_bytes <= 1_048_576:
+            raise ValueError(
+                "Egress credential canary response limit is outside the safe bound."
+            )
+        if not 1 <= self.egress_credential_canary_max_concurrency <= 32:
+            raise ValueError(
+                "Egress credential canary concurrency must be between 1 and 32."
+            )
+        if self.egress_credential_canary_max_retries not in {0, 1}:
+            raise ValueError(
+                "Egress credential canary retries must be zero or one."
+            )
+        if self.egress_credential_canary_live_executor_enabled:
+            if not self.egress_credential_canary_enabled:
+                raise ValueError(
+                    "The live credential canary executor requires canary scheduling."
+                )
+            if (
+                self.egress_credential_canary_claim_seconds
+                < self.egress_credential_canary_total_timeout_seconds + 5
+            ):
+                raise ValueError(
+                    "Credential canary claims must outlive the live request timeout."
+                )
         canary_target = self.egress_credential_canary_target_url.strip()
         if self.egress_credential_canary_enabled and not canary_target:
             raise ValueError(

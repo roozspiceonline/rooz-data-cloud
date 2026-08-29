@@ -29,6 +29,7 @@ from app.services.egress_credential_canaries import (
     complete_credential_rotation_canary,
     enqueue_credential_rotation_canaries,
     list_credential_rotation_canaries,
+    load_credential_rotation_canary_secret,
 )
 from app.services.egress_policies import (
     activate_egress_policy,
@@ -1057,3 +1058,77 @@ async def test_bound_run_admission_serializes_with_policy_disable(
         "EGRESS_POLICY_BINDING_REVOKED",
         0,
     )
+
+
+async def test_live_canary_secret_loader_requires_exact_unexpired_claim() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    user_id, org_id, _, secret_id, policy_id, revision_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.egress_policies SET status='ACTIVE',active_revision_id=:r,"
+                "activated_at=CURRENT_TIMESTAMP WHERE id=:p"
+            ),
+            {"r": revision_id, "p": policy_id},
+        )
+    original = (
+        canary_service.settings.egress_credential_canary_enabled,
+        canary_service.settings.egress_credential_canary_target_url,
+    )
+    canary_service.settings.egress_credential_canary_enabled = True
+    canary_service.settings.egress_credential_canary_target_url = (
+        "https://canary.example.com/auth-check"
+    )
+    try:
+        async with session_factory() as session:
+            await session.execute(
+                text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                {"u": str(user_id)},
+            )
+            await session.execute(
+                text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                {"o": str(org_id)},
+            )
+            secret = await session.scalar(
+                select(ProjectSecret).where(ProjectSecret.id == secret_id)
+            )
+            assert secret is not None
+            assert await enqueue_credential_rotation_canaries(
+                session, secret=secret, request_id="live-loader-enqueue"
+            ) == 1
+            now = datetime.now(UTC)
+            claims = await claim_credential_rotation_canaries(
+                session, now=now, batch_size=10
+            )
+            claim = next(item for item in claims if item.credential_secret_id == secret_id)
+            assert await load_credential_rotation_canary_secret(
+                session,
+                attempt_id=claim.id,
+                claim_token=secrets.token_hex(32),
+            ) is None
+            material = await load_credential_rotation_canary_secret(
+                session,
+                attempt_id=claim.id,
+                claim_token=claim.claim_token,
+            )
+            assert material is not None
+            assert material.credential_secret_id == secret_id
+            assert material.secret_version == claim.secret_version
+            assert material.target_digest == claim.target_digest
+            await session.commit()
+        async with engine.connect() as connection:
+            digest = await connection.scalar(
+                text(
+                    "SELECT claim_token_digest FROM control.egress_credential_canary_attempts "
+                    "WHERE id=:id"
+                ),
+                {"id": claim.id},
+            )
+        assert isinstance(digest, str) and len(digest) == 64
+        assert claim.claim_token not in digest
+    finally:
+        (
+            canary_service.settings.egress_credential_canary_enabled,
+            canary_service.settings.egress_credential_canary_target_url,
+        ) = original

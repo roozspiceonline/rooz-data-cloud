@@ -47,6 +47,22 @@ class ClaimedCredentialCanary:
 
 
 @dataclass(frozen=True)
+class CredentialCanarySecretMaterial:
+    organization_id: UUID
+    project_id: UUID
+    credential_secret_id: UUID
+    secret_name: str
+    secret_version: int
+    encrypted_value: bytes = field(repr=False)
+    value_nonce: bytes = field(repr=False)
+    wrapped_data_key: bytes = field(repr=False)
+    key_nonce: bytes = field(repr=False)
+    encryption_algorithm: str
+    master_key_version: str
+    target_digest: str
+
+
+@dataclass(frozen=True)
 class CompletedCredentialCanary:
     id: UUID
     status: str
@@ -154,6 +170,47 @@ async def claim_credential_rotation_canaries(
         )
         for row in rows
     ]
+
+
+async def load_credential_rotation_canary_secret(
+    session: AsyncSession,
+    *,
+    attempt_id: UUID,
+    claim_token: str,
+) -> CredentialCanarySecretMaterial | None:
+    """Load encrypted material only for one exact live, unexpired claim."""
+    try:
+        token_digest = hashlib.sha256(claim_token.encode("ascii")).hexdigest()
+    except UnicodeEncodeError:
+        return None
+    row = (
+        await session.execute(
+            text(
+                "SELECT * FROM control.load_egress_credential_canary_secret("
+                ":attempt_id, :claim_token_digest)"
+            ),
+            {
+                "attempt_id": attempt_id,
+                "claim_token_digest": token_digest,
+            },
+        )
+    ).mappings().one_or_none()
+    if row is None:
+        return None
+    return CredentialCanarySecretMaterial(
+        organization_id=row["organization_id"],
+        project_id=row["project_id"],
+        credential_secret_id=row["credential_secret_id"],
+        secret_name=row["secret_name"],
+        secret_version=row["secret_version"],
+        encrypted_value=bytes(row["encrypted_value"]),
+        value_nonce=bytes(row["value_nonce"]),
+        wrapped_data_key=bytes(row["wrapped_data_key"]),
+        key_nonce=bytes(row["key_nonce"]),
+        encryption_algorithm=row["encryption_algorithm"],
+        master_key_version=row["master_key_version"],
+        target_digest=row["target_digest"],
+    )
 
 
 async def complete_credential_rotation_canary(

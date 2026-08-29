@@ -121,12 +121,22 @@ introduces operation-scoped database capabilities, persists only claim-token
 digests, serializes secret rotation with completion, and adds adversarial RLS,
 claim-fencing, race and future-runner network-policy gates. Live credential use
 still belongs to Issue #97 and remains false by default.
+The tenth increment adds the false-by-default live credential-canary runner as a
+separate trusted service. A claim-fenced `SECURITY DEFINER` loader releases only
+the exact encrypted Project-secret version for one unexpired claim; plaintext is
+decrypted only in the runner, used only as the complete Authorization value,
+zeroed/released after the request, and never persisted or logged. The transport
+resolves and validates every DNS address, connects to an exact validated IP with
+hostname-verified TLS/SNI, rechecks the actual connected peer, ignores ambient
+proxy configuration by using direct sockets, rejects redirects, and bounds
+timeouts, response bytes, retries and claim concurrency. Adaptive routing remains
+disabled pending a real live adversarial canary.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: integrate the hardened SSRF/DNS-peer/TLS/proxy/limit gates into
-   the reviewed live credential-canary runner and add live
-   adversarial canaries; keep adaptive routing disabled until those gates pass.
+1. Proxy/egress: run and review the live adversarial credential canary against
+   the isolated runner, including DNS/peer/TLS/redirect/timeout/response-limit
+   failure cases; keep adaptive routing disabled until that gate passes.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
 3. Events/webhooks: signed delivery, retry/idempotency, history and failure
