@@ -76,20 +76,65 @@ proxy responses and all external network data are untrusted.
 - Rotation-canary substitution or replay: enqueue is server-owned and
   transactionally follows secret replacement. PostgreSQL derives exact tenant,
   active revision, secret and current version lineage; the unique
-  revision/version/target-digest key makes replay harmless. Claims use
-  `FOR UPDATE SKIP LOCKED`, bounded expiry and an unguessable exact token.
-  Completion rechecks both current secret version and operator target digest.
+  revision/version/target-digest key makes replay harmless. Migration `0027`
+  removes the transaction-wide scheduler GUC and all scheduler RLS policies.
+  Three fixed-search-path `SECURITY DEFINER` operations now provide only exact
+  secret enqueue, bounded global claim/reclaim, and exact token-fenced
+  completion; execution is revoked from `PUBLIC`. They do not accept caller
+  organization, Project, policy, revision or secret-version lineage.
+- Canary claim capability theft: claim generates 256 random bits, returns the
+  raw hexadecimal bearer token only in the trusted claim result, and persists
+  only its SHA-256 digest. Completion hashes the submitted token before the
+  database call. Tokens and digests are absent from tenant APIs, audit details,
+  transition history, metrics and errors. Reclaim replaces the token and makes
+  the prior token unusable; expiry and terminal state reject completion.
+- Rotation/completion race: completion resolves immutable attempt lineage, then
+  locks the exact `ProjectSecret` before locking the attempt. Rotation already
+  locks that same secret before enqueue, establishing the global lock order
+  `ProjectSecret -> canary attempt`. If rotation commits first, completion sees
+  the higher version and records `SUPERSEDED`; if completion owns the secret
+  lock first, version N may complete before rotation proceeds.
 - Canary history rewriting or disclosure: terminal attempts cannot transition,
   attempt lineage cannot change, deletes fail, and an append-only transition
   table records every enqueue, claim, reclaim and result. Tenant reads are RLS
   protected and the bounded API omits secret/target/claim identifiers. Canary
   results cannot grant retry or routing authority.
 
+## Tenancy conclusion
+
+RDC's canonical database tenant boundary is the organization. Project-bound
+tables use organization membership RLS, while API routes independently resolve
+the authenticated Project and require the resource permission before passing
+`access.project.id` to services. Canary attempts follow the same model: RLS
+prevents cross-organization reads, the public route is Project-filtered and
+permission-checked, and database lineage triggers/functions derive exact
+same-Project policy, revision and secret relationships. A tenant database role
+cannot execute scheduler capabilities or update another tenant's attempt.
+
+## Live-runner boundary required by Issue #97
+
+The checked-in network-policy primitives reject IP literals, single-label and
+special-use hostnames; reject every non-global, multicast, reserved,
+unspecified, private, link-local and IPv4-mapped-private address; and require
+the actual connected peer to remain in the validated DNS set. They also define
+zero redirects, verified TLS with hostname checking and SNI-compatible hostname
+use, removal of ambient proxy variables, bounded connect/total timeouts,
+response bytes, retries and concurrency inputs. Issue #97 must integrate these
+checks at connection time, validate the peer socket rather than configuration
+DNS alone, use no proxy-inheriting client path, and persist only the bounded
+outcome taxonomy. Plaintext credentials must remain inside that trusted runner
+and must never enter Agent/Chromium input, response bodies, logs, traces, audit
+JSON, metrics labels or database rows.
+
 ## Residual work before live enforcement
 
 Add a reviewed credential-using live runner and live adversarial canaries before
-adaptive routing. Durable rotation scheduling/results exist, but live execution
-and adaptive routing remain explicitly disabled.
+adaptive routing. Durable scheduling, scoped database capabilities, token
+digests, race serialization and pure network-policy gates exist, but there is
+not yet an actual peer-pinned TLS transport. DNS can change between resolver and
+connect unless Issue #97 wires the connected-peer check correctly; timeout and
+response limits are not protections until that runner uses them. Live execution
+and adaptive routing therefore remain explicitly disabled.
 
 The provider-health evidence is untrusted even when reported by an authenticated
 worker because status codes and challenge signals originate externally. The

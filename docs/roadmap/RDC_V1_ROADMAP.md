@@ -116,10 +116,16 @@ lineage. Enqueue is idempotent, claims are race-safe and expiring, completion
 is token-fenced, PostgreSQL RLS protects both attempts and immutable transition
 history, and the tenant summary is credential/target-free. Live execution and
 adaptive routing remain disabled.
+The ninth increment removes the broad canary scheduler GUC/RLS privilege,
+introduces operation-scoped database capabilities, persists only claim-token
+digests, serializes secret rotation with completion, and adds adversarial RLS,
+claim-fencing, race and future-runner network-policy gates. Live credential use
+still belongs to Issue #97 and remains false by default.
 
 ## Remaining RDC v1 workstreams
 
-1. Proxy/egress: add the reviewed live credential-canary runner and live
+1. Proxy/egress: integrate the hardened SSRF/DNS-peer/TLS/proxy/limit gates into
+   the reviewed live credential-canary runner and add live
    adversarial canaries; keep adaptive routing disabled until those gates pass.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.

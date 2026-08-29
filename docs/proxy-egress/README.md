@@ -99,7 +99,7 @@ database grants, and changes the idempotency fingerprint by secret version.
 Already decrypted authorization values remain bounded by the envelope/lease
 TTL; the operator egress kill switch is the immediate containment mechanism.
 
-Migration `20260828_0025` adds the false-by-default credential-rotation canary
+Migration `20260829_0026` adds the false-by-default credential-rotation canary
 foundation. When explicitly enabled with one credential-free HTTPS operator
 target, secret replacement transactionally enqueues one idempotent attempt for
 each ACTIVE bound revision. PostgreSQL derives organization, Project, policy,
@@ -107,6 +107,23 @@ revision, secret and current secret version; claim/reclaim uses row locks and
 bounded leases, exact claim tokens fence completion, and every lifecycle change
 is appended to immutable transition history. Terminal results use a fixed
 outcome taxonomy and recheck the current secret version and target digest.
+
+Migration `20260829_0027` replaces the broad transaction-local scheduler GUC
+and scheduler RLS policies with three narrow `SECURITY DEFINER` operations.
+Enqueue accepts only an exact rotated secret and derives eligible active
+bindings; claim/reclaim is globally bounded; completion requires one exact
+attempt plus the digest of its unexpired bearer token. Raw 256-bit claim tokens
+are returned once to the trusted claimant and only SHA-256 digests persist.
+Completion and rotation serialize on the exact Project secret before touching
+the attempt, so the lock winner deterministically controls success versus
+`SECRET_VERSION_SUPERSEDED`. Organization RLS remains RDC's tenant boundary;
+the route additionally resolves and permission-checks the exact Project.
+
+The future-runner policy module defines private/special-address rejection,
+actual connected-peer validation against the resolved public set, disabled
+redirects, verified TLS, ambient-proxy removal and bounded network use. It does
+not perform a live request. Issue #97 must integrate and adversarially test
+those primitives before enabling the executor.
 
 The Project endpoint returns at most 100 sanitized attempt summaries and never
 returns a secret reference/version, target/digest, claim token, credential or
