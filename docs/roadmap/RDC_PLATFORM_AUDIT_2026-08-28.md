@@ -1,5 +1,9 @@
 # RDC Platform Audit — 2026-08-28
 
+> Historical snapshot. Current machine-readable status is maintained in
+> [`rdc-status.json`](rdc-status.json); repository migrations and GitHub state
+> remain authoritative when they differ from this dated audit.
+
 ## Source-of-truth position
 
 - Main commit: `b3f8fbc`; RDC CI `33142869017` is green.
