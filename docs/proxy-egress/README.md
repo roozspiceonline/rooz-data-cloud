@@ -57,6 +57,14 @@ bounded outcome counts. It contains no target, raw evidence, Run/lease/worker
 identifier, credential or routing decision. Neither aggregate authorizes a
 retry or changes an active route.
 
+Migration `20260828_0025` keeps the worker request/response contract unchanged
+but stores accepted evidence in typed bounded columns rather than JSONB. Legacy
+JSONB inserts are normalized and cleared by the database trigger. The immutable
+row remains the authoritative security lineage and replay record; normal
+high-volume samples no longer create a duplicate control-plane audit event.
+Only the replay, Project/time and Project/route/time indexes remain because
+those are the implemented read paths.
+
 Eligible Run requests may supply only
 `egress_policy: {schema_version: rdc.run-egress-policy/v1, policy_id: ...}`.
 The server derives organization and Project from the authenticated Agent

@@ -1,5 +1,10 @@
 # RDC v1 Roadmap
 
+Machine-readable current status and database head are canonicalized in
+[`rdc-status.json`](rdc-status.json) and validated against the migration graph.
+This roadmap owns dependency order and acceptance criteria; dated audits are
+historical evidence rather than an independent status source.
+
 ## Status
 
 This roadmap is the durable delivery plan for RDC v1. It records implemented
@@ -25,6 +30,7 @@ test gates pass on the exact merged commit.
 | Workstream | Status | Dependency |
 | --- | --- | --- |
 | Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
+| Platform efficiency | Compact telemetry, canonical status, verifier orchestration and Docker context controls implemented | Egress health persistence |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -99,20 +105,27 @@ The seventh increment stamps validated server-configured provider/region keys
 and exposes a 1–24 hour Project route aggregate with minimum-sample suppression
 and a 32-dimension cap. Sparse groups, raw evidence and execution lineage remain
 hidden; the aggregate cannot select a route or authorize retry.
+The first platform-efficiency increment normalizes health evidence into compact
+typed columns, removes routine telemetry audit duplication and four unused
+indexes while retaining immutable RLS/lease/replay lineage. It also adds a
+machine-readable migration/workstream status validator, one complete verifier
+runner with backward-compatible phase entrypoints, and Docker ignore controls.
 
 ## Remaining RDC v1 workstreams
 
 1. Proxy/egress: add upstream rotation canaries and live adversarial canaries;
    keep adaptive routing disabled until those gates pass.
-2. Events/webhooks: signed delivery, retry/idempotency, history and failure
+2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
+   retention and advisory changed-path CI while preserving required full gates.
+3. Events/webhooks: signed delivery, retry/idempotency, history and failure
    disablement.
-3. Observability: structured run/worker logs, diagnostics, metrics and safe
+4. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
-4. Usage controls: quotas, rate limits, concurrency and auditable failures.
-5. SDK/CLI and Console: API-backed operations for all major resources.
-6. Platform-wide production operations: release automation, registry/SBOM,
+5. Usage controls: quotas, rate limits, concurrency and auditable failures.
+6. SDK/CLI and Console: API-backed operations for all major resources.
+7. Platform-wide production operations: release automation, registry/SBOM,
    capacity, disaster recovery, and environment promotion for all workstreams.
-7. End-to-end acceptance and final release/security audit.
+8. End-to-end acceptance and final release/security audit.
 
 ## Dependency order
 

@@ -73,7 +73,11 @@ def main() -> None:
         require(marker in worker_source, "worker control missing: " + marker)
     require("shell=True" not in worker_source, "worker uses shell=True")
     workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    require("verify-phase1h.py" in workflow, "CI does not run Phase 1H verifier")
+    runner = (ROOT / "scripts/run-verifiers.py").read_text()
+    require(
+        "run-verifiers.py" in workflow and '"verify-phase1h.py"' in runner,
+        "CI does not run Phase 1H verifier",
+    )
     print("RDC_PHASE1H_VERIFICATION_PASSED")
 
 

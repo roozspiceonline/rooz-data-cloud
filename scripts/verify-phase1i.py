@@ -180,8 +180,9 @@ def main() -> None:
     require("shell=True" not in worker, "worker uses shell=True")
 
     workflow = read(".github/workflows/ci.yml")
+    runner = read("scripts/run-verifiers.py")
     require(
-        "verify-phase1i.py" in workflow,
+        "run-verifiers.py" in workflow and '"verify-phase1i.py"' in runner,
         "CI does not run the Phase 1I verifier",
     )
     require(

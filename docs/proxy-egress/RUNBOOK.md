@@ -2,11 +2,13 @@
 
 ## Safe rollout
 
-1. Apply migrations through `20260828_0024`. Confirm the policy tables and
+1. Apply migrations through `20260828_0025`. Confirm the policy tables and
    `control.egress_health_observations` have RLS enabled, and confirm the health
    table has tenant-select, worker-select/insert, exact-lease guard and
    immutable update/delete triggers. Confirm the route columns reject invalid
-   slugs and the Project/route/time index exists.
+   slugs and the Project/route/time index exists. Confirm new observation rows
+   have `evidence IS NULL`, compact fields are bounded, and only replay,
+   Project/time and Project/route/time indexes remain.
 2. Keep existing Queue HTTP/browser canary allowlists unchanged. Confirm
    `/api/v1/system/foundation` reports `egress_policy_live_binding_enabled=true`
    and binding receipt `rdc.run-egress-policy-receipt/v1`.
@@ -50,11 +52,12 @@ Investigate `egress_policy.created`, `egress_policy.revision_created`,
 and request ID. Version conflicts and cross-tenant 404s are expected defensive
 outcomes, not reasons to relax authorization or RLS.
 
-Investigate `egress_health.observed` by observation, Run, lease and request ID.
-Do not log or add target URLs, response content, headers, provider credentials or
-raw external data. A spike in `HTTP_429`, `TIMEOUT` or `PROXY_FAILURE` is evidence
-for operator investigation only; it does not authorize an automatic retry or
-route change.
+Investigate immutable health observations by Project/time and their stored
+Run/lease/worker lineage. Normal samples are operational telemetry and do not
+emit duplicate `egress_health.observed` audit rows. Do not log or add target
+URLs, response content, headers, provider credentials or raw external data. A
+spike in `HTTP_429`, `TIMEOUT` or `PROXY_FAILURE` is evidence for operator
+investigation only; it does not authorize an automatic retry or route change.
 
 Queued bound Runs are rechecked at admission. After disable or revision
 rotation, confirm affected pending Runs become `FAILED` with
@@ -75,6 +78,6 @@ cannot retract a value already decrypted by an active trusted worker.
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
 provider-neutral `python scripts/verify-egress-health.py` protocol verifier, the
 full repository gates. A rollback rehearsal is `alembic downgrade
-20260828_0023` followed by `alembic upgrade head` on an isolated database.
-Downgrade removes route attribution but preserves immutable observations;
+20260828_0024` followed by `alembic upgrade head` on an isolated database.
+Downgrade reconstructs bounded JSONB evidence and restores the legacy indexes;
 production rollback still requires an approved evidence-preservation decision.

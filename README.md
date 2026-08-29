@@ -49,3 +49,8 @@ Run/worker/broker binding, queued revocation convergence and short-lived
 worker-encrypted credential delivery are merged; Agent and browser credential
 isolation remains enforced. Production provider health remains active work. See
 [the Proxy/Egress documentation](docs/proxy-egress/README.md).
+
+Machine-readable current workstream and database-head status lives in
+[`docs/roadmap/rdc-status.json`](docs/roadmap/rdc-status.json). Narrative audits
+are dated snapshots and must not override that file, the repository migration
+graph, GitHub state or exact-head CI.

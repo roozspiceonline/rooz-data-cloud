@@ -125,7 +125,11 @@ def main() -> None:
         require(marker in migration_source, "missing migration control: " + marker)
 
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    require("verify-phase1g.py" in workflow, "CI does not run Phase 1G verifier")
+    runner = (ROOT / "scripts/run-verifiers.py").read_text(encoding="utf-8")
+    require(
+        "run-verifiers.py" in workflow and '"verify-phase1g.py"' in runner,
+        "CI does not run Phase 1G verifier",
+    )
 
     print("RDC_PHASE1G_VERIFICATION_PASSED")
 

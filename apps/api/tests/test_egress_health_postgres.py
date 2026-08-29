@@ -143,11 +143,32 @@ async def test_service_is_idempotent_and_database_rows_are_immutable() -> None:
         )
         derived = (
             await connection.execute(
-                text("SELECT outcome,healthy,retryable FROM control.egress_health_observations WHERE client_observation_id=:client"),
+                text("SELECT outcome,healthy,retryable,evidence,http_status,response_bytes,latency_ms FROM control.egress_health_observations WHERE client_observation_id=:client"),
                 {"client": direct_id},
             )
         ).one()
-        assert derived == ("HTTP_429", False, True)
+        assert derived == ("HTTP_429", False, True, None, 429, 1, 2)
+        assert await connection.scalar(
+            text(
+                "SELECT count(*) FROM security.audit_events WHERE action='egress_health.observed' AND resource_id=:resource"
+            ),
+            {"resource": str(first.id)},
+        ) == 0
+        index_names = set(
+            (
+                await connection.execute(
+                    text(
+                        "SELECT indexname FROM pg_indexes WHERE schemaname='control' AND tablename='egress_health_observations'"
+                    )
+                )
+            ).scalars()
+        )
+        assert {
+            "egress_health_observations_pkey",
+            "uq_egress_health_observations_lease_client",
+            "ix_egress_health_observations_project_id_observed_at",
+            "ix_egress_health_observations_project_route_time",
+        } == index_names
     async with session_factory() as session:
         suppressed = await summarize_egress_health_routes(
             session,
