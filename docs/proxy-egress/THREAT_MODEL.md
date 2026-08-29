@@ -111,30 +111,30 @@ permission-checked, and database lineage triggers/functions derive exact
 same-Project policy, revision and secret relationships. A tenant database role
 cannot execute scheduler capabilities or update another tenant's attempt.
 
-## Live-runner boundary required by Issue #97
+## Live-runner boundary
 
-The checked-in network-policy primitives reject IP literals, single-label and
-special-use hostnames; reject every non-global, multicast, reserved,
-unspecified, private, link-local and IPv4-mapped-private address; and require
-the actual connected peer to remain in the validated DNS set. They also define
-zero redirects, verified TLS with hostname checking and SNI-compatible hostname
-use, removal of ambient proxy variables, bounded connect/total timeouts,
-response bytes, retries and concurrency inputs. Issue #97 must integrate these
-checks at connection time, validate the peer socket rather than configuration
-DNS alone, use no proxy-inheriting client path, and persist only the bounded
-outcome taxonomy. Plaintext credentials must remain inside that trusted runner
-and must never enter Agent/Chromium input, response bodies, logs, traces, audit
-JSON, metrics labels or database rows.
+The checked-in live runner rejects IP literals, single-label and special-use
+hostnames and rejects any DNS set containing non-global, multicast, reserved,
+unspecified, private, link-local or IPv4-mapped-private addresses. The transport
+connects to an exact validated address, retains the original hostname for TLS
+certificate verification and SNI, and checks the actual connected peer against
+the validated DNS set before sending credentials. It uses direct asyncio TLS
+sockets rather than a proxy-aware HTTP client, rejects redirects, and bounds
+connect/total timeouts, response bytes, retries and claim concurrency. Only the
+existing bounded outcome taxonomy is persisted. Plaintext credentials remain
+inside that trusted runner and must never enter Agent/Chromium input, response
+bodies, logs, traces, audit JSON, metrics labels or database rows.
 
-## Residual work before live enforcement
+## Residual work before adaptive enforcement
 
-Add a reviewed credential-using live runner and live adversarial canaries before
-adaptive routing. Durable scheduling, scoped database capabilities, token
-digests, race serialization and pure network-policy gates exist, but there is
-not yet an actual peer-pinned TLS transport. DNS can change between resolver and
-connect unless Issue #97 wires the connected-peer check correctly; timeout and
-response limits are not protections until that runner uses them. Live execution
-and adaptive routing therefore remain explicitly disabled.
+The live credential-canary runner now exists but remains false by default. Its
+claim-fenced secret loader releases encrypted material only for an exact live
+claim; the runner decrypts it locally, uses a direct peer-pinned TLS connection,
+validates the connected peer against the prevalidated DNS set, rejects redirects
+and bounds timeout/response/retry/concurrency use. Plaintext is not persisted or
+returned. A real live adversarial canary is still required before operators may
+treat this runner as production-validated, and adaptive routing remains explicitly
+disabled.
 
 The provider-health evidence is untrusted even when reported by an authenticated
 worker because status codes and challenge signals originate externally. The

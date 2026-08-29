@@ -200,7 +200,9 @@ async def foundation_status() -> dict[str, object]:
         "egress_credential_canary_scheduling_enabled": (
             settings.egress_credential_canary_enabled
         ),
-        "egress_credential_canary_live_executor_enabled": False,
+        "egress_credential_canary_live_executor_enabled": (
+            settings.egress_credential_canary_live_executor_enabled
+        ),
         "egress_adaptive_routing_enabled": False,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,

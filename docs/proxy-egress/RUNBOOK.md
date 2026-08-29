@@ -2,7 +2,7 @@
 
 ## Safe rollout
 
-1. Apply migrations through `20260829_0027`. Confirm the policy tables and
+1. Apply migrations through `20260829_0028`. Confirm the policy tables and
    `control.egress_health_observations` have RLS enabled, and confirm the health
    table has tenant-select, worker-select/insert, exact-lease guard and
    immutable update/delete triggers. Confirm the route columns reject invalid
@@ -10,9 +10,10 @@
    have `evidence IS NULL`, compact fields are bounded, and only replay,
     Project/time and Project/route/time indexes remain.
    Confirm the canary table has `claim_token_digest` but no `claim_token`
-   column; the three `control.*_egress_credential_canar*` capability functions
-   are `SECURITY DEFINER` with fixed search paths and no `PUBLIC` execution;
-   and no scheduler select/insert/update policy remains. Setting the retired
+   column; the three lifecycle `control.*_egress_credential_canar*` capability
+   functions plus the exact claim-fenced secret loader are `SECURITY DEFINER`
+   with fixed search paths and no `PUBLIC` execution; and no scheduler
+   select/insert/update policy remains. Setting the retired
    `rdc.egress_canary_scheduler` GUC must grant no table access.
 2. Keep existing Queue HTTP/browser canary allowlists unchanged. Confirm
    `/api/v1/system/foundation` reports `egress_policy_live_binding_enabled=true`
@@ -42,20 +43,22 @@
    `RDC_EGRESS_HEALTH_MIN_ROUTE_SAMPLES` between 5 and 1000. Confirm the route
    endpoint suppresses smaller cohorts, rejects excessive cardinality and does
    not expose raw observation or execution lineage.
-10. Keep `RDC_EGRESS_CREDENTIAL_CANARY_ENABLED=false` until a reviewed live
-    runner exists. To validate persistence in an isolated environment, set one
-    credential-free HTTPS target with no query/user-info/fragment and bounded
-    claim/batch/attempt values. Rotate a secret bound to an ACTIVE revision and
-    confirm one replay-safe PENDING attempt plus immutable ENQUEUED history.
-    Confirm the public list omits secret version, target digest and claim token.
-11. Confirm `/api/v1/system/foundation` reports canary persistence/history true,
-    live executor false and adaptive routing false. Do not interpret a stored
-    SUCCEEDED result as authority to retry a Run or select a route.
-12. Before Issue #97 is enabled, require evidence that the live transport uses
-    the validated DNS set and revalidates the actual connected peer; disables
-    redirects and proxy-environment inheritance; requires hostname-verified
-    TLS; and enforces connect/total timeout, response-byte, retry and claim
-    concurrency bounds. Unit policy tests alone are not live-runner evidence.
+10. Keep both `RDC_EGRESS_CREDENTIAL_CANARY_ENABLED=false` and
+    `RDC_EGRESS_CREDENTIAL_CANARY_LIVE_EXECUTOR_ENABLED=false` until the target
+    and credential are approved for an isolated canary. Validate persistence
+    first with the live executor disabled: rotate a secret bound to an ACTIVE
+    revision and confirm one replay-safe PENDING attempt plus immutable history.
+11. For an approved staging canary, enable scheduling and the live executor only
+    for one credential-free HTTPS target. Confirm the separate runner claims a
+    bounded batch, the database stores only a claim-token digest, the exact
+    secret-version loader is claim-fenced, and the Project list still omits
+    secret/target/claim material.
+12. Before production validation, require live evidence that the transport uses
+    the validated DNS set and revalidates the actual connected peer; rejects
+    redirects; uses direct sockets rather than proxy-inheriting HTTP clients;
+    requires hostname-verified TLS/SNI; and enforces connect/total timeout,
+    response-byte, retry and claim-concurrency bounds. Unit tests alone are not
+    the final live-adversarial gate.
 
 ## Incident response
 
@@ -78,9 +81,11 @@ URLs, response content, headers, provider credentials or raw external data. A
 spike in `HTTP_429`, `TIMEOUT` or `PROXY_FAILURE` is evidence for operator
 investigation only; it does not authorize an automatic retry or route change.
 
-For canary incidents, disable `RDC_EGRESS_CREDENTIAL_CANARY_ENABLED`, preserve
-attempt/transition rows and rotate the affected Project secret. Treat stale
-claims, `CONFIGURATION_ERROR`, `AUTH_REJECTED`, `SECRET_VERSION_SUPERSEDED` and
+For canary incidents, disable both
+`RDC_EGRESS_CREDENTIAL_CANARY_LIVE_EXECUTOR_ENABLED` and
+`RDC_EGRESS_CREDENTIAL_CANARY_ENABLED`, preserve attempt/transition rows, drain
+or expire any already-claimed work, and rotate the affected Project secret.
+Treat stale claims, `CONFIGURATION_ERROR`, `AUTH_REJECTED`, `SECRET_VERSION_SUPERSEDED` and
 unexpected claim churn as security or operator events. Never add target URLs,
 secret identifiers, authorization values or response bodies to results/logs.
 
@@ -103,8 +108,10 @@ cannot retract a value already decrypted by an active trusted worker.
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
 provider-neutral `python scripts/verify-egress-health.py` protocol verifier, and the
 full repository gates. A rollback rehearsal is `alembic downgrade
-20260829_0026` followed by `alembic upgrade head` on an isolated database.
-Downgrading `0027` preserves attempts/history but replaces digests with new raw
+20260829_0027` followed by `alembic upgrade head` on an isolated database.
+Downgrading `0028` removes only the live-runner secret loader and requires the
+live executor to be disabled/drained first. Downgrading `0027` preserves
+attempts/history but replaces digests with new raw
 UUID tokens, invalidating any in-flight claim; drain or expire claims first.
 Downgrading below `0026` deletes canary attempts/history and therefore requires
 an approved backup and evidence-preservation decision.

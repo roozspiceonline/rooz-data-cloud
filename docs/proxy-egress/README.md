@@ -119,18 +119,22 @@ the attempt, so the lock winner deterministically controls success versus
 `SECRET_VERSION_SUPERSEDED`. Organization RLS remains RDC's tenant boundary;
 the route additionally resolves and permission-checks the exact Project.
 
-The future-runner policy module defines private/special-address rejection,
-actual connected-peer validation against the resolved public set, disabled
-redirects, verified TLS, ambient-proxy removal and bounded network use. It does
-not perform a live request. Issue #97 must integrate and adversarially test
-those primitives before enabling the executor.
+The live-runner increment wires those network-policy gates into a separate trusted
+service. Migration `20260829_0028` adds one claim-fenced, fixed-search-path
+`SECURITY DEFINER` loader that returns encrypted material only for the exact
+unexpired claim and exact secret version. The runner decrypts that material only
+inside its process, sends it only as the complete Authorization value, and clears
+its mutable plaintext buffer after the request. It resolves and validates every
+DNS address, connects directly to one validated IP while retaining the original
+hostname for TLS/SNI, validates the actual connected peer, rejects redirects,
+uses no proxy-aware HTTP client, and bounds request time, bytes, retries and
+concurrency. Network outcomes are reduced to the existing bounded taxonomy.
 
 The Project endpoint returns at most 100 sanitized attempt summaries and never
 returns a secret reference/version, target/digest, claim token, credential or
-external response. This increment deliberately supplies no live network
-executor: `egress_credential_canary_live_executor_enabled=false` and
-`egress_adaptive_routing_enabled=false` remain authoritative until a separately
-reviewed runner and live adversarial gates are complete.
+external response. The runner remains false by default behind
+`RDC_EGRESS_CREDENTIAL_CANARY_LIVE_EXECUTOR_ENABLED=false`, and adaptive routing
+remains disabled until a separately reviewed live adversarial canary is complete.
 
 Immediately before a bound `RUN_START` consumes a lease, admission locks the
 Run and referenced policy and requires the policy to remain `ACTIVE` with the

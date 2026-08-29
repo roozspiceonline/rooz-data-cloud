@@ -32,6 +32,11 @@ need("apps/api/tests/test_egress_policy_runtime_binding.py", "test_egress_creden
 need("apps/api/tests/test_phase1f_contracts.py", "test_egress_credential_envelope_is_bound_to_policy_and_lease")
 need("apps/api/tests/test_egress_policy_postgres.py", "test_rls_and_resolver_hide_other_tenant", "test_service_idempotency_rotation_and_optimistic_lifecycle", "test_bound_run_admission_serializes_with_policy_disable")
 need("apps/api/app/main.py", '"egress_policy_live_binding_enabled": True', '"egress_policy_worker_credential_envelopes_enabled": True', '"egress_policy_plaintext_credentials_exposed": False')
+need("apps/api/migrations/versions/20260829_0028_egress_credential_canary_live_runner.py", "load_egress_credential_canary_secret", "SECURITY DEFINER", "REVOKE ALL ON FUNCTION")
+need("apps/api/app/egress_credential_canary_transport.py", "asyncio.open_connection", "server_hostname=hostname", "validate_connected_peer", "reject_redirect")
+need("apps/api/app/egress_credential_canary_runner.py", "load_credential_rotation_canary_secret", "decrypt_project_secret", "run_credential_canary_transport")
+need("apps/api/tests/test_egress_credential_canary_transport.py", "test_transport_rejects_private_dns_and_connected_peer_substitution", "test_transport_rejects_redirects_and_oversized_responses")
+need("apps/api/app/main.py", "settings.egress_credential_canary_live_executor_enabled", '"egress_adaptive_routing_enabled": False')
 for path in ("docs/proxy-egress/README.md", "docs/proxy-egress/THREAT_MODEL.md", "docs/proxy-egress/RUNBOOK.md"):
     need(path, "Proxy/Egress")
 

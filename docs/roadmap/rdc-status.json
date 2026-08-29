@@ -1,6 +1,6 @@
 {
   "schema_version": "rdc.project-status/v1",
-  "database_head": "20260829_0027",
+  "database_head": "20260829_0028",
   "canonical_roadmap": "docs/roadmap/RDC_V1_ROADMAP.md",
   "workstreams": {
     "identity_tenancy": {"status": "complete"},
@@ -9,8 +9,8 @@
     "scraping_runtime": {"status": "baseline_complete"},
     "proxy_egress": {
       "status": "active",
-      "last_delivery_issue": 98,
-      "remaining": ["credential_rotation_live_runner", "live_adversarial_canary"]
+      "last_delivery_issue": 97,
+      "remaining": ["live_adversarial_canary"]
     },
     "platform_efficiency": {
       "status": "increment_complete",
