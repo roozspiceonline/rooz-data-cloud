@@ -58,12 +58,54 @@ def test_canary_migration_enforces_lineage_state_history_and_rls() -> None:
     ):
         assert marker in migration
 
+    hardening = (
+        ROOT
+        / "migrations/versions/20260829_0027_harden_egress_credential_canaries.py"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'down_revision: str | None = "20260829_0026"',
+        "enqueue_egress_credential_canaries_for_secret",
+        "claim_egress_credential_canaries",
+        "complete_egress_credential_canary",
+        "SECURITY DEFINER",
+        "SET search_path = pg_catalog,",
+        "REVOKE ALL ON FUNCTION",
+        "claim_token_digest",
+        "gen_random_bytes(32)",
+        "FOR UPDATE SKIP LOCKED",
+        "ProjectSecret first, then canary attempt",
+        "DROP POLICY IF EXISTS",
+    ):
+        assert marker in hardening
+    upgrade = hardening[
+        hardening.index("def upgrade()") : hardening.index(
+            "def _create_raw_token_guards()"
+        )
+    ]
+    assert upgrade.index("DROP TRIGGER egress_credential_canary_history") < upgrade.index(
+        "SET claim_token_digest"
+    ) < upgrade.index("CREATE TRIGGER egress_credential_canary_history")
+    downgrade = hardening[hardening.index("def downgrade()") :]
+    assert downgrade.index("DROP TRIGGER egress_credential_canary_history") < downgrade.index(
+        "SET claim_token = gen_random_uuid()"
+    ) < downgrade.index("CREATE TRIGGER egress_credential_canary_history")
+
+
+def test_canary_service_has_no_transaction_wide_scheduler_escalation() -> None:
+    service = (ROOT / "app/services/egress_credential_canaries.py").read_text(
+        encoding="utf-8"
+    )
+    assert "set_config('rdc.egress_canary_scheduler'" not in service
+    assert "_enable_scheduler_context" not in service
+    assert "hashlib.sha256(claim_token.encode" in service
+
 
 def test_canary_api_is_tenant_read_bounded_and_credential_free() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v1/projects/{project_id}/egress-credential-canaries" in paths
     route = (ROOT / "app/api/routes/egress_policies.py").read_text(encoding="utf-8")
     assert 'require_project_permission("egress.read")' in route
+    assert "project_id=access.project.id" in route
     assert "Query(ge=1, le=100)" in route
     service = (ROOT / "app/services/egress_credential_canaries.py").read_text(
         encoding="utf-8"
@@ -76,3 +118,12 @@ def test_canary_api_is_tenant_read_bounded_and_credential_free() -> None:
         "claim_token",
     ):
         assert prohibited not in summary
+    response_schema = str(app.openapi())
+    assert "claim_token_digest" not in response_schema
+
+
+def test_raw_claim_token_is_redacted_from_runtime_object_repr() -> None:
+    service = (ROOT / "app/services/egress_credential_canaries.py").read_text(
+        encoding="utf-8"
+    )
+    assert "claim_token: str = field(repr=False)" in service

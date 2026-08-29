@@ -968,7 +968,7 @@ class EgressCredentialCanaryAttempt(UUIDPrimaryKeyMixin, Base):
     region_key: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    claim_token_digest: Mapped[str | None] = mapped_column(String(64))
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scheduled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

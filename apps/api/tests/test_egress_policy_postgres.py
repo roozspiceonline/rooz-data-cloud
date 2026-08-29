@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import secrets
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -364,6 +365,14 @@ async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -
                 select(ProjectSecret).where(ProjectSecret.id == secret_id)
             )
             assert secret is not None
+            await session.execute(
+                text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                {"u": str(user_id)},
+            )
+            await session.execute(
+                text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                {"o": str(org_id)},
+            )
             assert await enqueue_credential_rotation_canaries(
                 session, secret=secret, request_id="canary-enqueue"
             ) == 1
@@ -374,14 +383,15 @@ async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -
             claimed = await claim_credential_rotation_canaries(
                 session, now=now, batch_size=10
             )
-            assert len(claimed) == 1
-            attempt = claimed[0]
+            attempt = next(
+                claim for claim in claimed if claim.credential_secret_id == secret_id
+            )
             assert attempt.claim_token is not None
             with pytest.raises(ApiError) as stale_claim:
                 await complete_credential_rotation_canary(
                     session,
                     attempt_id=attempt.id,
-                    claim_token=uuid4(),
+                    claim_token=secrets.token_hex(32),
                     outcome="SUCCESS",
                     now=now,
                 )
@@ -453,8 +463,11 @@ async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -
             )
             await connection.execute(
                 text(
-                    "GRANT SELECT ON control.egress_credential_canary_attempts,control.egress_credential_canary_transitions TO rdc_canary_rls_test"
+                    "GRANT SELECT,UPDATE ON control.egress_credential_canary_attempts TO rdc_canary_rls_test"
                 )
+            )
+            await connection.execute(
+                text("GRANT SELECT ON control.egress_credential_canary_transitions TO rdc_canary_rls_test")
             )
         try:
             async with engine.begin() as connection:
@@ -467,18 +480,36 @@ async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -
                     text("SELECT set_config('rdc.current_organization_id',:o,true)"),
                     {"o": str(org_id)},
                 )
+                await connection.execute(
+                    text("SELECT set_config('rdc.egress_canary_scheduler','1',true)")
+                )
                 assert await connection.scalar(
                     text(
                         "SELECT count(*) FROM control.egress_credential_canary_attempts WHERE organization_id=:o"
                     ),
                     {"o": foreign_org},
                 ) == 0
+                changed = await connection.execute(
+                    text(
+                        "UPDATE control.egress_credential_canary_attempts SET version=version+1 WHERE organization_id=:o RETURNING id"
+                    ),
+                    {"o": foreign_org},
+                )
+                assert changed.first() is None
                 assert await connection.scalar(
                     text(
                         "SELECT count(*) FROM control.egress_credential_canary_transitions WHERE project_id=:p"
                     ),
                     {"p": foreign_project},
                 ) == 0
+            with pytest.raises(DBAPIError, match="permission denied"):
+                async with engine.begin() as connection:
+                    await connection.execute(text("SET LOCAL ROLE rdc_canary_rls_test"))
+                    await connection.execute(
+                        text(
+                            "SELECT * FROM control.claim_egress_credential_canaries(CURRENT_TIMESTAMP,1,30,3)"
+                        )
+                    )
                 assert await connection.scalar(
                     text(
                         "SELECT count(*) FROM control.egress_credential_canary_attempts WHERE project_id=:p"
@@ -499,7 +530,7 @@ async def test_credential_rotation_canary_is_idempotent_fenced_and_immutable() -
 async def test_credential_rotation_canary_claim_is_single_winner() -> None:
     if not await _database_available():
         pytest.skip("PostgreSQL egress migration is unavailable")
-    _, _, _, secret_id, policy_id, revision_id = await _seed()
+    user_id, org_id, _, secret_id, policy_id, revision_id = await _seed()
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -521,6 +552,14 @@ async def test_credential_rotation_canary_claim_is_single_winner() -> None:
                 select(ProjectSecret).where(ProjectSecret.id == secret_id)
             )
             assert secret is not None
+            await session.execute(
+                text("SELECT set_config('rdc.current_user_id',:u,true)"),
+                {"u": str(user_id)},
+            )
+            await session.execute(
+                text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+                {"o": str(org_id)},
+            )
             assert await enqueue_credential_rotation_canaries(
                 session, secret=secret, request_id="canary-race-enqueue"
             ) == 1
@@ -533,7 +572,11 @@ async def test_credential_rotation_canary_claim_is_single_winner() -> None:
                 claims = await claim_credential_rotation_canaries(
                     session, now=now, batch_size=50
                 )
-                identifiers = [claim.id for claim in claims]
+                identifiers = [
+                    claim.id
+                    for claim in claims
+                    if claim.credential_secret_id == secret_id
+                ]
                 await session.commit()
                 return identifiers
 
@@ -551,26 +594,20 @@ async def test_credential_canary_database_derives_exact_active_binding() -> None
     if not await _database_available():
         pytest.skip("PostgreSQL egress migration is unavailable")
     _, org_id, project_id, secret_id, policy_id, revision_id = await _seed()
-    spoofed = uuid4()
     statement = text(
-        "INSERT INTO control.egress_credential_canary_attempts "
-        "(organization_id,project_id,policy_id,policy_revision_id,credential_secret_id,secret_version,target_digest,provider_key,region_key) "
-        "VALUES (:spoof,:spoof,:spoof,:revision,:spoof,999,:digest,'static-canary','local') "
-        "RETURNING organization_id,project_id,policy_id,policy_revision_id,credential_secret_id,secret_version"
+        "SELECT * FROM control.enqueue_egress_credential_canaries_for_secret("
+        ":secret,:digest,'static-canary','local')"
     )
-    with pytest.raises(DBAPIError, match="binding is ineligible"):
-        async with engine.begin() as connection:
-            await connection.execute(
-                text("SELECT set_config('rdc.egress_canary_scheduler','1',true)")
-            )
-            await connection.execute(
-                statement,
-                {
-                    "spoof": spoofed,
-                    "revision": revision_id,
-                    "digest": "b" * 64,
-                },
-            )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text("SELECT set_config('rdc.current_user_id',:u,true)"),
+            {"u": str(uuid4())},
+        )
+        await connection.execute(
+            text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+            {"o": str(org_id)},
+        )
+        assert (await connection.execute(statement, {"secret": secret_id, "digest": "b" * 64})).first() is None
     async with engine.begin() as connection:
         await connection.execute(
             text(
@@ -578,20 +615,286 @@ async def test_credential_canary_database_derives_exact_active_binding() -> None
             ),
             {"r": revision_id, "p": policy_id},
         )
-        await connection.execute(
-            text("SELECT set_config('rdc.egress_canary_scheduler','1',true)")
+        user_id = await connection.scalar(
+            text("SELECT created_by_user_id FROM identity.organizations WHERE id=:o"),
+            {"o": org_id},
         )
+        await connection.execute(text("SELECT set_config('rdc.current_user_id',:u,true)"), {"u": str(user_id)})
+        await connection.execute(text("SELECT set_config('rdc.current_organization_id',:o,true)"), {"o": str(org_id)})
         derived = (
             await connection.execute(
                 statement,
                 {
-                    "spoof": spoofed,
-                    "revision": revision_id,
+                    "secret": secret_id,
                     "digest": "b" * 64,
                 },
             )
         ).one()
-    assert derived == (org_id, project_id, policy_id, revision_id, secret_id, 1)
+    assert derived[1:] == (policy_id, revision_id)
+
+
+async def _create_claimed_canary(now: datetime):
+    user_id, org_id, _, secret_id, policy_id, revision_id = await _seed()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.egress_policies SET status='ACTIVE',active_revision_id=:r,activated_at=CURRENT_TIMESTAMP WHERE id=:p"
+            ),
+            {"r": revision_id, "p": policy_id},
+        )
+    async with session_factory() as session:
+        secret = await session.scalar(
+            select(ProjectSecret).where(ProjectSecret.id == secret_id)
+        )
+        assert secret is not None
+        await session.execute(
+            text("SELECT set_config('rdc.current_user_id',:u,true)"),
+            {"u": str(user_id)},
+        )
+        await session.execute(
+            text("SELECT set_config('rdc.current_organization_id',:o,true)"),
+            {"o": str(org_id)},
+        )
+        assert await enqueue_credential_rotation_canaries(
+            session, secret=secret, request_id="hardening-race-enqueue"
+        ) == 1
+        await session.commit()
+    async with session_factory() as session:
+        claims = await claim_credential_rotation_canaries(
+            session,
+            now=now,
+            batch_size=canary_service.settings.egress_credential_canary_batch_size,
+        )
+        await session.commit()
+    return secret_id, next(
+        claim for claim in claims if claim.credential_secret_id == secret_id
+    )
+
+
+async def test_canary_claim_digest_reclaim_expiry_and_duplicate_fencing() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    original = (
+        canary_service.settings.egress_credential_canary_enabled,
+        canary_service.settings.egress_credential_canary_target_url,
+        canary_service.settings.egress_credential_canary_batch_size,
+    )
+    canary_service.settings.egress_credential_canary_enabled = True
+    canary_service.settings.egress_credential_canary_target_url = (
+        "https://canary.example.com/auth-check"
+    )
+    canary_service.settings.egress_credential_canary_batch_size = 100
+    try:
+        now = datetime.now(UTC)
+        _, first = await _create_claimed_canary(now)
+        assert len(first.claim_token) == 64
+        async with engine.connect() as connection:
+            persisted = await connection.scalar(
+                text(
+                    "SELECT claim_token_digest FROM control.egress_credential_canary_attempts WHERE id=:a"
+                ),
+                {"a": first.id},
+            )
+            assert persisted is not None and len(persisted) == 64
+            assert persisted != first.claim_token
+            assert await connection.scalar(
+                text(
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema='control' AND table_name='egress_credential_canary_attempts' AND column_name='claim_token'"
+                )
+            ) == 0
+        expired_at = first.claim_expires_at + timedelta(microseconds=1)
+        async with session_factory() as session:
+            with pytest.raises(ApiError, match="stale"):
+                await complete_credential_rotation_canary(
+                    session,
+                    attempt_id=first.id,
+                    claim_token=first.claim_token,
+                    outcome="SUCCESS",
+                    now=expired_at,
+                )
+            await session.rollback()
+        async with session_factory() as session:
+            claims = await claim_credential_rotation_canaries(
+                session,
+                now=expired_at,
+                batch_size=canary_service.settings.egress_credential_canary_batch_size,
+            )
+            await session.commit()
+        reclaimed = next(claim for claim in claims if claim.id == first.id)
+        assert reclaimed.claim_token != first.claim_token
+        async with session_factory() as session:
+            with pytest.raises(ApiError, match="stale"):
+                await complete_credential_rotation_canary(
+                    session,
+                    attempt_id=first.id,
+                    claim_token=first.claim_token,
+                    outcome="SUCCESS",
+                    now=expired_at,
+                )
+            await session.rollback()
+        async with session_factory() as session:
+            result = await complete_credential_rotation_canary(
+                session,
+                attempt_id=reclaimed.id,
+                claim_token=reclaimed.claim_token,
+                outcome="SUCCESS",
+                now=expired_at,
+            )
+            await session.commit()
+        assert result.status == "SUCCEEDED"
+        async with session_factory() as session:
+            with pytest.raises(ApiError, match="stale"):
+                await complete_credential_rotation_canary(
+                    session,
+                    attempt_id=reclaimed.id,
+                    claim_token=reclaimed.claim_token,
+                    outcome="SUCCESS",
+                    now=expired_at,
+                )
+            await session.rollback()
+        async with engine.connect() as connection:
+            events = (
+                (
+                    await connection.execute(
+                        text(
+                            "SELECT event FROM control.egress_credential_canary_transitions WHERE attempt_id=:a ORDER BY attempt_version"
+                        ),
+                        {"a": first.id},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert events == ["ENQUEUED", "CLAIMED", "RECLAIMED", "CLAIMED", "SUCCEEDED"]
+    finally:
+        (
+            canary_service.settings.egress_credential_canary_enabled,
+            canary_service.settings.egress_credential_canary_target_url,
+            canary_service.settings.egress_credential_canary_batch_size,
+        ) = original
+
+
+async def test_canary_completion_and_rotation_use_deterministic_secret_first_locking() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress migration is unavailable")
+    original = (
+        canary_service.settings.egress_credential_canary_enabled,
+        canary_service.settings.egress_credential_canary_target_url,
+        canary_service.settings.egress_credential_canary_batch_size,
+    )
+    canary_service.settings.egress_credential_canary_enabled = True
+    canary_service.settings.egress_credential_canary_target_url = (
+        "https://canary.example.com/auth-check"
+    )
+    canary_service.settings.egress_credential_canary_batch_size = 100
+    try:
+        now = datetime.now(UTC)
+
+        # Completion owns the secret lock first; rotation waits and version N succeeds.
+        secret_id, completion_first = await _create_claimed_canary(now)
+        async with session_factory() as completion_session:
+            result = await complete_credential_rotation_canary(
+                completion_session,
+                attempt_id=completion_first.id,
+                claim_token=completion_first.claim_token,
+                outcome="SUCCESS",
+                now=now,
+            )
+
+            async def rotate_after_completion() -> None:
+                async with session_factory() as rotation_session:
+                    await rotation_session.execute(
+                        text(
+                            "UPDATE security.project_secrets SET version=version+1 WHERE id=:s"
+                        ),
+                        {"s": secret_id},
+                    )
+                    await rotation_session.commit()
+
+            rotation = asyncio.create_task(rotate_after_completion())
+            await asyncio.sleep(0)
+            await completion_session.commit()
+            await rotation
+        assert result.status == "SUCCEEDED"
+
+        # Rotation owns the secret lock first; completion waits and becomes superseded.
+        secret_id, rotation_first = await _create_claimed_canary(now)
+        async with session_factory() as rotation_session:
+            await rotation_session.execute(
+                select(ProjectSecret)
+                .where(ProjectSecret.id == secret_id)
+                .with_for_update()
+            )
+            await rotation_session.execute(
+                text("UPDATE security.project_secrets SET version=version+1 WHERE id=:s"),
+                {"s": secret_id},
+            )
+
+            async def complete_after_rotation():
+                async with session_factory() as completion_session:
+                    completed = await complete_credential_rotation_canary(
+                        completion_session,
+                        attempt_id=rotation_first.id,
+                        claim_token=rotation_first.claim_token,
+                        outcome="SUCCESS",
+                        now=now,
+                    )
+                    await completion_session.commit()
+                    return completed
+
+            completion = asyncio.create_task(complete_after_rotation())
+            await asyncio.sleep(0)
+            await rotation_session.commit()
+            result = await completion
+        assert (result.status, result.outcome) == (
+            "SUPERSEDED",
+            "SECRET_VERSION_SUPERSEDED",
+        )
+
+        # Simultaneous release may choose either lock winner, but cannot persist a
+        # stale success after a winning rotation; the row result records that order.
+        secret_id, simultaneous = await _create_claimed_canary(now)
+        gate = asyncio.Event()
+
+        async def concurrent_rotation() -> None:
+            await gate.wait()
+            async with session_factory() as session:
+                await session.execute(
+                    text("UPDATE security.project_secrets SET version=version+1 WHERE id=:s"),
+                    {"s": secret_id},
+                )
+                await session.commit()
+
+        async def concurrent_completion():
+            await gate.wait()
+            async with session_factory() as session:
+                completed = await complete_credential_rotation_canary(
+                    session,
+                    attempt_id=simultaneous.id,
+                    claim_token=simultaneous.claim_token,
+                    outcome="SUCCESS",
+                    now=now,
+                )
+                await session.commit()
+                return completed
+
+        rotation_task = asyncio.create_task(concurrent_rotation())
+        completion_task = asyncio.create_task(concurrent_completion())
+        gate.set()
+        _, simultaneous_result = await asyncio.gather(
+            rotation_task, completion_task
+        )
+        assert simultaneous_result.status in {"SUCCEEDED", "SUPERSEDED"}
+        if simultaneous_result.status == "SUPERSEDED":
+            assert simultaneous_result.outcome == "SECRET_VERSION_SUPERSEDED"
+        else:
+            assert simultaneous_result.outcome == "SUCCESS"
+    finally:
+        (
+            canary_service.settings.egress_credential_canary_enabled,
+            canary_service.settings.egress_credential_canary_target_url,
+            canary_service.settings.egress_credential_canary_batch_size,
+        ) = original
 
 
 async def _seed_bound_run() -> tuple[UUID, UUID, UUID, UUID]:

@@ -80,9 +80,27 @@ need(
 need(
     "apps/api/app/services/egress_credential_canaries.py",
     "enqueue_credential_rotation_canaries",
-    "with_for_update(skip_locked=True)",
+    "control.claim_egress_credential_canaries",
     "complete_credential_rotation_canary",
-    "SECRET_VERSION_SUPERSEDED",
+    "hashlib.sha256(claim_token.encode",
+)
+need(
+    "apps/api/migrations/versions/20260829_0027_harden_egress_credential_canaries.py",
+    "enqueue_egress_credential_canaries_for_secret",
+    "claim_egress_credential_canaries",
+    "complete_egress_credential_canary",
+    "REVOKE ALL ON FUNCTION",
+    "claim_token_digest",
+    "ProjectSecret first, then canary attempt",
+)
+need(
+    "apps/api/app/egress_canary_network_policy.py",
+    "validate_global_address",
+    "validate_connected_peer",
+    "reject_redirect",
+    "tls_client_context",
+    "environment_without_proxies",
+    "BoundedResponse",
 )
 need(
     "apps/api/app/services/builds_secrets.py",
@@ -92,6 +110,12 @@ need(
     "apps/api/tests/test_egress_credential_canary_contracts.py",
     "test_canary_migration_enforces_lineage_state_history_and_rls",
     "test_canary_api_is_tenant_read_bounded_and_credential_free",
+)
+need(
+    "apps/api/tests/test_egress_canary_network_policy.py",
+    "test_dns_rebinding_is_rejected_against_the_actual_connected_peer",
+    "test_proxy_environment_is_removed_case_insensitively",
+    "test_tls_context_requires_hostname_and_certificate_verification",
 )
 need("docker-compose.yml", "postgres:18-alpine", "postgres_data:/var/lib/postgresql")
 need("docs/proxy-egress/THREAT_MODEL.md", "immutable observation", "minimum sample")

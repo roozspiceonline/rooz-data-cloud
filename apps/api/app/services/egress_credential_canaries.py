@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from uuid import UUID, uuid4
+import hashlib
+from dataclasses import dataclass, field
+from datetime import datetime
+from uuid import UUID
 
 from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
@@ -12,8 +13,6 @@ from ..core.errors import ApiError
 from ..core.security import canonical_fingerprint
 from ..models import (
     EgressCredentialCanaryAttempt,
-    EgressPolicy,
-    EgressPolicyRevision,
     ProjectSecret,
 )
 from .identity_tenancy import append_audit_event
@@ -30,8 +29,32 @@ CANARY_OUTCOMES: dict[str, tuple[str, bool, bool]] = {
 }
 
 
-async def _enable_scheduler_context(session: AsyncSession) -> None:
-    await session.execute(text("SELECT set_config('rdc.egress_canary_scheduler', '1', true)"))
+@dataclass(frozen=True)
+class ClaimedCredentialCanary:
+    id: UUID
+    organization_id: UUID
+    project_id: UUID
+    policy_id: UUID
+    policy_revision_id: UUID
+    credential_secret_id: UUID
+    secret_version: int
+    target_digest: str
+    provider_key: str
+    region_key: str
+    attempt_count: int
+    claim_token: str = field(repr=False)
+    claim_expires_at: datetime
+
+
+@dataclass(frozen=True)
+class CompletedCredentialCanary:
+    id: UUID
+    status: str
+    outcome: str
+    healthy: bool
+    retryable: bool
+    completed_at: datetime
+    version: int
 
 
 def configured_target_digest() -> str:
@@ -54,55 +77,22 @@ async def enqueue_credential_rotation_canaries(
     """Transactionally schedule one idempotent attempt per active bound revision."""
     if not settings.egress_credential_canary_enabled:
         return 0
-    await _enable_scheduler_context(session)
-    revisions = list(
-        (
-            await session.scalars(
-                select(EgressPolicyRevision)
-                .join(EgressPolicy, EgressPolicy.id == EgressPolicyRevision.policy_id)
-                .where(
-                    EgressPolicy.organization_id == secret.organization_id,
-                    EgressPolicy.project_id == secret.project_id,
-                    EgressPolicy.status == "ACTIVE",
-                    EgressPolicy.active_revision_id == EgressPolicyRevision.id,
-                    EgressPolicyRevision.credential_secret_id == secret.id,
-                )
-                .order_by(EgressPolicyRevision.id)
-            )
-        ).all()
-    )
     target_digest = configured_target_digest()
-    created = 0
-    for revision in revisions:
-        attempt_id = await session.scalar(
-            pg_insert(EgressCredentialCanaryAttempt)
-            .values(
-                id=uuid4(),
-                organization_id=secret.organization_id,
-                project_id=secret.project_id,
-                policy_id=revision.policy_id,
-                policy_revision_id=revision.id,
-                credential_secret_id=secret.id,
-                secret_version=secret.version,
-                target_digest=target_digest,
-                provider_key=settings.egress_route_provider_key,
-                region_key=settings.egress_route_region_key,
-                status="PENDING",
-                attempt_count=0,
-                version=1,
-            )
-            .on_conflict_do_nothing(
-                index_elements=[
-                    "policy_revision_id",
-                    "secret_version",
-                    "target_digest",
-                ]
-            )
-            .returning(EgressCredentialCanaryAttempt.id)
+    rows = (
+        await session.execute(
+            text(
+                "SELECT * FROM control.enqueue_egress_credential_canaries_for_secret("
+                ":secret_id, :target_digest, :provider_key, :region_key)"
+            ),
+            {
+                "secret_id": secret.id,
+                "target_digest": target_digest,
+                "provider_key": settings.egress_route_provider_key,
+                "region_key": settings.egress_route_region_key,
+            },
         )
-        if attempt_id is None:
-            continue
-        created += 1
+    ).mappings().all()
+    for row in rows:
         await append_audit_event(
             session,
             organization_id=secret.organization_id,
@@ -111,16 +101,16 @@ async def enqueue_credential_rotation_canaries(
             actor_id="egress-credential-canary",
             action="egress.credential_canary.enqueued",
             resource_type="egress_credential_canary",
-            resource_id=str(attempt_id),
+            resource_id=str(row["attempt_id"]),
             request_id=request_id,
             details={
-                "policy_id": str(revision.policy_id),
-                "policy_revision_id": str(revision.id),
+                "policy_id": str(row["policy_id"]),
+                "policy_revision_id": str(row["policy_revision_id"]),
                 "provider_key": settings.egress_route_provider_key,
                 "region_key": settings.egress_route_region_key,
             },
         )
-    return created
+    return len(rows)
 
 
 async def claim_credential_rotation_canaries(
@@ -128,77 +118,52 @@ async def claim_credential_rotation_canaries(
     *,
     now: datetime,
     batch_size: int,
-) -> list[EgressCredentialCanaryAttempt]:
+) -> list[ClaimedCredentialCanary]:
     """Reclaim expired work and claim a bounded batch with row-level fencing."""
     if not 1 <= batch_size <= settings.egress_credential_canary_batch_size:
         raise ValueError("Credential canary batch size is outside the configured bound")
-    await _enable_scheduler_context(session)
-    expired = list(
-        (
-            await session.scalars(
-                select(EgressCredentialCanaryAttempt)
-                .where(
-                    EgressCredentialCanaryAttempt.status == "CLAIMED",
-                    EgressCredentialCanaryAttempt.claim_expires_at <= now,
-                )
-                .order_by(EgressCredentialCanaryAttempt.claim_expires_at)
-                .limit(batch_size)
-                .with_for_update(skip_locked=True)
-            )
-        ).all()
-    )
-    for attempt in expired:
-        if attempt.attempt_count >= settings.egress_credential_canary_max_attempts:
-            attempt.status = "FAILED"
-            attempt.completed_at = now
-            attempt.outcome = "MAX_ATTEMPTS_EXCEEDED"
-            attempt.healthy = False
-            attempt.retryable = False
-        else:
-            attempt.status = "PENDING"
-            attempt.claim_token = None
-            attempt.claim_expires_at = None
-            attempt.claimed_at = None
-        attempt.version += 1
-    await session.flush()
-
-    pending = list(
-        (
-            await session.scalars(
-                select(EgressCredentialCanaryAttempt)
-                .where(EgressCredentialCanaryAttempt.status == "PENDING")
-                .order_by(
-                    EgressCredentialCanaryAttempt.scheduled_at,
-                    EgressCredentialCanaryAttempt.id,
-                )
-                .limit(batch_size)
-                .with_for_update(skip_locked=True)
-            )
-        ).all()
-    )
-    claimed: list[EgressCredentialCanaryAttempt] = []
-    for attempt in pending:
-        attempt.status = "CLAIMED"
-        attempt.attempt_count += 1
-        attempt.claim_token = uuid4()
-        attempt.claimed_at = now
-        attempt.claim_expires_at = now + timedelta(
-            seconds=settings.egress_credential_canary_claim_seconds
+    rows = (
+        await session.execute(
+            text(
+                "SELECT * FROM control.claim_egress_credential_canaries("
+                ":now, :batch_size, :claim_seconds, :max_attempts)"
+            ),
+            {
+                "now": now,
+                "batch_size": batch_size,
+                "claim_seconds": settings.egress_credential_canary_claim_seconds,
+                "max_attempts": settings.egress_credential_canary_max_attempts,
+            },
         )
-        attempt.version += 1
-        claimed.append(attempt)
-    await session.flush()
-    return claimed
+    ).mappings().all()
+    return [
+        ClaimedCredentialCanary(
+            id=row["attempt_id"],
+            organization_id=row["organization_id"],
+            project_id=row["project_id"],
+            policy_id=row["policy_id"],
+            policy_revision_id=row["policy_revision_id"],
+            credential_secret_id=row["credential_secret_id"],
+            secret_version=row["secret_version"],
+            target_digest=row["target_digest"],
+            provider_key=row["provider_key"],
+            region_key=row["region_key"],
+            attempt_count=row["attempt_count"],
+            claim_token=row["claim_token"],
+            claim_expires_at=row["claim_expires_at"],
+        )
+        for row in rows
+    ]
 
 
 async def complete_credential_rotation_canary(
     session: AsyncSession,
     *,
     attempt_id: UUID,
-    claim_token: UUID,
+    claim_token: str,
     outcome: str,
     now: datetime,
-) -> EgressCredentialCanaryAttempt:
+) -> CompletedCredentialCanary:
     """Persist a bounded terminal result for an exact unexpired claim."""
     classification = CANARY_OUTCOMES.get(outcome)
     if classification is None:
@@ -207,56 +172,37 @@ async def complete_credential_rotation_canary(
             code="EGRESS_CREDENTIAL_CANARY_OUTCOME_INVALID",
             message="The credential canary outcome is invalid.",
         )
-    await _enable_scheduler_context(session)
-    attempt = await session.scalar(
-        select(EgressCredentialCanaryAttempt)
-        .where(EgressCredentialCanaryAttempt.id == attempt_id)
-        .with_for_update()
-    )
-    if (
-        attempt is None
-        or attempt.status != "CLAIMED"
-        or attempt.claim_token != claim_token
-        or attempt.claim_expires_at is None
-        or attempt.claim_expires_at <= now
-    ):
+    token_digest = hashlib.sha256(claim_token.encode("ascii")).hexdigest()
+    row = (
+        await session.execute(
+            text(
+                "SELECT * FROM control.complete_egress_credential_canary("
+                ":attempt_id, :claim_token_digest, :outcome, :target_digest, :now)"
+            ),
+            {
+                "attempt_id": attempt_id,
+                "claim_token_digest": token_digest,
+                "outcome": outcome,
+                "target_digest": configured_target_digest(),
+                "now": now,
+            },
+        )
+    ).mappings().one_or_none()
+    if row is None:
         raise ApiError(
             status_code=409,
             code="EGRESS_CREDENTIAL_CANARY_CLAIM_STALE",
             message="The credential canary claim is stale.",
         )
-    current_version = await session.scalar(
-        select(ProjectSecret.version).where(
-            ProjectSecret.id == attempt.credential_secret_id,
-            ProjectSecret.organization_id == attempt.organization_id,
-            ProjectSecret.project_id == attempt.project_id,
-        )
+    return CompletedCredentialCanary(
+        id=row["attempt_id"],
+        status=row["status"],
+        outcome=row["outcome"],
+        healthy=row["healthy"],
+        retryable=row["retryable"],
+        completed_at=row["completed_at"],
+        version=row["version"],
     )
-    if attempt.target_digest != configured_target_digest():
-        status, normalized_outcome, healthy, retryable = (
-            "FAILED",
-            "CONFIGURATION_ERROR",
-            False,
-            False,
-        )
-    elif current_version != attempt.secret_version:
-        status, normalized_outcome, healthy, retryable = (
-            "SUPERSEDED",
-            "SECRET_VERSION_SUPERSEDED",
-            False,
-            False,
-        )
-    else:
-        status, healthy, retryable = classification
-        normalized_outcome = outcome
-    attempt.status = status
-    attempt.completed_at = now
-    attempt.outcome = normalized_outcome
-    attempt.healthy = healthy
-    attempt.retryable = retryable
-    attempt.version += 1
-    await session.flush()
-    return attempt
 
 
 async def list_credential_rotation_canaries(

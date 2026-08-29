@@ -2,13 +2,18 @@
 
 ## Safe rollout
 
-1. Apply migrations through `20260829_0026`. Confirm the policy tables and
+1. Apply migrations through `20260829_0027`. Confirm the policy tables and
    `control.egress_health_observations` have RLS enabled, and confirm the health
    table has tenant-select, worker-select/insert, exact-lease guard and
    immutable update/delete triggers. Confirm the route columns reject invalid
    slugs and the Project/route/time index exists. Confirm new observation rows
    have `evidence IS NULL`, compact fields are bounded, and only replay,
-   Project/time and Project/route/time indexes remain.
+    Project/time and Project/route/time indexes remain.
+   Confirm the canary table has `claim_token_digest` but no `claim_token`
+   column; the three `control.*_egress_credential_canar*` capability functions
+   are `SECURITY DEFINER` with fixed search paths and no `PUBLIC` execution;
+   and no scheduler select/insert/update policy remains. Setting the retired
+   `rdc.egress_canary_scheduler` GUC must grant no table access.
 2. Keep existing Queue HTTP/browser canary allowlists unchanged. Confirm
    `/api/v1/system/foundation` reports `egress_policy_live_binding_enabled=true`
    and binding receipt `rdc.run-egress-policy-receipt/v1`.
@@ -46,6 +51,11 @@
 11. Confirm `/api/v1/system/foundation` reports canary persistence/history true,
     live executor false and adaptive routing false. Do not interpret a stored
     SUCCEEDED result as authority to retry a Run or select a route.
+12. Before Issue #97 is enabled, require evidence that the live transport uses
+    the validated DNS set and revalidates the actual connected peer; disables
+    redirects and proxy-environment inheritance; requires hostname-verified
+    TLS; and enforces connect/total timeout, response-byte, retry and claim
+    concurrency bounds. Unit policy tests alone are not live-runner evidence.
 
 ## Incident response
 
@@ -93,8 +103,8 @@ cannot retract a value already decrypted by an active trusted worker.
 Run `python scripts/verify-proxy-egress.py`, the PostgreSQL egress tests and the
 provider-neutral `python scripts/verify-egress-health.py` protocol verifier, and the
 full repository gates. A rollback rehearsal is `alembic downgrade
-20260828_0025` followed by `alembic upgrade head` on an isolated database.
-Downgrade deletes canary attempts and immutable transition history; production
-rollback therefore requires an approved backup and evidence-preservation
-decision. A further downgrade of compact telemetry reconstructs bounded JSONB
-evidence and restores the legacy observation indexes.
+20260829_0026` followed by `alembic upgrade head` on an isolated database.
+Downgrading `0027` preserves attempts/history but replaces digests with new raw
+UUID tokens, invalidating any in-flight claim; drain or expire claims first.
+Downgrading below `0026` deletes canary attempts/history and therefore requires
+an approved backup and evidence-preservation decision.
