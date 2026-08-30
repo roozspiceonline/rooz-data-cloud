@@ -22,3 +22,9 @@ state and that the foundation status reports both delivery and activation as
 false. Secret values must never be queried for diagnosis; use only destination
 ID, version and signing-secret version metadata. Disable a suspicious
 destination and rotate its signing secret before any future re-verification.
+
+For migration `20260830_0031`, diagnose lifecycle stalls using status,
+attempt-count, available-at, claim expiry and immutable transition sequence.
+Never manually reuse a claim token. A stale claim may be reclaimed only through
+the fenced service path. `DEAD_LETTERED` rows require an explicit future replay
+workflow; direct row edits and transition deletion are prohibited.

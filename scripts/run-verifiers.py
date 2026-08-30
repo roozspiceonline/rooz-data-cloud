@@ -30,6 +30,7 @@ GROUPS = {
         "verify-scheduler.py",
         "verify-events.py",
         "verify-webhook-destinations.py",
+        "verify-webhook-deliveries.py",
     ],
     "acquisition": [
         "verify-scraping-runtime.py",

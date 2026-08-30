@@ -29,3 +29,11 @@ existing envelope-encrypted ProjectSecret custody, are write-only in the API,
 and rotate with optimistic version fencing. PostgreSQL derives organization
 ownership, validates the exact same-Project secret and applies Project RLS.
 There is still no activation or outbound delivery path.
+
+Migration `20260830_0031` adds durable delivery intent without performing a
+delivery. Each destination/event pair is idempotent. Claims use PostgreSQL row
+locks, `SKIP LOCKED`, expiring UUID fences and bounded attempts. Retry waits use
+deterministic capped backoff; exhaustion becomes `DEAD_LETTERED`. Every state
+change appends a sequenced immutable transition snapshot under Project RLS.
+No public route, HTTP client, DNS resolver or signing-secret decryption path is
+connected to this lifecycle.

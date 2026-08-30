@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added immutable Project-scoped webhook delivery intent with claim fencing,
+  bounded retry/dead-letter state and no connected outbound transport.
 - Added tenant-scoped webhook destination metadata with strict HTTPS admission,
   Project RLS, idempotent creation and write-only encrypted signing-secret
   rotation while keeping activation and outbound delivery disabled.
