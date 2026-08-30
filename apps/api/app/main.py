@@ -211,6 +211,8 @@ async def foundation_status() -> dict[str, object]:
         "webhook_delivery_enabled": False,
         "webhook_destination_persistence_enabled": True,
         "webhook_destination_activation_enabled": False,
+        "webhook_delivery_lifecycle_persistence_enabled": True,
+        "webhook_delivery_claim_fencing_enabled": True,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,

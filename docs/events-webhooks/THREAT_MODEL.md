@@ -24,3 +24,8 @@ rejects obvious SSRF URL shapes and stores only normalized HTTPS metadata, but
 DNS resolution is intentionally absent. Any later delivery worker must resolve
 and pin public addresses, validate every connected peer and redirect, enforce
 TLS/SNI and revalidate immediately before each connection.
+
+Delivery intent is persisted before any network worker exists. UUID claim
+tokens, lease expiry, row-lock single-winner claims and transition snapshots
+limit duplicate or stale completion. Attempts are capped at eight and backoff
+at one hour. Claiming confers no secret access or network capability.

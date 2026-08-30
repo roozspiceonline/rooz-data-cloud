@@ -1646,6 +1646,49 @@ class WebhookDestination(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
+class WebhookDeliveryAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "webhook_delivery_attempts"
+    __table_args__ = (
+        UniqueConstraint("destination_id", "event_id", name="uq_webhook_delivery_destination_event"),
+        Index("ix_webhook_delivery_claimable", "status", "available_at", "created_at", "id"),
+        Index("ix_webhook_delivery_project_created", "project_id", "created_at", "id"),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False)
+    destination_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.webhook_destinations.id", ondelete="RESTRICT"), nullable=False)
+    event_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.events.id", ondelete="RESTRICT"), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    claimed_by: Mapped[str | None] = mapped_column(String(128))
+    claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(String(64))
+    last_http_status: Mapped[int | None] = mapped_column(Integer)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
+class WebhookDeliveryTransition(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "webhook_delivery_transitions"
+    __table_args__ = (
+        UniqueConstraint("delivery_id", "sequence", name="uq_webhook_delivery_transition_sequence"),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False)
+    delivery_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.webhook_delivery_attempts.id", ondelete="RESTRICT"), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    from_status: Mapped[str | None] = mapped_column(String(24))
+    to_status: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class RunCommandOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "run_command_outbox"
     __table_args__ = (
