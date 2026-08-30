@@ -16,3 +16,9 @@ upgrade head` on an isolated database. Downgrade deletes the event foundation,
 so production rollback requires an approved evidence-retention decision and
 backup. No outbound delivery must occur because this increment has no delivery
 code.
+
+For migration `20260830_0030`, confirm destination rows never reach an ACTIVE
+state and that the foundation status reports both delivery and activation as
+false. Secret values must never be queried for diagnosis; use only destination
+ID, version and signing-secret version metadata. Disable a suspicious
+destination and rotate its signing secret before any future re-verification.

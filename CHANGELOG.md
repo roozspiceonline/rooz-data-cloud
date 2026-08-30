@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added tenant-scoped webhook destination metadata with strict HTTPS admission,
+  Project RLS, idempotent creation and write-only encrypted signing-secret
+  rotation while keeping activation and outbound delivery disabled.
 - Added immutable `rdc.event/v1` Run/Build lifecycle events with server-derived
   tenant and subject lineage, Project-bound PostgreSQL RLS, credential-safe
   bounded payloads and replay-safe uniqueness.

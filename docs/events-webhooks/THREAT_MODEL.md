@@ -18,3 +18,9 @@ HTTPS-only destination validation, DNS rebinding and connected-peer checks,
 verified TLS/SNI, disabled or strictly bounded redirects, write-only signing
 secrets, claim fencing, bounded retries/timeouts/bodies, immutable delivery
 lineage and adversarial SSRF/replay tests before any network gate can activate.
+
+Destination admission is defense in depth, not delivery authorization. It
+rejects obvious SSRF URL shapes and stores only normalized HTTPS metadata, but
+DNS resolution is intentionally absent. Any later delivery worker must resolve
+and pin public addresses, validate every connected peer and redirect, enforce
+TLS/SNI and revalidate immediately before each connection.

@@ -21,6 +21,7 @@ from .api.routes.request_queues import router as request_queues_router
 from .api.routes.runs import router as runs_router
 from .api.routes.schedules import router as schedules_router
 from .api.routes.storage import router as storage_router
+from .api.routes.webhook_destinations import router as webhook_destinations_router
 from .core.config import get_settings
 from .core.errors import (
     ApiError,
@@ -130,6 +131,7 @@ v1_router.include_router(builds_secrets_router)
 v1_router.include_router(datasets_router)
 v1_router.include_router(egress_policies_router)
 v1_router.include_router(events_router)
+v1_router.include_router(webhook_destinations_router)
 v1_router.include_router(key_value_stores_router)
 v1_router.include_router(request_queues_router)
 v1_router.include_router(runs_router)
@@ -199,9 +201,7 @@ async def foundation_status() -> dict[str, object]:
         "egress_policy_plaintext_credentials_exposed": False,
         "egress_credential_canary_persistence_enabled": True,
         "egress_credential_canary_history_immutable": True,
-        "egress_credential_canary_scheduling_enabled": (
-            settings.egress_credential_canary_enabled
-        ),
+        "egress_credential_canary_scheduling_enabled": (settings.egress_credential_canary_enabled),
         "egress_credential_canary_live_executor_enabled": (
             settings.egress_credential_canary_live_executor_enabled
         ),
@@ -209,6 +209,8 @@ async def foundation_status() -> dict[str, object]:
         "event_persistence_enabled": True,
         "event_history_project_rls_enabled": True,
         "webhook_delivery_enabled": False,
+        "webhook_destination_persistence_enabled": True,
+        "webhook_destination_activation_enabled": False,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,
@@ -227,28 +229,20 @@ async def foundation_status() -> dict[str, object]:
         "execution_deadline_immutable": True,
         "lease_renewal_deadline_clamped": True,
         "run_cancellation_dispatch_idempotent": True,
-        "run_cancellation_convergence_seconds": (
-            settings.worker_cancel_convergence_seconds
-        ),
+        "run_cancellation_convergence_seconds": (settings.worker_cancel_convergence_seconds),
         "run_cancellation_lease_fencing": True,
-        "execution_recovery_scheduler_enabled": (
-            settings.execution_recovery_sweep_enabled
-        ),
+        "execution_recovery_scheduler_enabled": (settings.execution_recovery_sweep_enabled),
         "execution_recovery_sweep_interval_seconds": (
             settings.execution_recovery_sweep_interval_seconds
         ),
-        "execution_recovery_sweep_batch_size": (
-            settings.execution_recovery_sweep_batch_size
-        ),
+        "execution_recovery_sweep_batch_size": (settings.execution_recovery_sweep_batch_size),
         "execution_recovery_singleton_lock": "postgresql-advisory-xact",
         "execution_project_concurrency_admission": True,
         "execution_worker_concurrency_admission": True,
         "execution_project_default_max_active_leases": (
             settings.execution_project_default_max_active_leases
         ),
-        "worker_registration_max_concurrency": (
-            settings.worker_registration_max_concurrency
-        ),
+        "worker_registration_max_concurrency": (settings.worker_registration_max_concurrency),
         "worker_loss_detection": True,
         "worker_lost_after_seconds": settings.worker_lost_after_seconds,
         "worker_restart_cleanup_required": True,
@@ -268,27 +262,21 @@ async def foundation_status() -> dict[str, object]:
         "sandbox_default_network_policy": "deny-all",
         "sandbox_activation_mode": settings.sandbox_activation_mode,
         "sandbox_container_network_policy": "deny-all",
-        "sandbox_canary_web_egress_enabled": (
-            settings.sandbox_canary_web_egress_enabled
-        ),
+        "sandbox_canary_web_egress_enabled": (settings.sandbox_canary_web_egress_enabled),
         "web_fetch_request_contract": "rdc.web-fetch/v1",
         "web_fetch_result_contract": "rdc.web-fetch-result/v1",
         "versioned_web_fetch_contract_available": True,
         "web_fetch_activation_scope": "phase1j-single-canary",
         "browser_request_contract": "rdc.browser/v1",
         "browser_navigation_request_contract": "rdc.browser/v2",
-        "browser_navigation_receipt_contract": (
-            "rdc.browser-navigation-receipt/v1"
-        ),
+        "browser_navigation_receipt_contract": ("rdc.browser-navigation-receipt/v1"),
         "browser_navigation_intent_contract_available": True,
         "browser_navigation_dispatch_enabled": _browser_live_navigation_canary_enabled(),
         "browser_egress_policy_contract": "rdc.browser-egress-policy/v1",
         "browser_egress_policy_available": True,
         "browser_egress_transport_wired": True,
         "browser_egress_subresource_revalidation": True,
-        "browser_gateway_transport_contract": (
-            "rdc.browser-gateway-transport-self-test/v1"
-        ),
+        "browser_gateway_transport_contract": ("rdc.browser-gateway-transport-self-test/v1"),
         "browser_gateway_transport_mode": "unix-domain-socket",
         "browser_gateway_transport_self_test_available": True,
         "browser_gateway_live_forwarding_enabled": _browser_live_navigation_canary_enabled(),
@@ -301,13 +289,9 @@ async def foundation_status() -> dict[str, object]:
         "browser_live_navigation_gate_enabled": (
             settings.sandbox_canary_browser_live_navigation_enabled
         ),
-        "browser_live_navigation_canary_enabled": (
-            _browser_live_navigation_canary_enabled()
-        ),
+        "browser_live_navigation_canary_enabled": (_browser_live_navigation_canary_enabled()),
         "browser_policy_contract": "rdc.browser-policy/v1",
-        "browser_runtime_self_test_contract": (
-            "rdc.browser-runtime-self-test/v1"
-        ),
+        "browser_runtime_self_test_contract": ("rdc.browser-runtime-self-test/v1"),
         "browser_runtime_self_test_available": True,
         "browser_execution_enabled": _browser_live_navigation_canary_enabled(),
         "browser_public_navigation_enabled": _browser_live_navigation_canary_enabled(),
@@ -346,9 +330,7 @@ async def foundation_status() -> dict[str, object]:
         "dataset_export_requires_authentication": True,
         "dataset_public_export_enabled": False,
         "dataset_worker_capability_contract": "rdc.dataset-worker-capability/v1",
-        "dataset_worker_write_gate_enabled": (
-            settings.sandbox_canary_dataset_writes_enabled
-        ),
+        "dataset_worker_write_gate_enabled": (settings.sandbox_canary_dataset_writes_enabled),
         "dataset_worker_append_canary_enabled": _dataset_worker_canary_enabled(),
         "dataset_rls_enabled": True,
         "dataset_items_immutable": True,
@@ -369,9 +351,7 @@ async def foundation_status() -> dict[str, object]:
         "request_queue_key_value_store_queue_capability_contract": (
             "rdc.request-queue-worker-capability/v5"
         ),
-        "request_queue_key_value_store_kv_capability_contract": (
-            "rdc.kv-worker-capability/v2"
-        ),
+        "request_queue_key_value_store_kv_capability_contract": ("rdc.kv-worker-capability/v2"),
         "key_value_store_worker_canary_enabled": _key_value_store_worker_canary_enabled(),
         "key_value_store_rls_enabled": True,
         "key_value_store_public_access_enabled": False,

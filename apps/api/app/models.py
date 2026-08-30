@@ -73,9 +73,7 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default="argon2id",
     )
     display_name: Mapped[str] = mapped_column(String(160), nullable=False)
-    email_verified_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
@@ -86,15 +84,9 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         default=0,
     )
-    locked_until: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    password_changed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    deactivated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deactivated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
@@ -283,9 +275,7 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("identity.users.id"),
         nullable=False,
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     version: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,
@@ -322,31 +312,19 @@ class StorageObject(UUIDPrimaryKeyMixin, Base):
         index=True,
     )
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
-    provider: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="S3"
-    )
+    provider: Mapped[str] = mapped_column(String(24), nullable=False, default="S3")
     bucket: Mapped[str] = mapped_column(String(160), nullable=False)
     object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     media_type: Mapped[str] = mapped_column(String(160), nullable=False)
-    expected_size_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False
-    )
+    expected_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger)
-    expected_sha256_digest: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    expected_sha256_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     sha256_digest: Mapped[str | None] = mapped_column(String(64))
-    status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="PENDING_UPLOAD"
-    )
-    scan_status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="PENDING"
-    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING_UPLOAD")
+    scan_status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING")
     rejection_code: Mapped[str | None] = mapped_column(String(80))
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     created_by_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="RESTRICT"),
@@ -355,18 +333,10 @@ class StorageObject(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    uploaded_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    available_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    rejected_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class AgentVersion(UUIDPrimaryKeyMixin, Base):
@@ -471,9 +441,7 @@ class ProjectSecret(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(40),
         nullable=False,
     )
-    last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("identity.users.id"),
@@ -536,12 +504,8 @@ class Build(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("identity.users.id"),
         nullable=False,
     )
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     artifact_digest: Mapped[str | None] = mapped_column(String(120))
     error_code: Mapped[str | None] = mapped_column(String(80))
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -597,12 +561,8 @@ class BuildDispatchOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=func.now(),
     )
-    claimed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_code: Mapped[str | None] = mapped_column(String(80))
 
 
@@ -666,18 +626,10 @@ class Run(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=func.now(),
     )
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    finished_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    cancel_requested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    cancel_deadline_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(80))
     failure_summary: Mapped[str | None] = mapped_column(Text)
     version: Mapped[int] = mapped_column(
@@ -736,9 +688,7 @@ class Schedule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     missed_run_policy: Mapped[str] = mapped_column(String(16), nullable=False)
     misfire_grace_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     run_payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
-    next_fire_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), index=True
-    )
+    next_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fired_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     skipped_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -785,9 +735,7 @@ class ScheduleTrigger(UUIDPrimaryKeyMixin, Base):
         ForeignKey("control.runs.id", ondelete="RESTRICT"),
         index=True,
     )
-    scheduled_for: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -830,42 +778,61 @@ class KeyValueStore(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    record_count: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
-    total_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0
-    )
+    record_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    total_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     created_by_user_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("identity.users.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    version: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=1
-    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
 class EgressPolicy(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "egress_policies"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_egress_policies_project_name"), {"schema": "control"})
-    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_egress_policies_project_name"),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="DRAFT")
-    active_revision_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.egress_policy_revisions.id", ondelete="RESTRICT"))
+    active_revision_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("control.egress_policy_revisions.id", ondelete="RESTRICT")
+    )
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
 class EgressPolicyRevision(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "egress_policy_revisions"
-    __table_args__ = (UniqueConstraint("policy_id", "revision_number", name="uq_egress_policy_revision_number"), {"schema": "control"})
+    __table_args__ = (
+        UniqueConstraint("policy_id", "revision_number", name="uq_egress_policy_revision_number"),
+        {"schema": "control"},
+    )
     organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    policy_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.egress_policies.id", ondelete="CASCADE"), nullable=False, index=True)
+    policy_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.egress_policies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     revision_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     allowed_hosts: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     allowed_methods: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
@@ -875,10 +842,16 @@ class EgressPolicyRevision(UUIDPrimaryKeyMixin, Base):
     max_redirects: Mapped[int] = mapped_column(Integer, nullable=False)
     connect_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     request_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
-    credential_secret_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.project_secrets.id", ondelete="RESTRICT"))
+    credential_secret_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("security.project_secrets.id", ondelete="RESTRICT")
+    )
     policy_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
@@ -891,15 +864,31 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
         ),
         {"schema": "control"},
     )
-    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="RESTRICT"), nullable=False)
-    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False)
-    run_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.runs.id", ondelete="RESTRICT"), nullable=False)
-    lease_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.execution_leases.id", ondelete="RESTRICT"), nullable=False)
-    worker_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("security.worker_identities.id", ondelete="RESTRICT"), nullable=False)
-    client_observation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    evidence: Mapped[dict[str, object] | None] = mapped_column(
-        JSONB(none_as_null=True)
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="RESTRICT"),
+        nullable=False,
     )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("control.runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    lease_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.execution_leases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    worker_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.worker_identities.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    client_observation_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    evidence: Mapped[dict[str, object] | None] = mapped_column(JSONB(none_as_null=True))
     transport_failure: Mapped[str | None] = mapped_column(String(32))
     http_status: Mapped[int | None] = mapped_column(SmallInteger)
     response_bytes: Mapped[int | None] = mapped_column(BigInteger)
@@ -912,7 +901,9 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
     retryable: Mapped[bool] = mapped_column(Boolean, nullable=False)
     provider_key: Mapped[str] = mapped_column(String(64), nullable=False)
     region_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class EgressCredentialCanaryAttempt(UUIDPrimaryKeyMixin, Base):
@@ -1004,9 +995,7 @@ class EgressCredentialCanaryTransition(UUIDPrimaryKeyMixin, Base):
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     attempt_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey(
-            "control.egress_credential_canary_attempts.id", ondelete="RESTRICT"
-        ),
+        ForeignKey("control.egress_credential_canary_attempts.id", ondelete="RESTRICT"),
         nullable=False,
     )
     attempt_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -1023,24 +1012,47 @@ class EgressCredentialCanaryTransition(UUIDPrimaryKeyMixin, Base):
 
 class RequestQueue(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "request_queues"
-    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_request_queues_project_name"), {"schema": "control"})
-    organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.organizations.id", ondelete="CASCADE"), nullable=False, index=True)
-    project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_request_queues_project_name"),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     pending_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     claimed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     handled_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     failed_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
 class RequestQueueRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "request_queue_requests"
-    __table_args__ = (UniqueConstraint("queue_id", "identity_digest", name="uq_request_queue_requests_identity"), {"schema": "control"})
+    __table_args__ = (
+        UniqueConstraint("queue_id", "identity_digest", name="uq_request_queue_requests_identity"),
+        {"schema": "control"},
+    )
     organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="CASCADE"), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.request_queues.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     request_url: Mapped[str] = mapped_column(Text, nullable=False)
     unique_key: Mapped[str | None] = mapped_column(String(256))
     identity_digest: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -1048,14 +1060,18 @@ class RequestQueueRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
-    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    available_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
     claimed_by: Mapped[str | None] = mapped_column(String(128))
     claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     handled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(80))
     failure_summary: Mapped[str | None] = mapped_column(Text)
-    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
@@ -1064,28 +1080,58 @@ class RequestQueueTransition(UUIDPrimaryKeyMixin, Base):
     __table_args__ = {"schema": "control"}
     organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="RESTRICT"), nullable=False, index=True)
-    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="RESTRICT"), nullable=False, index=True)
+    queue_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.request_queues.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.request_queue_requests.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
     from_status: Mapped[str | None] = mapped_column(String(16))
     to_status: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str] = mapped_column(String(80), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
     details: Mapped[object] = mapped_column(JSONB, nullable=False, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class RequestQueueEnqueueReceipt(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "request_queue_enqueue_receipts"
-    __table_args__ = (UniqueConstraint("queue_id", "idempotency_key", name="uq_request_queue_enqueue_idempotency"), {"schema": "control"})
+    __table_args__ = (
+        UniqueConstraint(
+            "queue_id", "idempotency_key", name="uq_request_queue_enqueue_idempotency"
+        ),
+        {"schema": "control"},
+    )
     organization_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    queue_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queues.id", ondelete="CASCADE"), nullable=False, index=True)
-    request_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.request_queue_requests.id", ondelete="CASCADE"), nullable=False)
+    queue_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.request_queues.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    request_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.request_queue_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     idempotency_key: Mapped[str] = mapped_column(String(256), nullable=False)
     request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     identity_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    created_by_user_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class KeyValueRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1562,6 +1608,44 @@ class Event(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class WebhookDestination(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "webhook_destinations"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_webhook_destinations_project_name"),
+        Index("ix_webhook_destinations_project_created", "project_id", "created_at", "id"),
+        {"schema": "control"},
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    endpoint_origin: Mapped[str] = mapped_column(String(512), nullable=False)
+    event_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    signing_secret_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.project_secrets.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    signing_secret_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
+    updated_by_user_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+
+
 class RunCommandOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "run_command_outbox"
     __table_args__ = (
@@ -1605,12 +1689,8 @@ class RunCommandOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         server_default=func.now(),
     )
-    claimed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_code: Mapped[str | None] = mapped_column(String(80))
 
 
@@ -1736,44 +1816,26 @@ class WorkerIdentity(UUIDPrimaryKeyMixin, Base):
     __table_args__ = {"schema": "security"}
 
     name: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
-    public_prefix: Mapped[str] = mapped_column(
-        String(16), nullable=False, unique=True
-    )
+    public_prefix: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)
     last_four: Mapped[str] = mapped_column(String(4), nullable=False)
-    token_digest: Mapped[bytes] = mapped_column(
-        LargeBinary(32), nullable=False, unique=True
-    )
+    token_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False, unique=True)
     capabilities: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     max_concurrency: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="ACTIVE"
-    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ACTIVE")
     protocol_version: Mapped[str] = mapped_column(String(40), nullable=False)
     software_version: Mapped[str] = mapped_column(String(80), nullable=False)
-    metadata_json: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    metadata_json: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     sandbox_profile: Mapped[str | None] = mapped_column(String(80))
     sandbox_attestation_digest: Mapped[str | None] = mapped_column(String(64))
-    sandbox_execution_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
-    sandbox_attested_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    sandbox_execution_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sandbox_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     registered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_lost_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    last_recovered_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    last_cleanup_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    last_lost_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_recovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cleanup_generation: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -1821,21 +1883,13 @@ class StorageGrant(UUIDPrimaryKeyMixin, Base):
         index=True,
     )
     operation: Mapped[str] = mapped_column(String(16), nullable=False)
-    provider: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="S3_PRESIGNED"
-    )
-    capability_digest: Mapped[bytes] = mapped_column(
-        LargeBinary(32), nullable=False, unique=True
-    )
+    provider: Mapped[str] = mapped_column(String(24), nullable=False, default="S3_PRESIGNED")
+    capability_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -1883,32 +1937,18 @@ class ExecutionLease(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("control.runs.id", ondelete="CASCADE"),
         index=True,
     )
-    lease_token_digest: Mapped[bytes] = mapped_column(
-        LargeBinary(32), nullable=False, unique=True
-    )
+    lease_token_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False, unique=True)
     payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload_snapshot: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False
-    )
-    status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="ACTIVE"
-    )
+    payload_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ACTIVE")
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
     claimed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    deadline_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    last_renewed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_renewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failure_code: Mapped[str | None] = mapped_column(String(80))
     failure_summary: Mapped[str | None] = mapped_column(Text)
 
@@ -1961,22 +2001,14 @@ class ExecutionArtifact(UUIDPrimaryKeyMixin, Base):
         index=True,
     )
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
-    digest_algorithm: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="sha256"
-    )
+    digest_algorithm: Mapped[str] = mapped_column(String(16), nullable=False, default="sha256")
     digest: Mapped[str] = mapped_column(String(128), nullable=False)
     object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     media_type: Mapped[str] = mapped_column(String(160), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="AVAILABLE"
-    )
-    scan_status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="PENDING"
-    )
-    provenance: Mapped[dict[str, object]] = mapped_column(
-        JSONB, nullable=False, default=dict
-    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="AVAILABLE")
+    scan_status: Mapped[str] = mapped_column(String(24), nullable=False, default="PENDING")
+    provenance: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -2027,23 +2059,13 @@ class SecretInjectionGrant(UUIDPrimaryKeyMixin, Base):
     secret_names: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     environment: Mapped[str] = mapped_column(String(24), nullable=False)
     algorithm: Mapped[str] = mapped_column(String(80), nullable=False)
-    ephemeral_public_key: Mapped[bytes] = mapped_column(
-        LargeBinary(32), nullable=False
-    )
+    ephemeral_public_key: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
     ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    worker_public_key_digest: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
-    status: Mapped[str] = mapped_column(
-        String(24), nullable=False, default="ISSUED"
-    )
+    worker_public_key_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="ISSUED")
     issued_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    expires_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    consumed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True)
-    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -29,6 +29,7 @@ GROUPS = {
         "verify-execution-recovery.py",
         "verify-scheduler.py",
         "verify-events.py",
+        "verify-webhook-destinations.py",
     ],
     "acquisition": [
         "verify-scraping-runtime.py",
