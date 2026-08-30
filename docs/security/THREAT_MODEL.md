@@ -355,6 +355,11 @@ Likelihood and impact use: Low, Medium, High, Critical.
 
 - **Scenario:** later webhook endpoint targets internal network, receives forged delivery, or causes replay.
 - **Components:** webhook service.
+- **Current control:** migration `20260829_0029` adds only credential-free,
+  immutable Project event persistence. It adds no destination, signing secret,
+  delivery worker or outbound request. Project-bound RLS, exact subject
+  validation, signed cursors and recursive payload bounds protect the event
+  foundation while the network delivery boundary remains absent.
 - **Likelihood:** Medium
 - **Impact:** High
 - **Controls:** SSRF defenses, HMAC signatures, timestamp and replay window, retries with limits, delivery audit, endpoint verification.

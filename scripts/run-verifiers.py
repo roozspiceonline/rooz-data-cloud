@@ -25,7 +25,11 @@ GROUPS = {
         "verify-phase1o.py",
         "verify-phase1p.py",
     ],
-    "operations": ["verify-execution-recovery.py", "verify-scheduler.py"],
+    "operations": [
+        "verify-execution-recovery.py",
+        "verify-scheduler.py",
+        "verify-events.py",
+    ],
     "acquisition": [
         "verify-scraping-runtime.py",
         "verify-proxy-egress.py",

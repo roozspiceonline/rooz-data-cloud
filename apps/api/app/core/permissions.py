@@ -15,6 +15,7 @@ PERMISSIONS = frozenset(
         "schedule.create", "schedule.read", "schedule.update",
         "secret.read_metadata", "secret.create", "secret.replace", "secret.delete",
         "api_key.create", "api_key.read_metadata", "api_key.revoke", "audit.read",
+        "event.read",
     }
 )
 
@@ -35,7 +36,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "schedule.create", "schedule.read", "schedule.update",
             "secret.read_metadata", "secret.create", "secret.replace",
             "secret.delete", "api_key.create", "api_key.read_metadata",
-            "api_key.revoke",
+            "api_key.revoke", "event.read",
         }
     ),
     "analyst": frozenset(
@@ -45,7 +46,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "storage.download", "dataset.read", "dataset.export", "kv.read", "queue.read",
             "egress.read",
             "schedule.read",
-            "api_key.read_metadata",
+            "api_key.read_metadata", "event.read",
         }
     ),
     "operator": frozenset(
@@ -54,7 +55,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "build.read", "run.create", "run.read", "run.cancel",
             "execution.read", "storage.read", "storage.download", "dataset.read",
             "dataset.export", "kv.read", "queue.read", "schedule.read",
-            "egress.read",
+            "egress.read", "event.read",
         }
     ),
     "viewer": frozenset(
@@ -62,7 +63,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "organization.read", "project.read", "agent.read", "build.read",
             "run.read", "execution.read", "storage.read", "storage.download",
             "dataset.read", "dataset.export", "kv.read", "queue.read", "schedule.read",
-            "egress.read",
+            "egress.read", "event.read",
         }
     ),
     "billing_manager": frozenset({"organization.read"}),

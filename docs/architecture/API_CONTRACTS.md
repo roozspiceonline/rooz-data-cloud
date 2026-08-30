@@ -656,6 +656,15 @@ run.heartbeat
 - Terminal events are `run.completed` and `run.failed`.
 - A stream MUST terminate after a terminal event and a bounded flush period.
 
+### 14.5 Project lifecycle-event history
+
+`GET /api/v1/projects/{project_id}/events` is the authenticated durable event
+history contract. It requires `event.read`, accepts an optional allowlisted
+`event_type`, limits pages to 100, and uses a signed cursor bound to the Project
+and filter. Results are ordered by `occurred_at DESC, id DESC`. The initial
+`rdc.event/v1` types are `build.created` and `run.created`; no public event
+creation or webhook delivery endpoint exists.
+
 ### 14.6 Security
 
 - The connection is authenticated and tenant-authorized before streaming.

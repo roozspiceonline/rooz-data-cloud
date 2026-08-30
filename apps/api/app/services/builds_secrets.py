@@ -26,6 +26,7 @@ from ..models import (
     StorageObject,
 )
 from .egress_credential_canaries import enqueue_credential_rotation_canaries
+from .events import emit_event
 from .identity_tenancy import append_audit_event
 
 settings = get_settings()
@@ -512,6 +513,21 @@ async def create_build(
     )
     session.add(record)
     await session.flush()
+    await emit_event(
+        session,
+        organization_id=record.organization_id,
+        project_id=record.project_id,
+        event_type="build.created",
+        subject_type="build",
+        subject_id=record.id,
+        payload={
+            "agent_id": str(record.agent_id),
+            "agent_version_id": str(record.agent_version_id),
+            "status": record.status,
+        },
+        request_id=request_id,
+        idempotent=False,
+    )
     snapshot = build_metadata(record)
     json_snapshot = {
         **snapshot,

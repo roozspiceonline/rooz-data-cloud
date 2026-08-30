@@ -778,6 +778,20 @@ Rules:
 - Update and delete permissions are denied to normal application roles.
 - Later archival may copy immutable batches to object storage.
 
+### Durable lifecycle events
+
+**Table:** `control.events`
+
+Stores one immutable `rdc.event/v1` envelope for an allowlisted Project
+lifecycle transition. The initial types are `build.created` and `run.created`.
+The database derives organization ownership from `project_id`, validates the
+exact same-tenant subject and payload identifiers, derives timestamps/emitter
+and payload digest, and rejects UPDATE/DELETE. A unique
+`(project_id, event_type, subject_type, subject_id)` key provides deterministic
+replay behavior. RLS SELECT requires both current organization membership and
+the exact current Project context. The Project/time/ID index supports stable
+descending history pagination.
+
 ---
 
 ## 6.15 ProjectSecret

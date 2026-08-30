@@ -1516,6 +1516,52 @@ class RunEvent(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class Event(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "events"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "event_type",
+            "subject_type",
+            "subject_id",
+            name="uq_events_project_type_subject",
+        ),
+        Index(
+            "ix_events_project_occurred",
+            "project_id",
+            "occurred_at",
+            "id",
+        ),
+        {"schema": "control"},
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    payload_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    emitter: Mapped[str] = mapped_column(String(32), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class RunCommandOutbox(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "run_command_outbox"
     __table_args__ = (
