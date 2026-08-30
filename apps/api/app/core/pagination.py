@@ -427,6 +427,52 @@ def decode_schedule_trigger_cursor(
         raise _invalid_cursor() from exc
 
 
+def encode_event_cursor(
+    *,
+    project_id: UUID,
+    event_type: str | None,
+    occurred_at: datetime,
+    resource_id: UUID,
+) -> str:
+    return _encode_queue_cursor(
+        {
+            "event_type": event_type,
+            "id": str(resource_id),
+            "kind": "project-events",
+            "occurred_at": occurred_at.isoformat(),
+            "project_id": str(project_id),
+            "v": 1,
+        }
+    )
+
+
+def decode_event_cursor(
+    value: str | None,
+    *,
+    project_id: UUID,
+    event_type: str | None,
+) -> CursorPosition | None:
+    if value is None:
+        return None
+    try:
+        data = _decode_queue_cursor(value)
+        if (
+            set(data)
+            != {"event_type", "id", "kind", "occurred_at", "project_id", "v"}
+            or data.get("v") != 1
+            or data.get("kind") != "project-events"
+            or data.get("project_id") != str(project_id)
+            or data.get("event_type") != event_type
+        ):
+            raise ValueError("cursor binding is invalid")
+        return CursorPosition(
+            created_at=datetime.fromisoformat(str(data["occurred_at"])),
+            resource_id=UUID(str(data["id"])),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise _invalid_cursor() from exc
+
+
 def _invalid_cursor() -> ApiError:
     return ApiError(
         status_code=400,

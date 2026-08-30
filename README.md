@@ -54,3 +54,10 @@ Machine-readable current workstream and database-head status lives in
 [`docs/roadmap/rdc-status.json`](docs/roadmap/rdc-status.json). Narrative audits
 are dated snapshots and must not override that file, the repository migration
 graph, GitHub state or exact-head CI.
+
+The Events/Webhooks workstream now has an immutable, tenant-isolated event
+foundation. Representative Run and Build creation events are transactionally
+persisted with strict credential-free payloads and exposed only through a
+permission-checked, Project-scoped history API. Outbound webhook destinations,
+signing secrets and delivery remain separate future increments. See
+[the Events/Webhooks documentation](docs/events-webhooks/README.md).

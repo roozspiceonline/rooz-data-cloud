@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Added immutable `rdc.event/v1` Run/Build lifecycle events with server-derived
+  tenant and subject lineage, Project-bound PostgreSQL RLS, credential-safe
+  bounded payloads and replay-safe uniqueness.
+- Added permission-checked Project event history with deterministic ordering and
+  signed Project/filter-bound cursors.
+- Kept webhook destinations, signing secrets, delivery workers and outbound HTTP
+  explicitly disabled and outside this increment.
+
 ## 0.14.0-phase1n — 2026-08-08
 
 - Added tenant-scoped `control.datasets`, `control.dataset_items` and immutable

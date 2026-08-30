@@ -35,6 +35,7 @@ from ..models import (
 )
 from ..run_schemas import CreateRunRequest, RunEventType
 from .builds_secrets import acquire_idempotency_lock, validate_idempotency_key
+from .events import emit_event
 from .identity_tenancy import append_audit_event
 
 RUN_TERMINAL_STATUSES = frozenset(
@@ -1444,6 +1445,22 @@ async def create_run(
         run=record,
         event_type="run.status",
         payload={"previous_status": None, "status": initial_status},
+    )
+    await emit_event(
+        session,
+        organization_id=record.organization_id,
+        project_id=record.project_id,
+        event_type="run.created",
+        subject_type="run",
+        subject_id=record.id,
+        payload={
+            "agent_id": str(record.agent_id),
+            "agent_version_id": str(record.agent_version_id),
+            "build_id": str(record.build_id),
+            "status": record.status,
+        },
+        request_id=request_id,
+        idempotent=False,
     )
     snapshot = json_run_snapshot(record)
     session.add(

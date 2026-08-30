@@ -52,6 +52,13 @@ async def set_tenant_context(
     )
 
 
+async def set_project_context(session: AsyncSession, project_id: UUID) -> None:
+    await session.execute(
+        text("SELECT set_config('rdc.current_project_id', :value, true)"),
+        {"value": str(project_id)},
+    )
+
+
 async def set_worker_context(session: AsyncSession, worker_id: UUID) -> None:
     await session.execute(
         text("SELECT set_config('rdc.current_worker_id', :value, true)"),

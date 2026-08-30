@@ -132,6 +132,17 @@ proxy configuration by using direct sockets, rejects redirects, and bounds
 timeouts, response bytes, retries and claim concurrency. Adaptive routing remains
 disabled pending a real live adversarial canary.
 
+The first Events/Webhooks increment adds `rdc.event/v1` lifecycle-event
+persistence under project-bound PostgreSQL RLS. Event ownership is derived from
+the exact Project, Run/Build subjects are revalidated below the service layer,
+payloads use a small allowlisted schema with recursive credential-key and byte
+bounds, and UPDATE/DELETE is rejected by an immutable database trigger. Run and
+Build creation transactionally emit representative replay-safe events. The
+authenticated project history API uses deterministic `(occurred_at, id)` order
+and a signed cursor bound to both Project and event-type filter. No destination,
+signing secret, delivery attempt, retry worker, or outbound webhook request is
+present in this increment.
+
 ## Remaining RDC v1 workstreams
 
 1. Proxy/egress: run and review the live adversarial credential canary against
@@ -139,8 +150,10 @@ disabled pending a real live adversarial canary.
    failure cases; keep adaptive routing disabled until that gate passes.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
-3. Events/webhooks: signed delivery, retry/idempotency, history and failure
-   disablement.
+3. Events/webhooks: add tenant-scoped destinations, write-only signing secrets,
+   immutable signed delivery attempts, bounded retry/dead-letter behavior,
+   trusted SSRF-safe delivery, replay tooling and failure disablement on top of
+   the merged event-persistence foundation.
 4. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
 5. Usage controls: quotas, rate limits, concurrency and auditable failures.
