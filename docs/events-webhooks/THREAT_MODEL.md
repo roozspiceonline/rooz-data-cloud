@@ -29,3 +29,8 @@ Delivery intent is persisted before any network worker exists. UUID claim
 tokens, lease expiry, row-lock single-winner claims and transition snapshots
 limit duplicate or stale completion. Attempts are capped at eight and backoff
 at one hour. Claiming confers no secret access or network capability.
+
+Issue #107 starts the trusted boundary with standalone signing and network
+policy: canonical bounded bodies, timestamped HMAC-SHA256, public DNS-set
+validation, connected-peer pinning, zero redirects and bounded limits. The
+gate remains false and this slice has no socket executor or secret loader.

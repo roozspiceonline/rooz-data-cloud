@@ -37,3 +37,7 @@ deterministic capped backoff; exhaustion becomes `DEAD_LETTERED`. Every state
 change appends a sequenced immutable transition snapshot under Project RLS.
 No public route, HTTP client, DNS resolver or signing-secret decryption path is
 connected to this lifecycle.
+
+Trusted-delivery work has started with independently tested signing and network
+policy primitives. `RDC_WEBHOOK_DELIVERY_CANARY_ENABLED` defaults false. No
+socket executor or signing-secret loader is wired yet.

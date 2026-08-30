@@ -19,7 +19,7 @@
     },
     "events_webhooks": {
       "status": "active",
-      "last_delivery_issue": 105,
+      "last_delivery_issue": 107,
       "remaining": [
         "trusted_delivery_worker",
         "replay_history_and_failure_controls"
