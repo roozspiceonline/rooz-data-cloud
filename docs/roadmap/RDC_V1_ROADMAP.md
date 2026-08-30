@@ -150,10 +150,9 @@ present in this increment.
    failure cases; keep adaptive routing disabled until that gate passes.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
-3. Events/webhooks: add tenant-scoped destinations, write-only signing secrets,
-   immutable signed delivery attempts, bounded retry/dead-letter behavior,
-   trusted SSRF-safe delivery, replay tooling and failure disablement on top of
-   the merged event-persistence foundation.
+3. Events/webhooks: add immutable signed delivery attempts, bounded
+   retry/dead-letter behavior, trusted SSRF-safe delivery, replay tooling and
+   failure disablement on top of the merged event and destination foundations.
 4. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
 5. Usage controls: quotas, rate limits, concurrency and auditable failures.
