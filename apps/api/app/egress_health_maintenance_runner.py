@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from .core.config import get_settings
 from .core.database import engine, session_factory
+from .core.observability import configure_structured_logging, log_event
 from .services.egress_health_maintenance import (
     egress_health_maintenance_is_fresh,
     read_egress_health_maintenance_health,
@@ -46,18 +47,24 @@ async def run_maintenance_loop(*, stop: asyncio.Event, owner_id: str) -> None:
                 )
                 await session.commit()
             if result.acquired:
-                logger.info(
-                    "egress health maintenance completed buckets=%d "
-                    "raw_purged=%d rollups_purged=%d",
-                    result.buckets_rolled,
-                    result.raw_rows_purged,
-                    result.rollup_rows_purged,
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "egress_health.maintenance.completed",
+                    buckets_rolled=result.buckets_rolled,
+                    raw_rows_purged=result.raw_rows_purged,
+                    rollup_rows_purged=result.rollup_rows_purged,
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             error_code = type(exc).__name__
-            logger.error("egress health maintenance failed code=%s", error_code)
+            log_event(
+                logger,
+                logging.ERROR,
+                "egress_health.maintenance.failed",
+                error_type=error_code,
+            )
             try:
                 async with session_factory() as failure_session:
                     await record_egress_health_maintenance_failure(
@@ -69,7 +76,11 @@ async def run_maintenance_loop(*, stop: asyncio.Event, owner_id: str) -> None:
                     )
                     await failure_session.commit()
             except Exception:
-                logger.error("egress health maintenance failure telemetry unavailable")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "egress_health.failure_telemetry.unavailable",
+                )
         wait_seconds = max(
             0.0,
             settings.egress_health_maintenance_interval_seconds
@@ -107,7 +118,11 @@ async def serve() -> None:
         if settings.egress_health_maintenance_enabled:
             await run_maintenance_loop(stop=stop, owner_id=maintenance_owner_id())
         else:
-            logger.info("egress health maintenance is disabled")
+            log_event(
+                logger,
+                logging.INFO,
+                "egress_health.maintenance.disabled",
+            )
             await stop.wait()
     finally:
         await engine.dispose()
@@ -117,7 +132,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--healthcheck", action="store_true")
     arguments = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    configure_structured_logging(
+        service="egress_health_maintenance",
+        environment=settings.env,
+        deployment_id=settings.deployment_id,
+    )
     if arguments.healthcheck:
         raise SystemExit(asyncio.run(healthcheck()))
     asyncio.run(serve())

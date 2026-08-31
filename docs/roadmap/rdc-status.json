@@ -22,7 +22,15 @@
       "last_delivery_issue": 109,
       "remaining": []
     },
-    "observability": {"status": "not_started"},
+    "observability": {
+      "status": "active",
+      "last_delivery_issue": 115,
+      "remaining": [
+        "worker_correlation",
+        "bounded_runtime_metrics",
+        "tenant_diagnostics"
+      ]
+    },
     "usage_cost": {"status": "not_started"},
     "console_sdk_cli": {"status": "partial"},
     "production_acceptance": {"status": "not_started"}

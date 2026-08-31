@@ -15,6 +15,7 @@ from .core.config import get_settings
 from .core.database import engine, session_factory
 from .core.envelope_encryption import decrypt_project_secret
 from .core.errors import ApiError
+from .core.observability import configure_structured_logging, log_event
 from .egress_canary_network_policy import CanaryNetworkLimits
 from .egress_credential_canary_transport import run_credential_canary_transport
 from .services.egress_credential_canaries import (
@@ -155,9 +156,11 @@ async def run_one_batch() -> CanaryBatchResult:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.error(
-                    "credential canary claim deferred code=%s",
-                    type(exc).__name__,
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "credential_canary.claim.deferred",
+                    error_type=type(exc).__name__,
                 )
                 return "deferred"
 
@@ -177,19 +180,23 @@ async def run_loop(*, stop: asyncio.Event) -> None:
         try:
             result = await run_one_batch()
             if result.claimed:
-                logger.info(
-                    "credential canary batch claimed=%d completed=%d stale=%d deferred=%d",
-                    result.claimed,
-                    result.completed,
-                    result.stale,
-                    result.deferred,
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "credential_canary.batch.completed",
+                    claimed=result.claimed,
+                    completed=result.completed,
+                    stale=result.stale,
+                    deferred=result.deferred,
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.error(
-                "credential canary runner batch failed code=%s",
-                type(exc).__name__,
+            log_event(
+                logger,
+                logging.ERROR,
+                "credential_canary.batch.failed",
+                error_type=type(exc).__name__,
             )
         elapsed = time.monotonic() - started
         wait_seconds = max(
@@ -224,7 +231,11 @@ async def serve() -> None:
         if settings.egress_credential_canary_live_executor_enabled:
             await run_loop(stop=stop)
         else:
-            logger.info("credential canary live executor is disabled")
+            log_event(
+                logger,
+                logging.INFO,
+                "credential_canary.executor.disabled",
+            )
             await stop.wait()
     finally:
         await engine.dispose()
@@ -234,7 +245,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--healthcheck", action="store_true")
     arguments = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    configure_structured_logging(
+        service="credential_canary",
+        environment=settings.env,
+        deployment_id=settings.deployment_id,
+    )
     if arguments.healthcheck:
         raise SystemExit(asyncio.run(healthcheck()))
     asyncio.run(serve())

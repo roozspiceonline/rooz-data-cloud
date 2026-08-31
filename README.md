@@ -64,6 +64,11 @@ Path-scoped advisory CI now provides early focused feedback without replacing
 the unconditional full pull-request and merged-main gates. See the
 [CI gate contract](docs/security/CI_GATES.md).
 
+The observability foundation emits bounded secret-safe `rdc.log/v1` JSON from
+the API and trusted service runners, correlating requests by validated ID and
+matched route template without logging raw URLs, queries, headers or bodies.
+See the [observability contract](docs/observability/README.md).
+
 The Events/Webhooks workstream now has immutable tenant-isolated lifecycle
 events, write-only envelope-encrypted destination signing secrets, durable
 claim-fenced delivery intent, and a separate false-by-default trusted delivery

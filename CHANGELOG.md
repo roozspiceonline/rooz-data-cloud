@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added secret-safe `rdc.log/v1` JSON events, validated request correlation and
+  structured API/trusted-runner completion and failure telemetry.
 - Added conservative changed-path classification and focused advisory CI while
   retaining unconditional full exact-head and merged-main required gates.
 - Added tenant-isolated hourly egress-health rollups with exact raw-edge

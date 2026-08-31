@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from .core.config import get_settings
 from .core.database import engine, session_factory
+from .core.observability import configure_structured_logging, log_event
 from .services.execution_recovery_sweeper import (
     execution_recovery_is_fresh,
     read_execution_recovery_health,
@@ -43,19 +44,25 @@ async def run_sweep_loop(*, stop: asyncio.Event, owner_id: str) -> None:
                 )
                 await session.commit()
             if result.acquired:
-                logger.info(
-                    "execution recovery sweep completed leases=%d "
-                    "cancellations=%d workers_lost=%d leases_fenced=%d",
-                    result.leases_reaped,
-                    result.cancellations_converged,
-                    result.workers_lost,
-                    result.worker_leases_fenced,
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "execution_recovery.sweep.completed",
+                    leases_reaped=result.leases_reaped,
+                    cancellations_converged=result.cancellations_converged,
+                    workers_lost=result.workers_lost,
+                    worker_leases_fenced=result.worker_leases_fenced,
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             error_code = type(exc).__name__
-            logger.error("execution recovery sweep failed code=%s", error_code)
+            log_event(
+                logger,
+                logging.ERROR,
+                "execution_recovery.sweep.failed",
+                error_type=error_code,
+            )
             try:
                 async with session_factory() as failure_session:
                     await record_execution_recovery_failure(
@@ -67,7 +74,11 @@ async def run_sweep_loop(*, stop: asyncio.Event, owner_id: str) -> None:
                     )
                     await failure_session.commit()
             except Exception:
-                logger.error("execution recovery failure telemetry unavailable")
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "execution_recovery.failure_telemetry.unavailable",
+                )
         elapsed = time.monotonic() - started
         wait_seconds = max(
             0.0,
@@ -105,7 +116,11 @@ async def serve() -> None:
         if settings.execution_recovery_sweep_enabled:
             await run_sweep_loop(stop=stop, owner_id=recovery_owner_id())
         else:
-            logger.info("execution recovery scheduler is disabled")
+            log_event(
+                logger,
+                logging.INFO,
+                "execution_recovery.scheduler.disabled",
+            )
             await stop.wait()
     finally:
         await engine.dispose()
@@ -115,7 +130,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--healthcheck", action="store_true")
     arguments = parser.parse_args()
-    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    configure_structured_logging(
+        service="execution_recovery",
+        environment=settings.env,
+        deployment_id=settings.deployment_id,
+    )
     if arguments.healthcheck:
         raise SystemExit(asyncio.run(healthcheck()))
     asyncio.run(serve())
