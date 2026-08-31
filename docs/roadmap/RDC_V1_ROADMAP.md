@@ -30,7 +30,7 @@ test gates pass on the exact merged commit.
 | Workstream | Status | Dependency |
 | --- | --- | --- |
 | Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
-| Platform efficiency | Compact telemetry, hourly rollups, bounded retention, canonical status, verifier orchestration and Docker context controls implemented | Egress health persistence |
+| Platform efficiency | Complete: compact telemetry, rollups, retention, canonical status, verifier orchestration, Docker context controls and advisory changed-path CI | Egress health persistence |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -115,6 +115,10 @@ exact hybrid summary reads, a singleton bounded maintenance service, 48-hour
 minimum raw retention, bounded rollup retention and immutable aggregate purge
 audit events. Raw rows are purged only after their complete hourly Project
 bucket is committed.
+The final platform-efficiency increment adds conservative changed-path
+classification and focused advisory feedback while preserving the unchanged
+full frontend, backend and scaffold checks on every pull-request head and every
+merged-main commit. Advisory success never grants merge eligibility.
 The eighth increment transactionally schedules credential-rotation canaries
 against exact active revision, secret version and operator target-digest
 lineage. Enqueue is idempotent, claims are race-safe and expiring, completion
@@ -169,15 +173,13 @@ remains false by default.
 1. Proxy/egress: run and review the live adversarial credential canary against
    the isolated runner, including DNS/peer/TLS/redirect/timeout/response-limit
    failure cases; keep adaptive routing disabled until that gate passes.
-2. Platform efficiency: add advisory changed-path CI while preserving required
-   full exact-head and merged-main gates.
-3. Observability: structured run/worker logs, diagnostics, metrics and safe
+2. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
-4. Usage controls: quotas, rate limits, concurrency and auditable failures.
-5. SDK/CLI and Console: API-backed operations for all major resources.
-6. Platform-wide production operations: release automation, registry/SBOM,
+3. Usage controls: quotas, rate limits, concurrency and auditable failures.
+4. SDK/CLI and Console: API-backed operations for all major resources.
+5. Platform-wide production operations: release automation, registry/SBOM,
    capacity, disaster recovery, and environment promotion for all workstreams.
-7. End-to-end acceptance and final release/security audit.
+6. End-to-end acceptance and final release/security audit.
 
 ## Dependency order
 

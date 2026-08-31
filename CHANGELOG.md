@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added conservative changed-path classification and focused advisory CI while
+  retaining unconditional full exact-head and merged-main required gates.
 - Added tenant-isolated hourly egress-health rollups with exact raw-edge
   fallback, preserving the existing 1–24 hour summary response contracts.
 - Added singleton, restart-safe telemetry maintenance with bounded 48–168 hour

@@ -60,6 +60,9 @@ tenant-isolated hourly rollups and a dedicated bounded retention service. The
 summary APIs combine committed rollups with exact raw edge intervals, while
 immutable audit summaries record each material maintenance sweep. See the
 [egress-health retention contract](docs/proxy-egress/EGRESS_HEALTH_RETENTION.md).
+Path-scoped advisory CI now provides early focused feedback without replacing
+the unconditional full pull-request and merged-main gates. See the
+[CI gate contract](docs/security/CI_GATES.md).
 
 The Events/Webhooks workstream now has immutable tenant-isolated lifecycle
 events, write-only envelope-encrypted destination signing secrets, durable
