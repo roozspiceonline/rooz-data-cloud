@@ -13,9 +13,9 @@
       "remaining": ["live_adversarial_canary"]
     },
     "platform_efficiency": {
-      "status": "increment_complete",
-      "last_delivery_issue": 111,
-      "remaining": ["advisory_changed_path_ci"]
+      "status": "complete",
+      "last_delivery_issue": 113,
+      "remaining": []
     },
     "events_webhooks": {
       "status": "complete",

@@ -39,7 +39,7 @@ GROUPS = {
         "verify-proxy-egress.py",
         "verify-egress-health.py",
     ],
-    "status": ["validate-project-status.py"],
+    "status": ["validate-project-status.py", "verify-ci-paths.py"],
 }
 
 

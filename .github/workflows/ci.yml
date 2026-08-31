@@ -14,6 +14,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Changed-path classification
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      scaffold: ${{ steps.classify.outputs.scaffold }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only -z --diff-filter=ACMRDT \
+            "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/rdc-changed-paths"
+          python3 scripts/classify-ci-paths.py \
+            --nul-file "$RUNNER_TEMP/rdc-changed-paths" \
+            --github-output "$GITHUB_OUTPUT"
+
+  advisory-backend:
+    name: Advisory backend static checks
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-groups
+      - run: uv run ruff check .
+      - run: uv run mypy app
+
+  advisory-frontend:
+    name: Advisory frontend checks
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  advisory-scaffold:
+    name: Advisory scaffold checks
+    needs: changes
+    if: needs.changes.outputs.scaffold == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 scripts/run-verifiers.py
+      - run: docker compose config --quiet
+
   frontend:
     name: Frontend checks
     runs-on: ubuntu-latest
