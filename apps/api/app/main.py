@@ -21,6 +21,7 @@ from .api.routes.request_queues import router as request_queues_router
 from .api.routes.runs import router as runs_router
 from .api.routes.schedules import router as schedules_router
 from .api.routes.storage import router as storage_router
+from .api.routes.webhook_deliveries import router as webhook_deliveries_router
 from .api.routes.webhook_destinations import router as webhook_destinations_router
 from .core.config import get_settings
 from .core.errors import (
@@ -132,6 +133,7 @@ v1_router.include_router(datasets_router)
 v1_router.include_router(egress_policies_router)
 v1_router.include_router(events_router)
 v1_router.include_router(webhook_destinations_router)
+v1_router.include_router(webhook_deliveries_router)
 v1_router.include_router(key_value_stores_router)
 v1_router.include_router(request_queues_router)
 v1_router.include_router(runs_router)
@@ -210,7 +212,7 @@ async def foundation_status() -> dict[str, object]:
         "event_history_project_rls_enabled": True,
         "webhook_delivery_enabled": False,
         "webhook_destination_persistence_enabled": True,
-        "webhook_destination_activation_enabled": False,
+        "webhook_destination_activation_enabled": True,
         "webhook_delivery_lifecycle_persistence_enabled": True,
         "webhook_delivery_claim_fencing_enabled": True,
         "webhook_delivery_canary_enabled": settings.webhook_delivery_canary_enabled,
@@ -218,6 +220,10 @@ async def foundation_status() -> dict[str, object]:
         "webhook_delivery_digest_only_claims_enabled": True,
         "webhook_delivery_claim_scoped_secret_loader_enabled": True,
         "webhook_delivery_direct_tls_transport_available": True,
+        "webhook_delivery_history_enabled": True,
+        "webhook_delivery_replay_enabled": True,
+        "webhook_automatic_failure_disablement_enabled": True,
+        "webhook_active_event_enqueue_enabled": True,
         "opaque_server_sessions": True,
         "write_only_api_keys": True,
         "agent_versions_immutable": True,

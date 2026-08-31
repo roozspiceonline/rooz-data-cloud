@@ -13,7 +13,14 @@ from ..core.envelope_encryption import encrypt_project_secret
 from ..core.errors import ApiError
 from ..core.pagination import CursorPosition
 from ..core.security import canonical_fingerprint
-from ..models import IdempotencyRecord, Project, ProjectSecret, WebhookDestination
+from ..models import (
+    Event,
+    IdempotencyRecord,
+    Project,
+    ProjectSecret,
+    WebhookDeliveryAttempt,
+    WebhookDestination,
+)
 from ..webhook_destination_protocol import (
     ValidatedWebhookDestination,
     WebhookDestinationProtocolError,
@@ -25,6 +32,7 @@ from ..webhook_destination_schemas import (
 )
 from .builds_secrets import acquire_idempotency_lock, validate_idempotency_key
 from .identity_tenancy import append_audit_event
+from .webhook_deliveries import enqueue_webhook_delivery
 
 
 def destination_summary(record: WebhookDestination) -> dict[str, object]:
@@ -39,6 +47,10 @@ def destination_summary(record: WebhookDestination) -> dict[str, object]:
         status=record.status,
         signing_secret_configured=True,
         signing_secret_version=record.signing_secret_version,
+        verified_at=record.verified_at,
+        consecutive_failure_count=record.consecutive_failure_count,
+        failure_threshold=record.failure_threshold,
+        disabled_reason=record.disabled_reason,
         created_by_user_id=record.created_by_user_id,
         updated_by_user_id=record.updated_by_user_id,
         created_at=record.created_at,
@@ -165,6 +177,10 @@ async def create_webhook_destination(
         endpoint_origin=validated.endpoint_origin,
         event_types=validated.event_types,
         status="PENDING_VERIFICATION",
+        verified_at=None,
+        consecutive_failure_count=0,
+        failure_threshold=3,
+        disabled_reason=None,
         signing_secret_id=secret_id,
         signing_secret_version=1,
         created_by_user_id=user_id,
@@ -316,6 +332,10 @@ async def rotate_webhook_signing_secret(
         datetime.now(UTC),
     )
     locked.signing_secret_version, locked.version = next_secret_version, locked.version + 1
+    locked.status = "PENDING_VERIFICATION"
+    locked.verified_at = None
+    locked.consecutive_failure_count = 0
+    locked.disabled_reason = None
     locked.updated_by_user_id, locked.updated_at = user_id, datetime.now(UTC)
     await session.flush()
     await append_audit_event(
@@ -331,6 +351,72 @@ async def rotate_webhook_signing_secret(
         details={"signing_secret_version": next_secret_version},
     )
     return destination_summary(locked)
+
+
+async def verify_webhook_destination(
+    session: AsyncSession,
+    *,
+    record: WebhookDestination,
+    expected_version: int,
+    event_id: UUID,
+    actor_type: str,
+    actor_id: str,
+    request_id: str,
+) -> WebhookDeliveryAttempt:
+    locked = await session.scalar(
+        select(WebhookDestination)
+        .where(
+            WebhookDestination.id == record.id,
+            WebhookDestination.project_id == record.project_id,
+        )
+        .with_for_update()
+    )
+    if locked is None:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+    if locked.version != expected_version:
+        raise ApiError(
+            status_code=409,
+            code="VERSION_CONFLICT",
+            message="The webhook destination changed. Reload it and try again.",
+        )
+    if locked.status != "PENDING_VERIFICATION":
+        raise ApiError(
+            status_code=409,
+            code="WEBHOOK_DESTINATION_NOT_PENDING",
+            message="Only a pending webhook destination can be verified.",
+        )
+    event = await session.scalar(
+        select(Event).where(Event.id == event_id, Event.project_id == locked.project_id)
+    )
+    if event is None or event.event_type not in locked.event_types:
+        raise ApiError(
+            status_code=404,
+            code="RESOURCE_NOT_FOUND",
+            message="The requested resource was not found.",
+        )
+    delivery = await enqueue_webhook_delivery(
+        session,
+        project_id=locked.project_id,
+        destination_id=locked.id,
+        event_id=event.id,
+    )
+    await append_audit_event(
+        session,
+        organization_id=locked.organization_id,
+        project_id=locked.project_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        action="webhook_destination.verification_requested",
+        resource_type="webhook_destination",
+        resource_id=str(locked.id),
+        request_id=request_id,
+        details={"delivery_id": str(delivery.id), "event_id": str(event.id)},
+    )
+    return delivery
 
 
 async def disable_webhook_destination(
@@ -362,7 +448,8 @@ async def disable_webhook_destination(
             code="VERSION_CONFLICT",
             message="The webhook destination changed. Reload it and try again.",
         )
-    locked.status, locked.version = "DISABLED", locked.version + 1
+    locked.status, locked.disabled_reason = "DISABLED", "OPERATOR_DISABLED"
+    locked.version += 1
     locked.updated_by_user_id, locked.updated_at = user_id, datetime.now(UTC)
     await session.flush()
     await append_audit_event(

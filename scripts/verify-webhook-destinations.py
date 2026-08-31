@@ -18,5 +18,5 @@ need("apps/api/app/webhook_destination_protocol.py", "IP literals are prohibited
 need("apps/api/app/services/webhook_destinations.py", "encrypt_project_secret",
      "acquire_idempotency_lock", "signing_secret_rotated")
 need("apps/api/app/main.py", '"webhook_delivery_enabled": False',
-     '"webhook_destination_activation_enabled": False')
+     '"webhook_destination_activation_enabled": True')
 print("Webhook destination foundation verification passed")

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.database import get_db
 from ...core.errors import request_id, success_payload
 from ...core.pagination import decode_event_cursor, encode_event_cursor
+from ...services.webhook_deliveries import delivery_summary
 from ...services.webhook_destinations import (
     create_webhook_destination,
     destination_summary,
@@ -14,11 +15,13 @@ from ...services.webhook_destinations import (
     get_webhook_destination,
     list_webhook_destinations,
     rotate_webhook_signing_secret,
+    verify_webhook_destination,
 )
 from ...webhook_destination_schemas import (
     CreateWebhookDestinationRequest,
     DisableWebhookDestinationRequest,
     RotateWebhookSigningSecretRequest,
+    VerifyWebhookDestinationRequest,
 )
 from ..agent_dependencies import ProjectAccess, require_project_permission
 from ..dependencies import AuthContext, require_csrf
@@ -57,6 +60,31 @@ async def create_destination(
         payload=payload,
     )
     return success_payload(request, result)
+
+
+@router.post("/projects/{project_id}/webhook-destinations/{destination_id}/verify")
+async def verify_destination(
+    payload: VerifyWebhookDestinationRequest,
+    request: Request,
+    destination_id: UUID,
+    access: Annotated[ProjectAccess, Depends(require_project_permission("webhook.update"))],
+    _: Annotated[AuthContext, Depends(require_csrf)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, object]:
+    record = await get_webhook_destination(
+        db, project_id=access.project.id, destination_id=destination_id
+    )
+    actor_type, actor_id = _actor(access)
+    delivery = await verify_webhook_destination(
+        db,
+        record=record,
+        expected_version=payload.expected_version,
+        event_id=payload.event_id,
+        actor_type=actor_type,
+        actor_id=actor_id,
+        request_id=request_id(request),
+    )
+    return success_payload(request, delivery_summary(delivery))
 
 
 @router.get("/projects/{project_id}/webhook-destinations")

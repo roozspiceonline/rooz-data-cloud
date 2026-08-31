@@ -109,6 +109,7 @@ def test_event_migration_and_emission_preserve_security_boundary() -> None:
     builds = (ROOT / "app/services/builds_secrets.py").read_text(encoding="utf-8")
     assert 'event_type="run.created"' in runs
     assert 'event_type="build.created"' in builds
-    assert "webhook" not in (ROOT / "app/services/events.py").read_text(
-        encoding="utf-8"
-    ).casefold()
+    events = (ROOT / "app/services/events.py").read_text(encoding="utf-8")
+    assert "enqueue_matching_webhook_deliveries" in events
+    assert "httpx" not in events.casefold()
+    assert "decrypt_project_secret" not in events.casefold()

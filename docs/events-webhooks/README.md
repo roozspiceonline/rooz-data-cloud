@@ -55,6 +55,24 @@ response, timeout, concurrency, claim, and attempt bounds are enforced. The
 runner receives only the database and Project-secret master key; it receives no
 Redis, S3, session, API-key, worker, or lease credentials.
 
-`RDC_WEBHOOK_DELIVERY_CANARY_ENABLED` remains false by default. This canary is
-limited to `PENDING_VERIFICATION` destinations. General activation, operator
-replay history, and automatic failure disablement remain separate work.
+Migration `20260901_0033` completes the Events/Webhooks control plane. A
+successful claim-fenced verification changes a pending destination to `ACTIVE`;
+new matching events then enqueue immutable delivery snapshots in the same
+transaction as the event. Secret rotation returns the destination to pending
+verification.
+
+Project-scoped delivery list/detail routes expose bounded operational metadata
+and immutable transitions without endpoint URLs, event bodies, signing-secret
+identifiers, claim digests, or replay-key digests. Explicit replay requires
+`webhook.update`, CSRF protection, an optimistic version, and an
+`Idempotency-Key`; only terminal failed deliveries with the exact original
+endpoint and secret snapshot can be replayed. Consecutive terminal failures
+automatically disable a destination at its bounded threshold, successful
+delivery resets the count, and replay is the only API path that can re-enable
+an automatically disabled destination. Operator-disabled and configuration-
+changed destinations fail closed.
+
+`RDC_WEBHOOK_DELIVERY_CANARY_ENABLED` remains false by default. Enabling actual
+network delivery is still an environment-specific production decision even
+though destination verification, history, replay, and failure controls are now
+complete.

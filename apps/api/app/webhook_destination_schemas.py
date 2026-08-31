@@ -26,6 +26,11 @@ class DisableWebhookDestinationRequest(StrictModel):
     expected_version: int = Field(ge=1)
 
 
+class VerifyWebhookDestinationRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+    event_id: UUID
+
+
 class WebhookDestinationSummary(StrictModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True)
     id: UUID
@@ -35,9 +40,13 @@ class WebhookDestinationSummary(StrictModel):
     endpoint_url: str
     endpoint_origin: str
     event_types: list[str]
-    status: Literal["PENDING_VERIFICATION", "DISABLED"]
+    status: Literal["PENDING_VERIFICATION", "ACTIVE", "DISABLED"]
     signing_secret_configured: bool
     signing_secret_version: int
+    verified_at: datetime | None
+    consecutive_failure_count: int
+    failure_threshold: int
+    disabled_reason: str | None
     created_by_user_id: UUID
     updated_by_user_id: UUID
     created_at: datetime

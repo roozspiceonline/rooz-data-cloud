@@ -13,9 +13,11 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from app.core.database import engine, session_factory
+from app.core.database import engine, session_factory, set_tenant_context
 from app.core.envelope_encryption import decrypt_project_secret, encrypt_project_secret
 from app.core.errors import ApiError
+from app.services.events import emit_event
+from app.services.webhook_deliveries import replay_webhook_delivery
 from app.services.webhook_delivery_canary import (
     ClaimedWebhookDeliveryCanary,
     claim_webhook_delivery_canaries,
@@ -385,3 +387,259 @@ async def test_expired_final_claim_converges_without_overclaiming() -> None:
         "claim_expires_at": None,
         "last_error_code": "CLAIM_EXPIRED",
     }
+
+
+async def test_success_activates_pending_destination_and_resets_failures() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL trusted webhook migration is unavailable")
+    ids = await _seed_delivery()
+    claim = (await _claim_once("webhook-activation"))[0]
+    async with session_factory() as session:
+        completed = await complete_webhook_delivery_canary(
+            session,
+            delivery_id=claim.id,
+            claim_token=claim.claim_token,
+            outcome="DELIVERED",
+            http_status=204,
+            now=datetime.now(UTC),
+        )
+        await session.commit()
+    assert completed.status == "SUCCEEDED"
+    async with engine.connect() as connection:
+        destination = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT status,verified_at,consecutive_failure_count,disabled_reason "
+                        "FROM control.webhook_destinations WHERE id=:id"
+                    ),
+                    {"id": ids["destination"]},
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert destination["status"] == "ACTIVE"
+    assert destination["verified_at"] is not None
+    assert destination["consecutive_failure_count"] == 0
+    assert destination["disabled_reason"] is None
+
+
+async def test_terminal_failures_auto_disable_and_replay_is_idempotently_fenced() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL trusted webhook migration is unavailable")
+    ids = await _seed_delivery()
+    for index in range(3):
+        claim = (await _claim_once(f"webhook-failure-{index}"))[0]
+        async with session_factory() as session:
+            completed = await complete_webhook_delivery_canary(
+                session,
+                delivery_id=claim.id,
+                claim_token=claim.claim_token,
+                outcome="HTTP_PERMANENT",
+                http_status=410,
+                now=datetime.now(UTC),
+            )
+            await session.commit()
+        assert completed.status == "DEAD_LETTERED"
+        if index < 2:
+            async with engine.begin() as connection:
+                await connection.execute(
+                    text(
+                        "UPDATE control.webhook_delivery_attempts "
+                        "SET status='PENDING',attempt_count=0,available_at=CURRENT_TIMESTAMP,"
+                        "completed_at=NULL,last_error_code=NULL,last_http_status=NULL,"
+                        "updated_at=CURRENT_TIMESTAMP,version=version+1 WHERE id=:id"
+                    ),
+                    {"id": ids["delivery"]},
+                )
+
+    async with engine.connect() as connection:
+        destination = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT status,consecutive_failure_count,disabled_reason "
+                        "FROM control.webhook_destinations WHERE id=:id"
+                    ),
+                    {"id": ids["destination"]},
+                )
+            )
+            .mappings()
+            .one()
+        )
+        version = await connection.scalar(
+            text("SELECT version FROM control.webhook_delivery_attempts WHERE id=:id"),
+            {"id": ids["delivery"]},
+        )
+    assert destination == {
+        "status": "DISABLED",
+        "consecutive_failure_count": 3,
+        "disabled_reason": "AUTO_FAILURE_THRESHOLD",
+    }
+    assert await _claim_once("webhook-disabled") == []
+
+    async with session_factory() as session:
+        await set_tenant_context(
+            session, user_id=ids["user"], organization_id=ids["org"]
+        )
+        with pytest.raises(ApiError) as cross_project:
+            await replay_webhook_delivery(
+                session,
+                project_id=uuid4(),
+                delivery_id=ids["delivery"],
+                expected_version=int(version),
+                idempotency_key="cross-project-replay-key",
+                user_id=ids["user"],
+                actor_type="user",
+                actor_id=str(ids["user"]),
+                request_id="cross-project-replay",
+            )
+        assert cross_project.value.code == "RESOURCE_NOT_FOUND"
+        with pytest.raises(ApiError) as stale_version:
+            await replay_webhook_delivery(
+                session,
+                project_id=ids["project"],
+                delivery_id=ids["delivery"],
+                expected_version=int(version) - 1,
+                idempotency_key="stale-version-replay-key",
+                user_id=ids["user"],
+                actor_type="user",
+                actor_id=str(ids["user"]),
+                request_id="stale-version-replay",
+            )
+        assert stale_version.value.code == "VERSION_CONFLICT"
+        await session.rollback()
+
+    async def replay_once(request_id: str) -> object:
+        async with session_factory() as session:
+            await set_tenant_context(
+                session, user_id=ids["user"], organization_id=ids["org"]
+            )
+            result = await replay_webhook_delivery(
+                session,
+                project_id=ids["project"],
+                delivery_id=ids["delivery"],
+                expected_version=int(version),
+                idempotency_key="replay-idempotency-key",
+                user_id=ids["user"],
+                actor_type="user",
+                actor_id=str(ids["user"]),
+                request_id=request_id,
+            )
+            await session.commit()
+            return result
+
+    replayed, replayed_again = await asyncio.gather(
+        replay_once("replay-race-left"), replay_once("replay-race-right")
+    )
+    assert hasattr(replayed, "status")
+    assert hasattr(replayed_again, "id")
+    assert replayed.status == "PENDING"
+    assert replayed.replay_count == 1
+    assert replayed_again.id == replayed.id
+    async with engine.connect() as connection:
+        destination = (
+            (
+                await connection.execute(
+                    text(
+                        "SELECT status,consecutive_failure_count,disabled_reason "
+                        "FROM control.webhook_destinations WHERE id=:id"
+                    ),
+                    {"id": ids["destination"]},
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert destination == {
+        "status": "PENDING_VERIFICATION",
+        "consecutive_failure_count": 0,
+        "disabled_reason": None,
+    }
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE control.webhook_delivery_attempts SET status='CANCELLED',"
+                "completed_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP,version=version+1 "
+                "WHERE id=:id"
+            ),
+            {"id": ids["delivery"]},
+        )
+
+
+async def test_new_event_transactionally_enqueues_each_active_match_once() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL trusted webhook migration is unavailable")
+    ids = await _seed_delivery()
+    claim = (await _claim_once("webhook-event-activation"))[0]
+    async with session_factory() as session:
+        await complete_webhook_delivery_canary(
+            session,
+            delivery_id=claim.id,
+            claim_token=claim.claim_token,
+            outcome="DELIVERED",
+            http_status=204,
+            now=datetime.now(UTC),
+        )
+        await session.commit()
+
+    new_build_id = uuid4()
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "INSERT INTO control.builds "
+                "(id,organization_id,project_id,agent_id,agent_version_id,manifest_digest,"
+                "status,requested_by_user_id) VALUES "
+                "(:id,:o,:p,:a,:v,:digest,'QUEUED',:u)"
+            ),
+            {
+                "id": new_build_id,
+                "o": ids["org"],
+                "p": ids["project"],
+                "a": ids["agent"],
+                "v": ids["version"],
+                "digest": "b" * 64,
+                "u": ids["user"],
+            },
+        )
+    payload = {
+        "agent_id": str(ids["agent"]),
+        "agent_version_id": str(ids["version"]),
+        "status": "QUEUED",
+    }
+    async with session_factory() as session:
+        await set_tenant_context(
+            session, user_id=ids["user"], organization_id=ids["org"]
+        )
+        event = await emit_event(
+            session,
+            organization_id=ids["org"],
+            project_id=ids["project"],
+            event_type="build.created",
+            subject_type="build",
+            subject_id=new_build_id,
+            payload=payload,
+            request_id="event-enqueue",
+        )
+        replayed = await emit_event(
+            session,
+            organization_id=ids["org"],
+            project_id=ids["project"],
+            event_type="build.created",
+            subject_type="build",
+            subject_id=new_build_id,
+            payload=payload,
+            request_id="event-enqueue-replay",
+        )
+        await session.commit()
+    assert replayed.id == event.id
+    async with engine.connect() as connection:
+        count = await connection.scalar(
+            text(
+                "SELECT COUNT(*) FROM control.webhook_delivery_attempts "
+                "WHERE destination_id=:destination AND event_id=:event"
+            ),
+            {"destination": ids["destination"], "event": event.id},
+        )
+    assert count == 1
