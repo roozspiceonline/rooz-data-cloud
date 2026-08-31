@@ -2,8 +2,13 @@
 
 ## Unreleased
 
-- Added immutable Project-scoped webhook delivery intent with claim fencing,
-  bounded retry/dead-letter state and no connected outbound transport.
+- Added a false-by-default trusted webhook delivery canary with digest-only
+  claim fencing, immutable endpoint/secret snapshots, claim-scoped encrypted
+  material loading and completion, canonical timestamped HMAC-SHA256 signing,
+  and a direct peer-pinned TLS transport with no proxies, redirects, retries,
+  or address failover.
+- Added bounded retry/dead-letter convergence, generic failure outcomes, a
+  least-credentialed separate runner, and adversarial PostgreSQL/network tests.
 - Added tenant-scoped webhook destination metadata with strict HTTPS admission,
   Project RLS, idempotent creation and write-only encrypted signing-secret
   rotation while keeping activation and outbound delivery disabled.
@@ -12,8 +17,9 @@
   bounded payloads and replay-safe uniqueness.
 - Added permission-checked Project event history with deterministic ordering and
   signed Project/filter-bound cursors.
-- Kept webhook destinations, signing secrets, delivery workers and outbound HTTP
-  explicitly disabled and outside this increment.
+- Kept general destination activation, operator replay, and automatic failure
+  disablement outside this increment; the trusted runner remains false by
+  default and limited to pending-verification destinations.
 
 ## 0.14.0-phase1n — 2026-08-08
 

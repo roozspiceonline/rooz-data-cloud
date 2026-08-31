@@ -31,6 +31,7 @@ GROUPS = {
         "verify-events.py",
         "verify-webhook-destinations.py",
         "verify-webhook-deliveries.py",
+        "verify-webhook-delivery-security.py",
     ],
     "acquisition": [
         "verify-scraping-runtime.py",

@@ -37,3 +37,24 @@ deterministic capped backoff; exhaustion becomes `DEAD_LETTERED`. Every state
 change appends a sequenced immutable transition snapshot under Project RLS.
 No public route, HTTP client, DNS resolver or signing-secret decryption path is
 connected to this lifecycle.
+
+Migration `20260831_0032` adds a false-by-default trusted delivery canary. A
+global bounded `SKIP LOCKED` claim function persists only a SHA-256 claim-token
+digest and returns the raw token only to the claiming process. Delivery rows
+snapshot the endpoint and exact signing-secret version at enqueue time. A
+claim-scoped security-definer loader releases encrypted material only while the
+exact claim is live and the destination and secret version remain valid.
+
+The separate `webhook-delivery-runner` decrypts only inside trusted process
+memory, signs canonical event bytes with timestamped HMAC-SHA256, zeroes the
+plaintext byte buffer, and completes through the same claim fence. Its direct
+TLS transport resolves and validates the complete public DNS set, connects to
+one exact IP with hostname-verified TLS/SNI, validates the connected peer, and
+never uses ambient proxies, redirects, retries, or address failover. Request,
+response, timeout, concurrency, claim, and attempt bounds are enforced. The
+runner receives only the database and Project-secret master key; it receives no
+Redis, S3, session, API-key, worker, or lease credentials.
+
+`RDC_WEBHOOK_DELIVERY_CANARY_ENABLED` remains false by default. This canary is
+limited to `PENDING_VERIFICATION` destinations. General activation, operator
+replay history, and automatic failure disablement remain separate work.

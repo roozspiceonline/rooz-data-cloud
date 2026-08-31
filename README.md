@@ -55,9 +55,10 @@ Machine-readable current workstream and database-head status lives in
 are dated snapshots and must not override that file, the repository migration
 graph, GitHub state or exact-head CI.
 
-The Events/Webhooks workstream now has an immutable, tenant-isolated event
-foundation. Representative Run and Build creation events are transactionally
-persisted with strict credential-free payloads and exposed only through a
-permission-checked, Project-scoped history API. Outbound webhook destinations,
-signing secrets and delivery remain separate future increments. See
+The Events/Webhooks workstream now has immutable tenant-isolated lifecycle
+events, write-only envelope-encrypted destination signing secrets, durable
+claim-fenced delivery intent, and a separate false-by-default trusted delivery
+canary. The canary signs canonical event bytes and uses direct peer-pinned TLS
+with public DNS and connected-peer validation; general activation, operator
+replay, and automatic failure disablement remain future increments. See
 [the Events/Webhooks documentation](docs/events-webhooks/README.md).

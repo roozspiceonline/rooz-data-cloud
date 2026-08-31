@@ -25,6 +25,8 @@ def test_destination_protocol_normalizes_and_rejects_ssrf_shapes() -> None:
         "https://127.0.0.1/callback",
         "https://[::1]/callback",
         "https://metadata.internal/callback",
+        "https://hooks_example.com/callback",
+        "https://h\u00f6oks.example.com/callback",
         "https://user:pass@hooks.example.com/callback",
         "https://hooks.example.com:8443/callback",
     ):
@@ -38,7 +40,7 @@ def test_destination_api_is_write_only_for_secrets_and_delivery_stays_absent() -
     assert "/api/v1/projects/{project_id}/webhook-destinations" in paths
     summary_schema = str(WebhookDestinationSummary.model_json_schema())
     assert "signing_secret_id" not in summary_schema
-    assert "signing_secret\"" not in summary_schema
+    assert 'signing_secret"' not in summary_schema
     assert not any("deliver" in path for path in paths if "webhook" in path)
     assert not any("activate" in path for path in paths if "webhook" in path)
 
@@ -53,9 +55,7 @@ def test_destination_permissions_are_least_privilege() -> None:
 
 
 def test_destination_migration_has_server_tenancy_and_rls() -> None:
-    migration = (
-        ROOT / "migrations/versions/20260830_0030_webhook_destinations.py"
-    ).read_text()
+    migration = (ROOT / "migrations/versions/20260830_0030_webhook_destinations.py").read_text()
     for marker in (
         'down_revision: str | None = "20260829_0029"',
         "ENABLE ROW LEVEL SECURITY",
@@ -66,3 +66,10 @@ def test_destination_migration_has_server_tenancy_and_rls() -> None:
         "PENDING_VERIFICATION",
     ):
         assert marker in migration
+
+
+def test_destination_managed_secret_matches_project_secret_constraints() -> None:
+    service = (ROOT / "app/services/webhook_destinations.py").read_text()
+    assert 'f"WEBHOOK_{destination_id.hex.upper()}"' in service
+    assert "environment=get_settings().env" in service
+    assert 'environment="webhook"' not in service

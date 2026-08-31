@@ -327,6 +327,39 @@ services:
       - /tmp:size=16m,mode=1777
     restart: unless-stopped
 
+  webhook-delivery-runner:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.webhook_delivery_runner"]
+    environment:
+      RDC_ENV: ${RDC_ENV:-development}
+      RDC_DEPLOYMENT_ID: ${RDC_DEPLOYMENT_ID:-}
+      RDC_DATABASE_URL: ${RDC_DATABASE_URL:-postgresql+asyncpg://rdc_app:change-me-for-local-development@postgres:5432/rooz_data_cloud}
+      RDC_PROJECT_SECRET_MASTER_KEY_B64: ${RDC_PROJECT_SECRET_MASTER_KEY_B64:-ZGV2ZWxvcG1lbnQtcmRjLXNlY3JldC1rZXktMzJiISE=}
+      RDC_PROJECT_SECRET_MASTER_KEY_VERSION: ${RDC_PROJECT_SECRET_MASTER_KEY_VERSION:-local-v1}
+      RDC_WEBHOOK_DELIVERY_CANARY_ENABLED: ${RDC_WEBHOOK_DELIVERY_CANARY_ENABLED:-false}
+      RDC_WEBHOOK_DELIVERY_CLAIM_SECONDS: ${RDC_WEBHOOK_DELIVERY_CLAIM_SECONDS:-60}
+      RDC_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS: ${RDC_WEBHOOK_DELIVERY_POLL_INTERVAL_SECONDS:-5}
+      RDC_WEBHOOK_DELIVERY_CONNECT_TIMEOUT_SECONDS: ${RDC_WEBHOOK_DELIVERY_CONNECT_TIMEOUT_SECONDS:-5}
+      RDC_WEBHOOK_DELIVERY_TOTAL_TIMEOUT_SECONDS: ${RDC_WEBHOOK_DELIVERY_TOTAL_TIMEOUT_SECONDS:-15}
+      RDC_WEBHOOK_DELIVERY_MAX_RESPONSE_BYTES: ${RDC_WEBHOOK_DELIVERY_MAX_RESPONSE_BYTES:-65536}
+      RDC_WEBHOOK_DELIVERY_MAX_CONCURRENCY: ${RDC_WEBHOOK_DELIVERY_MAX_CONCURRENCY:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.webhook_delivery_runner", "--healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+
   console:
     build:
       context: .

@@ -663,7 +663,9 @@ history contract. It requires `event.read`, accepts an optional allowlisted
 `event_type`, limits pages to 100, and uses a signed cursor bound to the Project
 and filter. Results are ordered by `occurred_at DESC, id DESC`. The initial
 `rdc.event/v1` types are `build.created` and `run.created`; no public event
-creation or webhook delivery endpoint exists.
+creation or delivery-attempt endpoint exists. Authenticated destination
+metadata creation, listing, secret rotation, and disablement are separate
+Project-scoped contracts; signing-secret values are never returned.
 
 ### 14.6 Security
 

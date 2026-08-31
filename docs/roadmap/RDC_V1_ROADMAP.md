@@ -143,6 +143,15 @@ and a signed cursor bound to both Project and event-type filter. No destination,
 signing secret, delivery attempt, retry worker, or outbound webhook request is
 present in this increment.
 
+The trusted Events/Webhooks canary increment adds immutable endpoint and secret
+version snapshots, digest-only global claims, claim-scoped encrypted-material
+loading and completion, canonical timestamped HMAC-SHA256 signing, and a
+separate least-credentialed direct-TLS runner. DNS answers and the connected
+peer must be public and identical, TLS uses the destination hostname for SNI
+and certificate validation, and proxies, redirects, retries and address
+failover are absent. The gate remains false by default and is limited to
+pending destination verification.
+
 ## Remaining RDC v1 workstreams
 
 1. Proxy/egress: run and review the live adversarial credential canary against
@@ -150,9 +159,8 @@ present in this increment.
    failure cases; keep adaptive routing disabled until that gate passes.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
-3. Events/webhooks: add trusted SSRF-safe signed delivery execution, replay
-   tooling and failure disablement on top of the merged event, destination and
-   claim-fenced delivery-lifecycle foundations.
+3. Events/webhooks: add operator replay history and automatic failure
+   disablement on top of the false-by-default trusted signed delivery canary.
 4. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
 5. Usage controls: quotas, rate limits, concurrency and auditable failures.

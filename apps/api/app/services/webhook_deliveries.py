@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import re
+import secrets
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,13 +23,26 @@ CLAIMABLE = frozenset({"PENDING", "RETRY_WAIT"})
 TERMINAL = frozenset({"SUCCEEDED", "DEAD_LETTERED", "CANCELLED"})
 
 
+@dataclass(frozen=True)
+class ClaimedWebhookDelivery:
+    delivery: WebhookDeliveryAttempt
+    claim_token: str = field(repr=False)
+
+
+def _claim_digest(claim_token: str) -> str:
+    try:
+        encoded = claim_token.encode("ascii")
+    except UnicodeEncodeError as exc:
+        raise ValueError("Webhook claim token is invalid") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
 async def _append_transition(
     session: AsyncSession,
     *,
     delivery: WebhookDeliveryAttempt,
     from_status: str | None,
     reason_code: str,
-    claim_token: UUID | None,
 ) -> None:
     latest = await session.scalar(
         select(func.max(WebhookDeliveryTransition.sequence)).where(
@@ -42,7 +59,7 @@ async def _append_transition(
             to_status=delivery.status,
             reason_code=reason_code,
             attempt_count=delivery.attempt_count,
-            claim_token=claim_token,
+            claim_token=None,
         )
     )
     await session.flush()
@@ -89,11 +106,15 @@ async def enqueue_webhook_delivery(
         project_id=project_id,
         destination_id=destination_id,
         event_id=event_id,
+        endpoint_url=destination.endpoint_url,
+        signing_secret_id=destination.signing_secret_id,
+        signing_secret_version=destination.signing_secret_version,
         status="PENDING",
         attempt_count=0,
         max_attempts=max_attempts,
         available_at=now,
         claim_token=None,
+        claim_token_digest=None,
         claimed_by=None,
         claim_expires_at=None,
         last_error_code=None,
@@ -105,9 +126,7 @@ async def enqueue_webhook_delivery(
     )
     session.add(delivery)
     await session.flush()
-    await _append_transition(
-        session, delivery=delivery, from_status=None, reason_code="ENQUEUED", claim_token=None
-    )
+    await _append_transition(session, delivery=delivery, from_status=None, reason_code="ENQUEUED")
     return delivery
 
 
@@ -117,8 +136,11 @@ async def claim_webhook_delivery(
     project_id: UUID,
     worker_id: str,
     lease_seconds: int = 30,
-) -> WebhookDeliveryAttempt | None:
-    if not 5 <= lease_seconds <= 120 or not 1 <= len(worker_id) <= 128:
+) -> ClaimedWebhookDelivery | None:
+    if (
+        not 15 <= lease_seconds <= 120
+        or re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", worker_id) is None
+    ):
         raise ValueError("Webhook claim parameters are invalid")
     await set_project_context(session, project_id)
     now = datetime.now(UTC)
@@ -147,24 +169,48 @@ async def claim_webhook_delivery(
     )
     if delivery is None:
         return None
-    previous, token = delivery.status, uuid4()
-    delivery.status, delivery.claim_token, delivery.claimed_by = "CLAIMED", token, worker_id
+    if delivery.status == "CLAIMED":
+        previous = delivery.status
+        delivery.status = (
+            "DEAD_LETTERED" if delivery.attempt_count >= delivery.max_attempts else "RETRY_WAIT"
+        )
+        delivery.claim_token = None
+        delivery.claim_token_digest = None
+        delivery.claimed_by = None
+        delivery.claim_expires_at = None
+        delivery.last_error_code = "CLAIM_EXPIRED"
+        delivery.completed_at = now if delivery.status == "DEAD_LETTERED" else None
+        delivery.available_at = now
+        delivery.version += 1
+        delivery.updated_at = now
+        await session.flush()
+        await _append_transition(
+            session,
+            delivery=delivery,
+            from_status=previous,
+            reason_code="CLAIM_EXPIRED",
+        )
+        if delivery.status == "DEAD_LETTERED":
+            return None
+    previous, token = delivery.status, secrets.token_hex(32)
+    delivery.status, delivery.claim_token, delivery.claimed_by = "CLAIMED", None, worker_id
+    delivery.claim_token_digest = _claim_digest(token)
     delivery.claim_expires_at = now + timedelta(seconds=lease_seconds)
     delivery.attempt_count += 1
     delivery.version += 1
     delivery.updated_at = now
     await session.flush()
     await _append_transition(
-        session, delivery=delivery, from_status=previous, reason_code="CLAIMED", claim_token=token
+        session, delivery=delivery, from_status=previous, reason_code="CLAIMED"
     )
-    return delivery
+    return ClaimedWebhookDelivery(delivery=delivery, claim_token=token)
 
 
 async def complete_webhook_delivery(
     session: AsyncSession,
     *,
     delivery_id: UUID,
-    claim_token: UUID,
+    claim_token: str,
     succeeded: bool,
     http_status: int | None,
     error_code: str | None,
@@ -178,7 +224,7 @@ async def complete_webhook_delivery(
     if (
         delivery is None
         or delivery.status != "CLAIMED"
-        or delivery.claim_token != claim_token
+        or delivery.claim_token_digest != _claim_digest(claim_token)
         or delivery.claim_expires_at is None
         or delivery.claim_expires_at <= now
     ):
@@ -200,6 +246,7 @@ async def complete_webhook_delivery(
         delivery.available_at = now + timedelta(seconds=delay)
     delivery.last_http_status, delivery.last_error_code = http_status, error_code
     delivery.claim_token = delivery.claimed_by = delivery.claim_expires_at = None
+    delivery.claim_token_digest = None
     delivery.version += 1
     delivery.updated_at = now
     await session.flush()
@@ -208,6 +255,5 @@ async def complete_webhook_delivery(
         delivery=delivery,
         from_status=previous,
         reason_code=reason,
-        claim_token=claim_token,
     )
     return delivery

@@ -13,11 +13,11 @@ nesting/size, and keys shaped like Authorization, token, cookie, password,
 secret, credential, database, Redis, or object-storage credentials. Agents and
 Chromium receive neither event-table access nor any new capability.
 
-Outbound webhooks remain unimplemented. A later delivery boundary must add
-HTTPS-only destination validation, DNS rebinding and connected-peer checks,
-verified TLS/SNI, disabled or strictly bounded redirects, write-only signing
-secrets, claim fencing, bounded retries/timeouts/bodies, immutable delivery
-lineage and adversarial SSRF/replay tests before any network gate can activate.
+General outbound webhooks remain disabled. The trusted canary implements the
+network boundary for pending verification only: HTTPS hostname admission,
+public DNS-set validation, exact-address connection, connected-peer rebinding
+checks, verified TLS/SNI, no redirects/proxies/failover, and bounded request,
+response, timeout, concurrency, claim, and attempt dimensions.
 
 Destination admission is defense in depth, not delivery authorization. It
 rejects obvious SSRF URL shapes and stores only normalized HTTPS metadata, but
@@ -25,7 +25,15 @@ DNS resolution is intentionally absent. Any later delivery worker must resolve
 and pin public addresses, validate every connected peer and redirect, enforce
 TLS/SNI and revalidate immediately before each connection.
 
-Delivery intent is persisted before any network worker exists. UUID claim
-tokens, lease expiry, row-lock single-winner claims and transition snapshots
-limit duplicate or stale completion. Attempts are capped at eight and backoff
-at one hour. Claiming confers no secret access or network capability.
+Delivery intent and immutable snapshots exist before network execution. Only a
+SHA-256 digest of each 256-bit claim token is persisted; transition history
+contains no raw token. Claim-scoped security-definer functions couple exact
+encrypted secret-version access and completion to one live lease. Attempts are
+capped at eight and backoff at one hour.
+
+Issue #107 completes the false-by-default canary boundary with canonical
+bounded bodies, timestamped HMAC-SHA256, claim-fenced secret custody, direct
+peer-pinned TLS transport, generic error outcomes, plaintext zeroing, a
+least-credentialed runner service, and adversarial database/network tests.
+Residual risk remains Medium until live deployment-network review; general
+activation, replay tooling, and failure disablement are still absent.
