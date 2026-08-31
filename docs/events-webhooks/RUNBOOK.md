@@ -48,3 +48,17 @@ Rollback rehearsal is `alembic downgrade 20260830_0031` followed by `alembic
 upgrade head` on an isolated database. Downgrade converges live claims to
 `RETRY_WAIT` and removes only the canary capabilities and snapshots; never run
 it merely to retry a delivery.
+
+For migration `20260901_0033`, use the delivery history API and immutable
+transition sequence to diagnose failures. Replay only `DEAD_LETTERED` rows with
+the current version and a new retained idempotency key. Do not replay after an
+operator disable or configuration change. Automatic disablement after the
+bounded consecutive terminal-failure threshold blocks both claims and new
+enqueues; a successful active delivery resets the counter. Secret rotation
+returns the destination to pending verification.
+
+Rehearse `alembic downgrade -1` and `alembic upgrade head` on an isolated,
+data-bearing database only after claims converge. The downgrade converts active
+destinations back to pending verification and removes replay metadata; preserve
+immutable transition evidence and take an approved backup before production
+rollback.

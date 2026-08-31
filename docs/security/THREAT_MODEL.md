@@ -361,19 +361,23 @@ Likelihood and impact use: Low, Medium, High, Critical.
   validation, signed cursors and recursive payload bounds protect the event
   foundation while the network delivery boundary remains absent.
 - **Current control update:** migrations `20260830_0030` through
-  `20260831_0032` add HTTPS destination admission, immutable delivery and
+  `20260901_0033` add HTTPS destination admission, immutable delivery and
   secret-version snapshots, digest-only claim fencing, a claim-scoped encrypted
   secret loader, timestamped HMAC-SHA256, and a separate false-by-default
   direct-TLS canary. It validates the complete public DNS set and connected
   peer, uses hostname-verified TLS/SNI, follows no redirect, ignores ambient
   proxies, and bounds time, bytes, concurrency, claims, and attempts.
+  Successful claim-fenced verification is the only activation path; history
+  omits secrets and request material, replay is explicit and idempotently
+  version-fenced, and bounded consecutive terminal failures automatically
+  disable the destination.
 - **Likelihood:** Medium
 - **Impact:** High
 - **Controls:** SSRF defenses, HMAC signatures, timestamp and replay window, retries with limits, delivery audit, endpoint verification.
 - **Tests:** private destination, signature mismatch, replay, redirect.
 - **Residual risk:** Medium.
-- **Phase:** Trusted canary complete; general activation, replay controls, and
-  automatic failure disablement remain in Phase 5.
+- **Phase:** Events/Webhooks control plane complete; network execution remains
+  an environment-specific false-by-default gate.
 
 ### T-23 Insecure error handling
 

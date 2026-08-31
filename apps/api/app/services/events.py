@@ -19,6 +19,7 @@ from ..event_protocol import (
 )
 from ..event_schemas import EventSummary
 from ..models import Event
+from .webhook_deliveries import enqueue_matching_webhook_deliveries
 
 
 def event_summary(event: Event) -> dict[str, object]:
@@ -79,6 +80,7 @@ async def emit_event(
         )
         session.add(pending_event)
         await session.flush()
+        await enqueue_matching_webhook_deliveries(session, event=pending_event)
         return pending_event
 
     inserted_id = await session.scalar(
@@ -106,6 +108,7 @@ async def emit_event(
         inserted_event = await session.scalar(select(Event).where(Event.id == inserted_id))
         if inserted_event is None:
             raise RuntimeError("Inserted event could not be read")
+        await enqueue_matching_webhook_deliveries(session, event=inserted_event)
         return inserted_event
 
     existing = await session.scalar(

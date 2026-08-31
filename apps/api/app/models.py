@@ -1631,6 +1631,10 @@ class WebhookDestination(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     endpoint_origin: Mapped[str] = mapped_column(String(512), nullable=False)
     event_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_threshold: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    disabled_reason: Mapped[str | None] = mapped_column(String(64))
     signing_secret_id: Mapped[UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("security.project_secrets.id", ondelete="RESTRICT"),
@@ -1676,6 +1680,12 @@ class WebhookDeliveryAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_error_code: Mapped[str | None] = mapped_column(String(64))
     last_http_status: Mapped[int | None] = mapped_column(Integer)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replay_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_replayed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_replay_key_digest: Mapped[str | None] = mapped_column(String(64))
+    replay_requested_by_user_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("identity.users.id", ondelete="RESTRICT")
+    )
     version: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 

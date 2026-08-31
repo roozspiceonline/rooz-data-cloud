@@ -59,6 +59,9 @@ The Events/Webhooks workstream now has immutable tenant-isolated lifecycle
 events, write-only envelope-encrypted destination signing secrets, durable
 claim-fenced delivery intent, and a separate false-by-default trusted delivery
 canary. The canary signs canonical event bytes and uses direct peer-pinned TLS
-with public DNS and connected-peer validation; general activation, operator
-replay, and automatic failure disablement remain future increments. See
+with public DNS and connected-peer validation. Successful verification activates
+the destination; matching events enqueue transactionally. Project-scoped
+secret-free history, explicit idempotent terminal replay, immutable transitions,
+and bounded automatic failure disablement complete the workstream while the
+network runner remains false by default. See
 [the Events/Webhooks documentation](docs/events-webhooks/README.md).

@@ -1363,6 +1363,7 @@ async def test_create_run_derives_queue_tenancy_and_persists_receipt() -> None:
     )
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),
@@ -1448,6 +1449,7 @@ async def test_create_run_persists_brokered_queue_http_receipt(
     )
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),
@@ -1551,6 +1553,7 @@ async def test_create_run_persists_gated_queue_browser_receipt(
     )
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),
@@ -1634,6 +1637,7 @@ async def test_create_run_persists_gated_queue_dataset_composition(
     )
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),
@@ -1999,6 +2003,7 @@ async def test_create_run_persists_gated_queue_kv_composition(
     )
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),

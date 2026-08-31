@@ -34,14 +34,17 @@ def test_destination_protocol_normalizes_and_rejects_ssrf_shapes() -> None:
             validate_webhook_destination(endpoint_url=url, event_types=["run.created"])
 
 
-def test_destination_api_is_write_only_for_secrets_and_delivery_stays_absent() -> None:
+def test_destination_api_is_write_only_for_secrets_and_exposes_explicit_verification() -> None:
     openapi = app.openapi()
     paths = openapi["paths"]
     assert "/api/v1/projects/{project_id}/webhook-destinations" in paths
     summary_schema = str(WebhookDestinationSummary.model_json_schema())
     assert "signing_secret_id" not in summary_schema
     assert 'signing_secret"' not in summary_schema
-    assert not any("deliver" in path for path in paths if "webhook" in path)
+    assert (
+        "/api/v1/projects/{project_id}/webhook-destinations/{destination_id}/verify"
+        in paths
+    )
     assert not any("activate" in path for path in paths if "webhook" in path)
 
 

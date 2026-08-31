@@ -152,6 +152,13 @@ and certificate validation, and proxies, redirects, retries and address
 failover are absent. The gate remains false by default and is limited to
 pending destination verification.
 
+The final Events/Webhooks increment activates destinations only after a
+successful claim-fenced verification, transactionally enqueues active matches,
+adds secret-free project delivery history and explicit idempotent terminal
+replay, preserves immutable transition evidence, and automatically disables
+destinations after bounded consecutive terminal failures. The network runner
+remains false by default.
+
 ## Remaining RDC v1 workstreams
 
 1. Proxy/egress: run and review the live adversarial credential canary against
@@ -159,15 +166,13 @@ pending destination verification.
    failure cases; keep adaptive routing disabled until that gate passes.
 2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
    retention and advisory changed-path CI while preserving required full gates.
-3. Events/webhooks: add operator replay history and automatic failure
-   disablement on top of the false-by-default trusted signed delivery canary.
-4. Observability: structured run/worker logs, diagnostics, metrics and safe
+3. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
-5. Usage controls: quotas, rate limits, concurrency and auditable failures.
-6. SDK/CLI and Console: API-backed operations for all major resources.
-7. Platform-wide production operations: release automation, registry/SBOM,
+4. Usage controls: quotas, rate limits, concurrency and auditable failures.
+5. SDK/CLI and Console: API-backed operations for all major resources.
+6. Platform-wide production operations: release automation, registry/SBOM,
    capacity, disaster recovery, and environment promotion for all workstreams.
-8. End-to-end acceptance and final release/security audit.
+7. End-to-end acceptance and final release/security audit.
 
 ## Dependency order
 

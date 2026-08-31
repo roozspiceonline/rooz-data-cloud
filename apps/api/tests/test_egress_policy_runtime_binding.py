@@ -430,6 +430,7 @@ async def test_create_run_persists_server_resolved_policy_snapshot(
     monkeypatch.setattr(runs, "_request_queue_http_canary_enabled", lambda _v: False)
     session = SimpleNamespace(
         scalar=AsyncMock(side_effect=[build, queue, None, None]),
+        scalars=AsyncMock(return_value=SimpleNamespace(all=Mock(return_value=[]))),
         execute=AsyncMock(),
         flush=AsyncMock(),
         add=Mock(),
