@@ -103,6 +103,13 @@ class Settings(BaseSettings):
     egress_route_provider_key: str = "static-canary"
     egress_route_region_key: str = "local"
     egress_health_min_route_samples: int = 5
+    egress_health_maintenance_enabled: bool = True
+    egress_health_maintenance_interval_seconds: int = 3600
+    egress_health_rollup_batch_size: int = 24
+    egress_health_purge_batch_size: int = 1000
+    egress_health_raw_retention_hours: int = 48
+    egress_health_rollup_retention_days: int = 30
+    egress_health_maintenance_stale_after_seconds: int = 10800
     egress_credential_canary_enabled: bool = False
     egress_credential_canary_target_url: str = ""
     egress_credential_canary_claim_seconds: int = 60
@@ -221,6 +228,27 @@ class Settings(BaseSettings):
             raise ValueError("Egress region key must be a bounded lowercase slug.")
         if not 5 <= self.egress_health_min_route_samples <= 1000:
             raise ValueError("Egress route health requires between 5 and 1000 samples.")
+        if not 300 <= self.egress_health_maintenance_interval_seconds <= 86400:
+            raise ValueError(
+                "Egress health maintenance interval must be between 5 minutes and one day."
+            )
+        if not 1 <= self.egress_health_rollup_batch_size <= 168:
+            raise ValueError("Egress health rollup batches must contain 1 to 168 hours.")
+        if not 1 <= self.egress_health_purge_batch_size <= 10000:
+            raise ValueError("Egress health purge batches must contain 1 to 10000 rows.")
+        if not 48 <= self.egress_health_raw_retention_hours <= 168:
+            raise ValueError("Egress health raw retention must be between 48 and 168 hours.")
+        if not 7 <= self.egress_health_rollup_retention_days <= 90:
+            raise ValueError("Egress health rollup retention must be between 7 and 90 days.")
+        if not (
+            2 * self.egress_health_maintenance_interval_seconds
+            <= self.egress_health_maintenance_stale_after_seconds
+            <= 172800
+        ):
+            raise ValueError(
+                "Egress health maintenance stale threshold must be at least two intervals "
+                "and no more than two days."
+            )
         if not 15 <= self.egress_credential_canary_claim_seconds <= 300:
             raise ValueError("Egress credential canary claims must last 15 to 300 seconds.")
         if not 1 <= self.egress_credential_canary_batch_size <= 100:

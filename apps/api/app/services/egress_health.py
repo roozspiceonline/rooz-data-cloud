@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import get_settings
@@ -127,39 +127,18 @@ async def summarize_egress_health(
 ) -> dict[str, object]:
     window_end = datetime.now(UTC)
     window_start = window_end - timedelta(hours=window_hours)
-    totals = (
-        await session.execute(
-            select(
-                func.count(EgressHealthObservation.id),
-                func.count(EgressHealthObservation.id).filter(
-                    EgressHealthObservation.healthy.is_(True)
-                ),
-                func.count(EgressHealthObservation.id).filter(
-                    EgressHealthObservation.retryable.is_(True)
-                ),
-            ).where(
-                EgressHealthObservation.project_id == project_id,
-                EgressHealthObservation.observed_at >= window_start,
-                EgressHealthObservation.observed_at < window_end,
-            )
-        )
-    ).one()
-    rows = (
-        await session.execute(
-            select(
-                EgressHealthObservation.outcome,
-                func.count(EgressHealthObservation.id),
-            )
-            .where(
-                EgressHealthObservation.project_id == project_id,
-                EgressHealthObservation.observed_at >= window_start,
-                EgressHealthObservation.observed_at < window_end,
-            )
-            .group_by(EgressHealthObservation.outcome)
-            .order_by(EgressHealthObservation.outcome)
-        )
-    ).all()
-    total, healthy, retryable = (int(value or 0) for value in totals)
+    rows = await _egress_health_aggregate_rows(
+        session,
+        project_id=project_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    total = sum(row[3] for row in rows)
+    healthy = sum(row[4] for row in rows)
+    retryable = sum(row[5] for row in rows)
+    outcomes: dict[str, int] = {}
+    for _, _, outcome, outcome_total, _, _ in rows:
+        outcomes[outcome] = outcomes.get(outcome, 0) + outcome_total
     return {
         "window": {
             "hours": window_hours,
@@ -170,7 +149,7 @@ async def summarize_egress_health(
         "healthy": healthy,
         "unhealthy": total - healthy,
         "retryable": retryable,
-        "outcomes": {outcome: int(count) for outcome, count in rows},
+        "outcomes": dict(sorted(outcomes.items())),
     }
 
 
@@ -182,90 +161,33 @@ async def summarize_egress_health_routes(
 ) -> dict[str, object]:
     window_end = datetime.now(UTC)
     window_start = window_end - timedelta(hours=window_hours)
-    route_rows = (
-        await session.execute(
-            select(
-                EgressHealthObservation.provider_key,
-                EgressHealthObservation.region_key,
-                func.count(EgressHealthObservation.id),
-                func.count(EgressHealthObservation.id).filter(
-                    EgressHealthObservation.healthy.is_(True)
-                ),
-                func.count(EgressHealthObservation.id).filter(
-                    EgressHealthObservation.retryable.is_(True)
-                ),
-            )
-            .where(
-                EgressHealthObservation.project_id == project_id,
-                EgressHealthObservation.observed_at >= window_start,
-                EgressHealthObservation.observed_at < window_end,
-            )
-            .group_by(
-                EgressHealthObservation.provider_key,
-                EgressHealthObservation.region_key,
-            )
-            .order_by(
-                EgressHealthObservation.provider_key,
-                EgressHealthObservation.region_key,
-            )
-            .limit(MAX_ROUTE_DIMENSIONS + 1)
-        )
-    ).all()
-    if len(route_rows) > MAX_ROUTE_DIMENSIONS:
+    aggregate_rows = await _egress_health_aggregate_rows(
+        session,
+        project_id=project_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    route_totals: dict[tuple[str, str], list[int]] = {}
+    route_outcomes: dict[tuple[str, str], dict[str, int]] = {}
+    for provider_key, region_key, outcome, total, healthy, retryable in aggregate_rows:
+        pair = (provider_key, region_key)
+        counts = route_totals.setdefault(pair, [0, 0, 0])
+        counts[0] += total
+        counts[1] += healthy
+        counts[2] += retryable
+        route_outcomes.setdefault(pair, {})[outcome] = total
+    if len(route_totals) > MAX_ROUTE_DIMENSIONS:
         raise ApiError(
             status_code=503,
             code="EGRESS_HEALTH_ROUTE_CARDINALITY_EXCEEDED",
             message="Route health aggregation is temporarily unavailable.",
         )
 
-    released = [
-        row
-        for row in route_rows
-        if int(row[2]) >= settings.egress_health_min_route_samples
-    ]
-    route_pairs = [(str(row[0]), str(row[1])) for row in released]
-    outcomes: dict[tuple[str, str], dict[str, int]] = {
-        pair: {} for pair in route_pairs
-    }
-    if route_pairs:
-        outcome_rows = (
-            await session.execute(
-                select(
-                    EgressHealthObservation.provider_key,
-                    EgressHealthObservation.region_key,
-                    EgressHealthObservation.outcome,
-                    func.count(EgressHealthObservation.id),
-                )
-                .where(
-                    EgressHealthObservation.project_id == project_id,
-                    EgressHealthObservation.observed_at >= window_start,
-                    EgressHealthObservation.observed_at < window_end,
-                    tuple_(
-                        EgressHealthObservation.provider_key,
-                        EgressHealthObservation.region_key,
-                    ).in_(route_pairs),
-                )
-                .group_by(
-                    EgressHealthObservation.provider_key,
-                    EgressHealthObservation.region_key,
-                    EgressHealthObservation.outcome,
-                )
-                .order_by(
-                    EgressHealthObservation.provider_key,
-                    EgressHealthObservation.region_key,
-                    EgressHealthObservation.outcome,
-                )
-            )
-        ).all()
-        for provider_key, region_key, outcome, count in outcome_rows:
-            outcomes[(str(provider_key), str(region_key))][str(outcome)] = int(
-                count
-            )
-
     routes: list[dict[str, object]] = []
-    for provider_key, region_key, total_value, healthy_value, retryable_value in released:
-        total = int(total_value)
-        healthy = int(healthy_value)
+    for (provider_key, region_key), counts in sorted(route_totals.items()):
+        total, healthy, retryable = counts
+        if total < settings.egress_health_min_route_samples:
+            continue
         routes.append(
             {
                 "provider_key": str(provider_key),
@@ -273,9 +195,11 @@ async def summarize_egress_health_routes(
                 "total": total,
                 "healthy": healthy,
                 "unhealthy": total - healthy,
-                "retryable": int(retryable_value),
+                "retryable": retryable,
                 "healthy_basis_points": healthy * 10_000 // total,
-                "outcomes": outcomes[(str(provider_key), str(region_key))],
+                "outcomes": dict(
+                    sorted(route_outcomes[(provider_key, region_key)].items())
+                ),
             }
         )
     return {
@@ -287,3 +211,72 @@ async def summarize_egress_health_routes(
         "minimum_samples": settings.egress_health_min_route_samples,
         "routes": routes,
     }
+
+
+async def _egress_health_aggregate_rows(
+    session: AsyncSession,
+    *,
+    project_id: UUID,
+    window_start: datetime,
+    window_end: datetime,
+) -> list[tuple[str, str, str, int, int, int]]:
+    rows = (
+        await session.execute(
+            text(
+                """
+                WITH rollup AS (
+                  SELECT provider_key,region_key,outcome,
+                         total_count,healthy_count,retryable_count
+                  FROM control.egress_health_rollup_buckets
+                  WHERE project_id=:project_id
+                    AND bucket_start>=date_trunc(
+                      'hour',CAST(:window_start AS timestamptz)
+                    )+interval '1 hour'
+                    AND bucket_start+interval '1 hour'<=:window_end
+                ), raw AS (
+                  SELECT observation.provider_key,observation.region_key,
+                         observation.outcome,count(*) AS total_count,
+                         count(*) FILTER (WHERE observation.healthy) AS healthy_count,
+                         count(*) FILTER (WHERE observation.retryable) AS retryable_count
+                  FROM control.egress_health_observations observation
+                  WHERE observation.project_id=:project_id
+                    AND observation.observed_at>=:window_start
+                    AND observation.observed_at<:window_end
+                    AND NOT EXISTS (
+                      SELECT 1 FROM control.egress_health_rollup_buckets bucket
+                      WHERE bucket.project_id=observation.project_id
+                        AND bucket.bucket_start=date_trunc('hour',observation.observed_at)
+                        AND bucket.bucket_start>=date_trunc(
+                          'hour',CAST(:window_start AS timestamptz)
+                        )+interval '1 hour'
+                        AND bucket.bucket_start+interval '1 hour'<=:window_end
+                    )
+                  GROUP BY observation.provider_key,observation.region_key,
+                           observation.outcome
+                ), combined AS (
+                  SELECT * FROM rollup UNION ALL SELECT * FROM raw
+                )
+                SELECT provider_key,region_key,outcome,sum(total_count),
+                       sum(healthy_count),sum(retryable_count)
+                FROM combined GROUP BY provider_key,region_key,outcome
+                ORDER BY provider_key,region_key,outcome
+                """
+            ),
+            {
+                "project_id": project_id,
+                "window_start": window_start,
+                "window_end": window_end,
+            },
+        )
+    ).all()
+    return [
+        (
+            str(row.provider_key),
+            str(row.region_key),
+            str(row.outcome),
+            int(row[3]),
+            int(row[4]),
+            int(row[5]),
+        )
+        for row in rows
+    ]

@@ -66,6 +66,12 @@ high-volume samples no longer create a duplicate control-plane audit event.
 Only the replay, Project/time and Project/route/time indexes remain because
 those are the implemented read paths.
 
+Migration `20260902_0034` adds hourly tenant-isolated rollups and the dedicated
+bounded maintenance service without changing either summary response. Closed
+complete hours use rollups; partial or not-yet-rolled hours fall back to raw
+observations. See [the retention contract](EGRESS_HEALTH_RETENTION.md) for
+operational bounds, purge audit evidence and deployment requirements.
+
 Eligible Run requests may supply only
 `egress_policy: {schema_version: rdc.run-egress-policy/v1, policy_id: ...}`.
 The server derives organization and Project from the authenticated Agent

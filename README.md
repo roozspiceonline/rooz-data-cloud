@@ -55,6 +55,12 @@ Machine-readable current workstream and database-head status lives in
 are dated snapshots and must not override that file, the repository migration
 graph, GitHub state or exact-head CI.
 
+Platform efficiency now includes compact typed egress-health observations,
+tenant-isolated hourly rollups and a dedicated bounded retention service. The
+summary APIs combine committed rollups with exact raw edge intervals, while
+immutable audit summaries record each material maintenance sweep. See the
+[egress-health retention contract](docs/proxy-egress/EGRESS_HEALTH_RETENTION.md).
+
 The Events/Webhooks workstream now has immutable tenant-isolated lifecycle
 events, write-only envelope-encrypted destination signing secrets, durable
 claim-fenced delivery intent, and a separate false-by-default trusted delivery

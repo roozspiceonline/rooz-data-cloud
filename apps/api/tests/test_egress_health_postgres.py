@@ -16,7 +16,11 @@ from app.egress_health_protocol import EgressHealthObservationRequest
 from app.models import ExecutionLease, WorkerIdentity
 from app.services.egress_health import (
     record_egress_health_observation,
+    summarize_egress_health,
     summarize_egress_health_routes,
+)
+from app.services.egress_health_maintenance import (
+    run_egress_health_maintenance,
 )
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -220,3 +224,156 @@ async def test_cross_tenant_reference_is_rejected_and_rls_hides_rows() -> None:
         async with engine.begin() as connection:
             await connection.execute(text("DROP OWNED BY rdc_health_rls_test"))
             await connection.execute(text("DROP ROLE rdc_health_rls_test"))
+
+
+async def test_rollups_are_exact_and_retention_is_bounded_and_audited() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL egress-health migration is unavailable")
+    user_id, org_id, project_id, _, lease_id = await _seed()
+    now = datetime.now(UTC)
+    request_id = f"maintenance-{uuid4().hex}"
+    recent_at = now.replace(minute=5, second=0, microsecond=0) - timedelta(hours=2)
+    old_at = now.replace(minute=5, second=0, microsecond=0) - timedelta(hours=100)
+    async with engine.begin() as connection:
+        for observed_at in (recent_at, old_at):
+            await connection.execute(
+                text(
+                    """
+                    INSERT INTO control.egress_health_observations (
+                      organization_id,project_id,run_id,lease_id,worker_id,
+                      client_observation_id,evidence,transport_failure,http_status,
+                      response_bytes,latency_ms,challenge_detected,login_required,
+                      evidence_digest,outcome,healthy,retryable,provider_key,
+                      region_key,observed_at
+                    )
+                    SELECT organization_id,project_id,run_id,id,worker_id,
+                           gen_random_uuid(),NULL,NULL,200,10,1,false,false,
+                           :digest,'SUCCESS',true,false,'static-canary','local',
+                           :observed_at
+                    FROM control.execution_leases,generate_series(1,5)
+                    WHERE id=:lease_id
+                    """
+                ),
+                {
+                    "digest": ("a" if observed_at == recent_at else "b") * 64,
+                    "observed_at": observed_at,
+                    "lease_id": lease_id,
+                },
+            )
+    async with session_factory() as session:
+        result = await run_egress_health_maintenance(
+            session,
+            now=now,
+            owner_id="postgres-test",
+            rollup_batch_size=168,
+            purge_batch_size=3,
+            raw_retention_hours=48,
+            rollup_retention_days=30,
+            request_id=request_id,
+        )
+        await session.commit()
+        assert result.acquired is True
+        assert result.buckets_rolled >= 2
+        assert result.raw_rows_purged == 3
+    async with session_factory() as session:
+        summary = await summarize_egress_health(
+            session, project_id=project_id, window_hours=24
+        )
+        assert summary["total"] == 5
+        assert summary["healthy"] == 5
+        assert summary["outcomes"] == {"SUCCESS": 5}
+    async with engine.begin() as connection:
+        assert await connection.scalar(
+            text(
+                "SELECT count(*) FROM control.egress_health_observations "
+                "WHERE project_id=:project_id AND observed_at=:recent_at"
+            ),
+            {"project_id": project_id, "recent_at": recent_at},
+        ) == 5
+        assert await connection.scalar(
+            text(
+                "SELECT count(*) FROM control.egress_health_observations "
+                "WHERE project_id=:project_id AND observed_at=:old_at"
+            ),
+            {"project_id": project_id, "old_at": old_at},
+        ) == 2
+        assert await connection.scalar(
+            text(
+                "SELECT count(*) FROM security.audit_events "
+                "WHERE action='egress_health.maintenance_completed' "
+                "AND request_id=:request_id"
+            ),
+            {"request_id": request_id},
+        ) == 1
+    with pytest.raises(DBAPIError, match="rollup buckets are immutable"):
+        async with engine.begin() as connection:
+            await connection.execute(
+                text(
+                    "UPDATE control.egress_health_rollup_buckets "
+                    "SET total_count=total_count+1 WHERE project_id=:project_id"
+                ),
+                {"project_id": project_id},
+            )
+    async with engine.begin() as locking_connection:
+        assert await locking_connection.scalar(
+            text(
+                "SELECT pg_try_advisory_xact_lock("
+                "hashtextextended('rdc:egress-health-maintenance:v1',0))"
+            )
+        )
+        async with session_factory() as session:
+            skipped = await run_egress_health_maintenance(
+                session,
+                now=datetime.now(UTC),
+                owner_id="postgres-test-contender",
+                rollup_batch_size=1,
+                purge_batch_size=1,
+                raw_retention_hours=48,
+                rollup_retention_days=30,
+                request_id="maintenance-contender",
+            )
+            assert skipped.acquired is False
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE "
+                "rolname='rdc_health_rollup_rls_test') THEN CREATE ROLE "
+                "rdc_health_rollup_rls_test NOLOGIN; END IF; END $$"
+            )
+        )
+        await connection.execute(
+            text(
+                "GRANT USAGE ON SCHEMA control,security "
+                "TO rdc_health_rollup_rls_test"
+            )
+        )
+        await connection.execute(
+            text(
+                "GRANT SELECT ON control.egress_health_rollup_buckets "
+                "TO rdc_health_rollup_rls_test"
+            )
+        )
+    try:
+        async with engine.begin() as connection:
+            await connection.execute(text("SET LOCAL ROLE rdc_health_rollup_rls_test"))
+            await connection.execute(
+                text("SELECT set_config('rdc.current_user_id',:user_id,true)"),
+                {"user_id": str(user_id)},
+            )
+            await connection.execute(
+                text(
+                    "SELECT set_config('rdc.current_organization_id',:org_id,true)"
+                ),
+                {"org_id": str(org_id)},
+            )
+            assert await connection.scalar(
+                text(
+                    "SELECT count(*) FROM control.egress_health_rollup_buckets "
+                    "WHERE project_id=:project_id"
+                ),
+                {"project_id": project_id},
+            ) == 2
+    finally:
+        async with engine.begin() as connection:
+            await connection.execute(text("DROP OWNED BY rdc_health_rollup_rls_test"))
+            await connection.execute(text("DROP ROLE rdc_health_rollup_rls_test"))

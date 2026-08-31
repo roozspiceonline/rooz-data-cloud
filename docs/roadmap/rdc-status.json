@@ -1,6 +1,6 @@
 {
   "schema_version": "rdc.project-status/v1",
-  "database_head": "20260901_0033",
+  "database_head": "20260902_0034",
   "canonical_roadmap": "docs/roadmap/RDC_V1_ROADMAP.md",
   "workstreams": {
     "identity_tenancy": {"status": "complete"},
@@ -14,8 +14,8 @@
     },
     "platform_efficiency": {
       "status": "increment_complete",
-      "last_delivery_issue": 94,
-      "remaining": ["telemetry_rollups_retention", "advisory_changed_path_ci"]
+      "last_delivery_issue": 111,
+      "remaining": ["advisory_changed_path_ci"]
     },
     "events_webhooks": {
       "status": "complete",

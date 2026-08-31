@@ -258,6 +258,37 @@ services:
       - /tmp:size=16m,mode=1777
     restart: unless-stopped
 
+  egress-health-maintenance:
+    build:
+      context: ./apps/api
+    command: ["python", "-m", "app.egress_health_maintenance_runner"]
+    environment:
+      RDC_ENV: ${RDC_ENV:-development}
+      RDC_DEPLOYMENT_ID: ${RDC_DEPLOYMENT_ID:-}
+      RDC_DATABASE_URL: ${RDC_DATABASE_URL:-postgresql+asyncpg://rdc_app:change-me-for-local-development@postgres:5432/rooz_data_cloud}
+      RDC_EGRESS_HEALTH_MAINTENANCE_ENABLED: ${RDC_EGRESS_HEALTH_MAINTENANCE_ENABLED:-true}
+      RDC_EGRESS_HEALTH_MAINTENANCE_INTERVAL_SECONDS: ${RDC_EGRESS_HEALTH_MAINTENANCE_INTERVAL_SECONDS:-3600}
+      RDC_EGRESS_HEALTH_ROLLUP_BATCH_SIZE: ${RDC_EGRESS_HEALTH_ROLLUP_BATCH_SIZE:-24}
+      RDC_EGRESS_HEALTH_PURGE_BATCH_SIZE: ${RDC_EGRESS_HEALTH_PURGE_BATCH_SIZE:-1000}
+      RDC_EGRESS_HEALTH_RAW_RETENTION_HOURS: ${RDC_EGRESS_HEALTH_RAW_RETENTION_HOURS:-48}
+      RDC_EGRESS_HEALTH_ROLLUP_RETENTION_DAYS: ${RDC_EGRESS_HEALTH_ROLLUP_RETENTION_DAYS:-30}
+      RDC_EGRESS_HEALTH_MAINTENANCE_STALE_AFTER_SECONDS: ${RDC_EGRESS_HEALTH_MAINTENANCE_STALE_AFTER_SECONDS:-10800}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.egress_health_maintenance_runner", "--healthcheck"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    restart: unless-stopped
+
   schedule-dispatcher:
     build:
       context: ./apps/api

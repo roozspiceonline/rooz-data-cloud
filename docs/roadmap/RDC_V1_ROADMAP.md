@@ -30,7 +30,7 @@ test gates pass on the exact merged commit.
 | Workstream | Status | Dependency |
 | --- | --- | --- |
 | Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
-| Platform efficiency | Compact telemetry, canonical status, verifier orchestration and Docker context controls implemented | Egress health persistence |
+| Platform efficiency | Compact telemetry, hourly rollups, bounded retention, canonical status, verifier orchestration and Docker context controls implemented | Egress health persistence |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -110,6 +110,11 @@ typed columns, removes routine telemetry audit duplication and four unused
 indexes while retaining immutable RLS/lease/replay lineage. It also adds a
 machine-readable migration/workstream status validator, one complete verifier
 runner with backward-compatible phase entrypoints, and Docker ignore controls.
+The second increment adds RLS-protected hourly Project/route/outcome rollups,
+exact hybrid summary reads, a singleton bounded maintenance service, 48-hour
+minimum raw retention, bounded rollup retention and immutable aggregate purge
+audit events. Raw rows are purged only after their complete hourly Project
+bucket is committed.
 The eighth increment transactionally schedules credential-rotation canaries
 against exact active revision, secret version and operator target-digest
 lineage. Enqueue is idempotent, claims are race-safe and expiring, completion
@@ -164,8 +169,8 @@ remains false by default.
 1. Proxy/egress: run and review the live adversarial credential canary against
    the isolated runner, including DNS/peer/TLS/redirect/timeout/response-limit
    failure cases; keep adaptive routing disabled until that gate passes.
-2. Platform efficiency: add PostgreSQL time-bucket rollups, bounded raw/rollup
-   retention and advisory changed-path CI while preserving required full gates.
+2. Platform efficiency: add advisory changed-path CI while preserving required
+   full exact-head and merged-main gates.
 3. Observability: structured run/worker logs, diagnostics, metrics and safe
    correlation identifiers.
 4. Usage controls: quotas, rate limits, concurrency and auditable failures.

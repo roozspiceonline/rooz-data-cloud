@@ -906,6 +906,55 @@ class EgressHealthObservation(UUIDPrimaryKeyMixin, Base):
     )
 
 
+class EgressHealthRollupBucket(Base):
+    __tablename__ = "egress_health_rollup_buckets"
+    __table_args__ = {"schema": "control"}
+    organization_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("identity.organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    project_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("control.projects.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    bucket_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    provider_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    region_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    outcome: Mapped[str] = mapped_column(String(32), primary_key=True)
+    total_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    healthy_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    retryable_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class EgressHealthMaintenanceState(Base):
+    __tablename__ = "egress_health_maintenance_state"
+    __table_args__ = {"schema": "control"}
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    owner_id: Mapped[str | None] = mapped_column(String(200))
+    last_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_buckets_rolled: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_raw_rows_purged: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_rollup_rows_purged: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_sweeps: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_failures: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_buckets_rolled: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_raw_rows_purged: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    total_rollup_rows_purged: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    last_error_summary: Mapped[str | None] = mapped_column(String(240))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class EgressCredentialCanaryAttempt(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "egress_credential_canary_attempts"
     __table_args__ = (
