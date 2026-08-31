@@ -51,3 +51,5 @@ def test_webhook_canary_is_false_by_default_and_bounded() -> None:
     assert settings.webhook_delivery_max_response_bytes == 65_536
     with pytest.raises(ValueError):
         Settings(webhook_delivery_total_timeout_seconds=31)
+    with pytest.raises(ValueError):
+        Settings(webhook_delivery_claim_seconds=15, webhook_delivery_total_timeout_seconds=15)

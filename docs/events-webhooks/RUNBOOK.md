@@ -28,3 +28,23 @@ attempt-count, available-at, claim expiry and immutable transition sequence.
 Never manually reuse a claim token. A stale claim may be reclaimed only through
 the fenced service path. `DEAD_LETTERED` rows require an explicit future replay
 workflow; direct row edits and transition deletion are prohibited.
+
+For migration `20260831_0032`, keep
+`RDC_WEBHOOK_DELIVERY_CANARY_ENABLED=false` until the isolated adversarial test
+matrix is reviewed for the deployment network. Validate a private or special
+DNS answer is rejected, a connected peer outside the validated DNS set is
+rejected, TLS hostname validation is active, redirects are never followed, and
+timeout/response/concurrency bounds match the claim lifetime. The runner must
+have only database access and the Project-secret master key.
+
+Diagnose only with delivery ID, status, attempt count, outcome taxonomy, HTTP
+status, claim expiry, and transition sequence. Never log or query the endpoint,
+event body, raw claim token, encrypted material, or plaintext signing secret.
+`CONFIGURATION_ERROR` means the immutable snapshot no longer matches an enabled
+destination and exact secret version; rotate/recreate rather than editing the
+attempt. Stop the runner by restoring the false gate before database repair.
+
+Rollback rehearsal is `alembic downgrade 20260830_0031` followed by `alembic
+upgrade head` on an isolated database. Downgrade converges live claims to
+`RETRY_WAIT` and removes only the canary capabilities and snapshots; never run
+it merely to retry a delivery.

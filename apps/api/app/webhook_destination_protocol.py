@@ -48,7 +48,17 @@ def validate_webhook_destination(
     labels = host.split(".")
     if (
         len(labels) < 2
-        or any(not label or len(label) > 63 for label in labels)
+        or any(
+            not label
+            or len(label) > 63
+            or label[0] == "-"
+            or label[-1] == "-"
+            or not all(
+                character.isascii() and (character.isalnum() or character == "-")
+                for character in label
+            )
+            for label in labels
+        )
         or host == "localhost"
         or host.endswith((".localhost", ".local", ".internal", ".home", ".lan"))
     ):

@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..core.config import get_settings
 from ..core.database import set_project_context
 from ..core.envelope_encryption import encrypt_project_secret
 from ..core.errors import ApiError
@@ -125,7 +126,7 @@ async def create_webhook_destination(
             message="A webhook destination with that name already exists.",
         )
     now, destination_id, secret_id = datetime.now(UTC), uuid4(), uuid4()
-    secret_name = f"WEBHOOK_{destination_id.hex}"
+    secret_name = f"WEBHOOK_{destination_id.hex.upper()}"
     encrypted = encrypt_project_secret(
         payload.signing_secret.get_secret_value(),
         organization_id=project.organization_id,
@@ -141,7 +142,7 @@ async def create_webhook_destination(
             project_id=project.id,
             name=secret_name,
             description="Managed webhook signing secret",
-            environment="webhook",
+            environment=get_settings().env,
             encrypted_value=encrypted.ciphertext,
             value_nonce=encrypted.value_nonce,
             wrapped_data_key=encrypted.wrapped_data_key,

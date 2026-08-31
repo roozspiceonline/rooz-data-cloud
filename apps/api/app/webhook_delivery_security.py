@@ -64,7 +64,7 @@ def canonical_event_body(
 
 def sign_webhook_request(
     *,
-    secret: bytes,
+    secret: bytes | bytearray,
     delivery_id: UUID,
     event_id: UUID,
     event_type: str,

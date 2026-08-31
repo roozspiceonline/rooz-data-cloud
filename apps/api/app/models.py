@@ -1658,11 +1658,19 @@ class WebhookDeliveryAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     project_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.projects.id", ondelete="RESTRICT"), nullable=False)
     destination_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.webhook_destinations.id", ondelete="RESTRICT"), nullable=False)
     event_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("control.events.id", ondelete="RESTRICT"), nullable=False)
+    endpoint_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    signing_secret_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("security.project_secrets.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    signing_secret_version: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False)
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     claim_token: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    claim_token_digest: Mapped[str | None] = mapped_column(String(64))
     claimed_by: Mapped[str | None] = mapped_column(String(128))
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_code: Mapped[str | None] = mapped_column(String(64))

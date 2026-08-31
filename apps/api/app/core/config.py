@@ -116,6 +116,8 @@ class Settings(BaseSettings):
     egress_credential_canary_max_concurrency: int = 4
     egress_credential_canary_max_retries: int = 0
     webhook_delivery_canary_enabled: bool = False
+    webhook_delivery_claim_seconds: int = 60
+    webhook_delivery_poll_interval_seconds: float = 5.0
     webhook_delivery_connect_timeout_seconds: float = 5.0
     webhook_delivery_total_timeout_seconds: float = 15.0
     webhook_delivery_max_response_bytes: int = 65_536
@@ -255,6 +257,12 @@ class Settings(BaseSettings):
             raise ValueError("Webhook delivery response limit is outside the safe bound.")
         if not 1 <= self.webhook_delivery_max_concurrency <= 8:
             raise ValueError("Webhook delivery concurrency is outside the safe bound.")
+        if not 15 <= self.webhook_delivery_claim_seconds <= 120:
+            raise ValueError("Webhook delivery claim duration is outside the safe bound.")
+        if self.webhook_delivery_claim_seconds < self.webhook_delivery_total_timeout_seconds + 5:
+            raise ValueError("Webhook delivery claims must outlive the request timeout.")
+        if not 0.1 <= self.webhook_delivery_poll_interval_seconds <= 60:
+            raise ValueError("Webhook delivery poll interval is outside the safe bound.")
         if self.egress_credential_canary_live_executor_enabled:
             if not self.egress_credential_canary_enabled:
                 raise ValueError("The live credential canary executor requires canary scheduling.")
