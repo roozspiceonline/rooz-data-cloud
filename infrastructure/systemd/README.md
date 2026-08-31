@@ -6,9 +6,10 @@ and a separate Linux sandbox-worker host. Install immutable releases under
 selected release, and install units under `/etc/systemd/system`.
 
 The control-plane host runs `rdc-api.service` and
-`rdc-execution-recovery.service` as the unprivileged `rdc-api` identity. The
-recovery scheduler is continuously restarted and waits for the API recovery
-contract. Both units use control-group termination, empty capability sets,
+`rdc-execution-recovery.service` plus `rdc-egress-health-maintenance.service`
+as the unprivileged `rdc-api` identity. The recovery and telemetry maintenance
+schedulers are continuously restarted and expose database-backed health
+contracts. These units use control-group termination, empty capability sets,
 strict filesystem protection, no-new-privileges, and environment files outside
 the release tree.
 

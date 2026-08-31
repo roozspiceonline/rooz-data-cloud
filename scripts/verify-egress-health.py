@@ -47,6 +47,36 @@ need(
     "ix_egress_health_observations_worker_id",
 )
 need(
+    "apps/api/migrations/versions/20260902_0034_egress_health_rollups_retention.py",
+    "egress_health_rollup_buckets",
+    "run_egress_health_maintenance",
+    "pg_try_advisory_xact_lock",
+    "ENABLE ROW LEVEL SECURITY",
+    "REVOKE ALL ON FUNCTION",
+)
+need(
+    "apps/api/app/services/egress_health_maintenance.py",
+    "run_egress_health_maintenance",
+    "egress_health.maintenance_completed",
+    "read_egress_health_maintenance_health",
+)
+need(
+    "apps/api/app/egress_health_maintenance_runner.py",
+    "run_maintenance_loop",
+    "--healthcheck",
+)
+need(
+    "docker-compose.yml",
+    "egress-health-maintenance:",
+    "app.egress_health_maintenance_runner",
+)
+need(
+    "docs/proxy-egress/EGRESS_HEALTH_RETENTION.md",
+    "48 to 168 hours",
+    "7 to 90 days",
+    "immutable audit",
+)
+need(
     "apps/api/app/core/config.py",
     "egress_route_provider_key",
     "egress_route_region_key",

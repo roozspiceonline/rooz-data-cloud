@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added tenant-isolated hourly egress-health rollups with exact raw-edge
+  fallback, preserving the existing 1–24 hour summary response contracts.
+- Added singleton, restart-safe telemetry maintenance with bounded 48–168 hour
+  raw retention, 7–90 day rollup retention, immutable aggregate purge audit
+  events, database-backed health and hardened Compose/systemd services.
 - Added a false-by-default trusted webhook delivery canary with digest-only
   claim fencing, immutable endpoint/secret snapshots, claim-scoped encrypted
   material loading and completion, canonical timestamped HMAC-SHA256 signing,

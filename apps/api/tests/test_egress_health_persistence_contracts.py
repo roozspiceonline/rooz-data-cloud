@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -9,6 +10,10 @@ from app.core.config import Settings
 from app.core.errors import ApiError
 from app.egress_health_protocol import EgressHealthObservationRequest
 from app.services.egress_health import _validate_reporting_context
+from app.services.egress_health_maintenance import (
+    EgressHealthMaintenanceHealth,
+    egress_health_maintenance_is_fresh,
+)
 
 ROOT = Path(__file__).parents[3]
 
@@ -123,6 +128,12 @@ def test_service_derives_ownership_and_classification_and_summary_is_bounded() -
         ("egress_route_region_key", "https://region.invalid"),
         ("egress_health_min_route_samples", 4),
         ("egress_health_min_route_samples", 1001),
+        ("egress_health_maintenance_interval_seconds", 299),
+        ("egress_health_rollup_batch_size", 169),
+        ("egress_health_purge_batch_size", 10001),
+        ("egress_health_raw_retention_hours", 47),
+        ("egress_health_rollup_retention_days", 6),
+        ("egress_health_maintenance_stale_after_seconds", 7199),
     ],
 )
 def test_route_health_configuration_is_bounded(
@@ -175,3 +186,92 @@ def test_compact_evidence_migration_reduces_write_amplification() -> None:
     assert "transport_failure=payload.evidence.transport_failure" in service
     assert "append_audit_event" not in service
     assert "egress_health.observed" not in service
+
+
+def test_rollup_retention_increment_is_bounded_and_tenant_isolated() -> None:
+    source = (
+        ROOT
+        / "apps/api/migrations/versions/20260902_0034_egress_health_rollups_retention.py"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        'down_revision: str | None = "20260901_0033"',
+        "egress_health_rollup_buckets",
+        "egress_health_maintenance_state",
+        "ENABLE ROW LEVEL SECURITY",
+        "egress_health_rollup_buckets_tenant_select",
+        "run_egress_health_maintenance",
+        "pg_try_advisory_xact_lock",
+        "p_rollup_batch_size NOT BETWEEN 1 AND 168",
+        "p_purge_batch_size NOT BETWEEN 1 AND 10000",
+        "p_raw_retention_hours NOT BETWEEN 48 AND 168",
+        "p_rollup_retention_days NOT BETWEEN 7 AND 90",
+        "egress_health_raw_retention_cutoff",
+        "egress_health_rollup_retention_cutoff",
+        "REVOKE ALL ON FUNCTION",
+        "DROP FUNCTION IF EXISTS control.run_egress_health_maintenance",
+    ):
+        assert marker in source
+
+
+def test_summary_uses_rollups_with_exact_raw_fallback() -> None:
+    service = (ROOT / "apps/api/app/services/egress_health.py").read_text(
+        encoding="utf-8"
+    )
+    for marker in (
+        "_egress_health_aggregate_rows",
+        "control.egress_health_rollup_buckets",
+        "control.egress_health_observations",
+        "AND NOT EXISTS",
+        '"healthy_basis_points"',
+        '"minimum_samples"',
+    ):
+        assert marker in service
+
+
+def test_maintenance_runner_is_dedicated_and_hardened() -> None:
+    runner = (
+        ROOT / "apps/api/app/egress_health_maintenance_runner.py"
+    ).read_text(encoding="utf-8")
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    unit = (
+        ROOT / "infrastructure/systemd/rdc-egress-health-maintenance.service"
+    ).read_text(encoding="utf-8")
+    assert "run_egress_health_maintenance" in runner
+    assert "record_egress_health_maintenance_failure" in runner
+    assert "--healthcheck" in runner
+    assert "egress-health-maintenance:" in compose
+    assert 'app.egress_health_maintenance_runner"' in compose
+    assert "no-new-privileges:true" in compose
+    assert "read_only: true" in compose
+    assert "NoNewPrivileges=true" in unit
+    assert "ProtectSystem=strict" in unit
+    assert "CapabilityBoundingSet=" in unit
+
+
+def test_maintenance_health_requires_recent_success() -> None:
+    now = datetime.now(UTC)
+    values = {
+        "status": "HEALTHY",
+        "last_started_at": now,
+        "last_completed_at": now,
+        "last_heartbeat_at": now,
+        "last_buckets_rolled": 0,
+        "last_raw_rows_purged": 0,
+        "last_rollup_rows_purged": 0,
+        "total_sweeps": 1,
+        "total_failures": 0,
+        "total_buckets_rolled": 0,
+        "total_raw_rows_purged": 0,
+        "total_rollup_rows_purged": 0,
+        "last_error_code": None,
+    }
+    health = EgressHealthMaintenanceHealth(**values)
+    assert egress_health_maintenance_is_fresh(
+        health, now=now, stale_after_seconds=60
+    )
+    values["last_completed_at"] = now - timedelta(seconds=61)
+    assert not egress_health_maintenance_is_fresh(
+        EgressHealthMaintenanceHealth(**values),
+        now=now,
+        stale_after_seconds=60,
+    )

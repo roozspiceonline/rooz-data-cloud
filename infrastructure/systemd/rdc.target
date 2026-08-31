@@ -1,6 +1,6 @@
 [Unit]
 Description=Rooz Data Cloud production services
-Wants=rdc-api.service rdc-execution-recovery.service
+Wants=rdc-api.service rdc-execution-recovery.service rdc-egress-health-maintenance.service
 After=network-online.target
 
 [Install]
