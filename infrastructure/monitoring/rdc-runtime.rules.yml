@@ -1,0 +1,24 @@
+groups:
+  - name: rdc-runtime
+    rules:
+      - alert: RDCRuntimeMetricsUnavailable
+        expr: absent(rdc_runtime_metrics_healthy) or rdc_runtime_metrics_healthy != 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: RDC durable runtime metrics are unavailable
+      - alert: RDCExecutionDispatchBacklogWithoutWorkers
+        expr: (rdc_runtime_build_dispatch_ready + rdc_runtime_run_commands_ready) > 0 and rdc_runtime_workers_active < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: RDC execution work is ready but no fresh worker is available
+      - alert: RDCWebhookDeliveryBacklog
+        expr: rdc_runtime_webhook_deliveries_ready > 1000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: RDC webhook delivery backlog exceeds the operator threshold

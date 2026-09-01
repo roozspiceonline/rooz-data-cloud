@@ -14,6 +14,7 @@ from ...services.execution_recovery_sweeper import (
     read_execution_admission_health,
     read_execution_recovery_health,
 )
+from ...services.runtime_metrics import RuntimeMetrics, read_runtime_metrics
 
 router = APIRouter(tags=["health"])
 settings = get_settings()
@@ -53,6 +54,32 @@ def recovery_metrics_payload(
         (
             "rdc_execution_recovery_pending_workers",
             admission.recovery_pending_workers,
+        ),
+    )
+    return "".join(f"{name} {value}\n" for name, value in values)
+
+
+def runtime_metrics_payload(metrics: RuntimeMetrics) -> str:
+    values = (
+        ("rdc_runtime_metrics_healthy", 1),
+        ("rdc_runtime_execution_active_leases", metrics.active_execution_leases),
+        ("rdc_runtime_workers_active", metrics.active_workers),
+        ("rdc_runtime_build_dispatch_ready", metrics.build_dispatch_ready),
+        ("rdc_runtime_run_commands_ready", metrics.run_commands_ready),
+        ("rdc_runtime_schedules_due", metrics.schedules_due),
+        ("rdc_runtime_request_queue_ready", metrics.request_queue_ready),
+        (
+            "rdc_runtime_credential_canaries_ready",
+            metrics.credential_canaries_ready,
+        ),
+        (
+            "rdc_runtime_credential_canaries_claimed",
+            metrics.credential_canaries_claimed,
+        ),
+        ("rdc_runtime_webhook_deliveries_ready", metrics.webhook_deliveries_ready),
+        (
+            "rdc_runtime_webhook_deliveries_claimed",
+            metrics.webhook_deliveries_claimed,
         ),
     )
     return "".join(f"{name} {value}\n" for name, value in values)
@@ -218,3 +245,23 @@ async def readiness() -> JSONResponse:
         "status": "ready" if ready else "degraded",
     }
     return JSONResponse(status_code=200 if ready else 503, content=body)
+
+
+@router.get("/metrics/runtime", include_in_schema=False)
+async def runtime_metrics() -> PlainTextResponse:
+    try:
+        async with session_factory() as session:
+            metrics = await read_runtime_metrics(
+                session,
+                worker_fresh_after_seconds=settings.worker_lost_after_seconds,
+            )
+        return PlainTextResponse(
+            runtime_metrics_payload(metrics),
+            media_type=PROMETHEUS_CONTENT_TYPE,
+        )
+    except Exception:
+        return PlainTextResponse(
+            "rdc_runtime_metrics_healthy 0\n",
+            status_code=503,
+            media_type=PROMETHEUS_CONTENT_TYPE,
+        )

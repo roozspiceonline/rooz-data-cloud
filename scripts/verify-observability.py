@@ -22,6 +22,10 @@ worker = (ROOT / "workers/sandbox-runtime/worker.py").read_text()
 worker_logging = (ROOT / "workers/sandbox-runtime/worker_observability.py").read_text()
 sandbox_client = (ROOT / "workers/sandbox-runtime/rdc_worker_client.py").read_text()
 execution_client = (ROOT / "workers/execution-plane/rdc_worker_client.py").read_text()
+health_routes = (ROOT / "apps/api/app/api/routes/health.py").read_text()
+runtime_metrics = (ROOT / "apps/api/app/services/runtime_metrics.py").read_text()
+runtime_tests = (ROOT / "apps/api/tests/test_runtime_metrics_contracts.py").read_text()
+runtime_alerts = (ROOT / "infrastructure/monitoring/rdc-runtime.rules.yml").read_text()
 
 for marker in [
     'LOG_SCHEMA_VERSION: Final = "rdc.log/v1"',
@@ -101,5 +105,39 @@ need(
     and "authorization=egress_authorization" in run_source,
     "Run path must resolve and consume credential-bound egress authorization",
 )
+
+for marker in [
+    '@router.get("/metrics/runtime", include_in_schema=False)',
+    '"rdc_runtime_metrics_healthy 0\\n"',
+    "read_runtime_metrics(",
+]:
+    need(marker in health_routes, f"runtime metrics route missing {marker}")
+for marker in [
+    "class RuntimeMetrics",
+    "await session.execute(",
+    "control.execution_leases",
+    "control.schedules",
+    "control.request_queue_requests",
+    "control.egress_credential_canary_attempts",
+    "control.webhook_delivery_attempts",
+]:
+    need(marker in runtime_metrics, f"runtime metrics snapshot missing {marker}")
+need(
+    runtime_metrics.count("await session.execute(") == 1,
+    "runtime metrics must use one database snapshot query",
+)
+for marker in [
+    "test_runtime_metrics_are_fixed_scalar_global_aggregates",
+    "test_runtime_metrics_query_is_one_fixed_snapshot_without_dimensions",
+    "test_runtime_metrics_endpoint_is_hidden_and_fails_closed",
+]:
+    need(marker in runtime_tests, f"runtime metrics test missing {marker}")
+for marker in [
+    "RDCRuntimeMetricsUnavailable",
+    "absent(rdc_runtime_metrics_healthy)",
+    "RDCExecutionDispatchBacklogWithoutWorkers",
+    "RDCWebhookDeliveryBacklog",
+]:
+    need(marker in runtime_alerts, f"runtime metrics alert missing {marker}")
 
 print("Structured observability foundation verification passed")
