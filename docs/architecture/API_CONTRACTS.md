@@ -1019,6 +1019,15 @@ MUST NOT include organization, Project, worker, lease, payload, token, secret,
 or error-summary labels. A stale or unavailable enabled scheduler returns 503
 and `rdc_execution_recovery_healthy 0`.
 
+`GET /metrics/runtime` is excluded from public OpenAPI and returns exactly
+eleven unlabeled global scalar gauges from one durable PostgreSQL snapshot.
+The snapshot covers scrape health, fresh workers, active execution leases and
+ready/in-flight work for execution dispatch, schedules, Request Queues,
+credential canaries and webhook deliveries. It MUST NOT expose organization,
+Project, worker, lease, Run, destination, policy, URL, payload, claim, token,
+secret or error dimensions. Query failure returns 503 and only
+`rdc_runtime_metrics_healthy 0`.
+
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 
 

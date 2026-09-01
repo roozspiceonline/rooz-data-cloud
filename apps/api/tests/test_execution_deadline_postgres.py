@@ -35,6 +35,7 @@ from app.services.execution_recovery_sweeper import (
     run_execution_recovery_sweep,
 )
 from app.services.runs import cancel_run
+from app.services.runtime_metrics import read_runtime_metrics
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
 
@@ -157,6 +158,33 @@ async def test_postgres_execution_deadline_is_immutable() -> None:
                 text("UPDATE control.execution_leases SET deadline_at=deadline_at+INTERVAL '1 minute' WHERE id=:lease"),
                 {"lease": lease_id},
             )
+
+
+async def test_postgres_runtime_metrics_read_one_cross_process_snapshot() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    *_, worker_id = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    async with engine.begin() as connection:
+        await connection.execute(
+            text(
+                "UPDATE security.worker_identities "
+                "SET last_seen_at=:now WHERE id=:worker_id"
+            ),
+            {"now": now, "worker_id": worker_id},
+        )
+    async with session_factory() as session:
+        metrics = await read_runtime_metrics(
+            session,
+            worker_fresh_after_seconds=45,
+        )
+    assert metrics.active_execution_leases >= 1
+    assert metrics.active_workers >= 1
+    assert all(value >= 0 for value in metrics.__dict__.values())
 
 
 @pytest.mark.parametrize("work_kind", ["BUILD", "RUN_START"])

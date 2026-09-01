@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a hidden fixed-series Prometheus snapshot of durable runtime queue and
+  in-flight work across scheduler, execution, scraping and trusted runners.
 - Added lease-derived sandbox-worker/API request correlation and bounded
   structured worker lifecycle events without copying Agent logs or credentials.
 - Corrected credential-bound egress resolution so encrypted authorization is

@@ -31,7 +31,7 @@ test gates pass on the exact merged commit.
 | --- | --- | --- |
 | Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
 | Platform efficiency | Complete: compact telemetry, rollups, retention, canonical status, verifier orchestration, Docker context controls and advisory changed-path CI | Egress health persistence |
-| Observability | Structured secret-safe API, trusted-runner and sandbox-worker correlation logs implemented; metrics and tenant diagnostics remain | Execution/runtime foundations |
+| Observability | Structured secret-safe API/trusted-runner/worker logs and bounded cross-process runtime metrics implemented; tenant diagnostics remain | Execution/runtime foundations |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -127,6 +127,9 @@ not persist tenant logs or copy Agent output into control-plane logs.
 The second increment adds lease-derived correlation across both internal worker
 clients and bounded sandbox-worker claim/completion lifecycle events while
 keeping Agent output exclusively in tenant-authorized `LOG_BUNDLE` artifacts.
+The third increment adds a fixed unlabeled Prometheus snapshot of durable work
+across the API, scheduler, execution plane, Request Queue, credential canary and
+webhook runner. It intentionally exports no tenant or resource dimensions.
 The eighth increment transactionally schedules credential-rotation canaries
 against exact active revision, secret version and operator target-digest
 lineage. Enqueue is idempotent, claims are race-safe and expiring, completion

@@ -34,5 +34,12 @@ use random `worker_<uuidhex>` identifiers. `worker.started`,
 and exception type. Lease tokens, claims, inputs, exception text and Agent
 stdout/stderr are never included.
 
-Remaining observability work is intentionally separate: bounded multi-process
-runtime metrics and tenant-authorized diagnostics over existing resources.
+The third increment exposes hidden `/metrics/runtime` Prometheus gauges from
+one PostgreSQL snapshot shared by the API, scheduler, execution plane, Request
+Queue, credential canary and webhook runner. The eleven fixed scalar series
+have no labels and reveal only global ready/in-flight counts plus scrape health.
+They do not contain tenant, resource, destination, target, payload, claim,
+credential or error dimensions.
+
+Remaining observability work is intentionally separate: tenant-authorized
+diagnostics over existing resources.
