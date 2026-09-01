@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added lease-derived sandbox-worker/API request correlation and bounded
+  structured worker lifecycle events without copying Agent logs or credentials.
+- Corrected credential-bound egress resolution so encrypted authorization is
+  loaded and consumed only by the trusted Run path, never the Build path.
 - Added secret-safe `rdc.log/v1` JSON events, validated request correlation and
   structured API/trusted-runner completion and failure telemetry.
 - Added conservative changed-path classification and focused advisory CI while

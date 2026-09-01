@@ -24,9 +24,8 @@
     },
     "observability": {
       "status": "active",
-      "last_delivery_issue": 115,
+      "last_delivery_issue": 117,
       "remaining": [
-        "worker_correlation",
         "bounded_runtime_metrics",
         "tenant_diagnostics"
       ]

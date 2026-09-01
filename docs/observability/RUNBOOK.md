@@ -6,6 +6,9 @@ object. Index `timestamp`, `severity`, `service`, `environment`, `event`,
 quarantine lines that are not valid JSON or do not match the schema version.
 
 Use `request_id` to correlate an API response with `http.request.completed`.
+For worker operations, join `lease_<uuidhex>` across sandbox-worker and API
+events; do not attempt to decode or attach the lease token. Non-lease worker
+calls intentionally receive unrelated random correlation IDs.
 Use event names and aggregate fields for dashboards and alerts. Do not enrich
 logs with request URLs, query strings, headers, bodies, target hosts, payloads,
 credentials or secret values at the collector.

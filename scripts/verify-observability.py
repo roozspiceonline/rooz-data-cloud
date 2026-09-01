@@ -18,6 +18,10 @@ runner_paths = [
     "apps/api/app/egress_credential_canary_runner.py",
     "apps/api/app/webhook_delivery_runner.py",
 ]
+worker = (ROOT / "workers/sandbox-runtime/worker.py").read_text()
+worker_logging = (ROOT / "workers/sandbox-runtime/worker_observability.py").read_text()
+sandbox_client = (ROOT / "workers/sandbox-runtime/rdc_worker_client.py").read_text()
+execution_client = (ROOT / "workers/execution-plane/rdc_worker_client.py").read_text()
 
 for marker in [
     'LOG_SCHEMA_VERSION: Final = "rdc.log/v1"',
@@ -60,5 +64,42 @@ for marker in [
     "test_http_completion_uses_route_template_and_omits_query_string",
 ]:
     need(marker in tests, f"observability adversarial test missing {marker}")
+
+for marker in [
+    'LOG_SCHEMA_VERSION = "rdc.log/v1"',
+    '"worker.started"',
+    '"worker.lease.claimed"',
+    '"worker.lease.completed"',
+    '"worker.failed"',
+    '"worker.stopped"',
+    "lease_id",
+    "run_id",
+    "worker_id",
+]:
+    need(
+        marker in worker_logging or marker in worker,
+        f"worker observability contract missing {marker}",
+    )
+need(
+    "tenant-authorized `LOG_BUNDLE`" in (ROOT / "docs/observability/README.md").read_text(),
+    "Agent log boundary documentation is missing",
+)
+for source in (sandbox_client, execution_client):
+    need(
+        '"X-Request-ID": request_correlation_id(path)' in source,
+        "worker client correlation header is missing",
+    )
+    need('return f"lease_{lease_id.hex}"' in source, "lease correlation is missing")
+build_source = worker[worker.index("def _build(") : worker.index("def _run(")]
+run_source = worker[worker.index("def _run(") : worker.index("def main(")]
+need(
+    "request_egress_credential_envelope" not in build_source,
+    "Build path must not resolve Run egress credentials",
+)
+need(
+    "request_egress_credential_envelope" in run_source
+    and "authorization=egress_authorization" in run_source,
+    "Run path must resolve and consume credential-bound egress authorization",
+)
 
 print("Structured observability foundation verification passed")

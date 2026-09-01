@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from uuid import UUID, uuid4
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric.x25519 import (
@@ -40,6 +42,21 @@ class WorkerProtocolError(RuntimeError):
     """An internal worker-protocol request failed."""
 
 
+_LEASE_PATH = re.compile(r"^/internal/v1/leases/([^/]+)(?:/|$)")
+
+
+def request_correlation_id(path: str) -> str:
+    match = _LEASE_PATH.match(path)
+    if match is not None:
+        try:
+            lease_id = UUID(match.group(1))
+        except ValueError:
+            pass
+        else:
+            return f"lease_{lease_id.hex}"
+    return f"worker_{uuid4().hex}"
+
+
 class RdcWorkerClient:
     def __init__(self, *, base_url: str, worker_token: str) -> None:
         self._base_url = base_url.rstrip("/")
@@ -58,6 +75,7 @@ class RdcWorkerClient:
             "Accept": "application/json",
             "Authorization": "Bearer " + self._worker_token,
             "User-Agent": "rdc-reference-worker/0.1",
+            "X-Request-ID": request_correlation_id(path),
         }
         if data is not None:
             headers["Content-Type"] = "application/json"
