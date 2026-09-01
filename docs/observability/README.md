@@ -41,5 +41,14 @@ have no labels and reveal only global ready/in-flight counts plus scrape health.
 They do not contain tenant, resource, destination, target, payload, claim,
 credential or error dimensions.
 
-Remaining observability work is intentionally separate: tenant-authorized
-diagnostics over existing resources.
+The fourth increment adds `GET /api/v1/projects/{project_id}/diagnostics` behind
+the dedicated `diagnostic.read` permission. One timeout-bounded PostgreSQL
+snapshot returns fixed project-scoped ready, claimed and terminal-failure counts
+over existing execution, Scheduler, Request Queue, credential-canary and webhook
+resources. It exposes no resource identifiers, URLs, payloads, claims, tokens,
+credentials, secrets, HTTP status or error details and creates no diagnostics
+datastore.
+
+These four increments complete the bounded observability workstream. Resource
+history and tenant-owned `LOG_BUNDLE` artifacts remain the authoritative detail
+surfaces; global service logs remain operator-only.

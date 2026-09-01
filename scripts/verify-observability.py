@@ -26,6 +26,19 @@ health_routes = (ROOT / "apps/api/app/api/routes/health.py").read_text()
 runtime_metrics = (ROOT / "apps/api/app/services/runtime_metrics.py").read_text()
 runtime_tests = (ROOT / "apps/api/tests/test_runtime_metrics_contracts.py").read_text()
 runtime_alerts = (ROOT / "infrastructure/monitoring/rdc-runtime.rules.yml").read_text()
+diagnostics_routes = (ROOT / "apps/api/app/api/routes/diagnostics.py").read_text()
+project_diagnostics = (
+    ROOT / "apps/api/app/services/project_diagnostics.py"
+).read_text()
+diagnostics_tests = (
+    ROOT / "apps/api/tests/test_project_diagnostics_contracts.py"
+).read_text()
+diagnostics_postgres_tests = (
+    ROOT / "apps/api/tests/test_execution_deadline_postgres.py"
+).read_text()
+permissions = (ROOT / "apps/api/app/core/permissions.py").read_text()
+api_client = (ROOT / "packages/api-client/src/index.ts").read_text()
+shared_types = (ROOT / "packages/shared-types/src/index.ts").read_text()
 
 for marker in [
     'LOG_SCHEMA_VERSION: Final = "rdc.log/v1"',
@@ -139,5 +152,62 @@ for marker in [
     "RDCWebhookDeliveryBacklog",
 ]:
     need(marker in runtime_alerts, f"runtime metrics alert missing {marker}")
+
+for marker in [
+    '@router.get("/projects/{project_id}/diagnostics")',
+    'require_project_permission("diagnostic.read")',
+    "project_diagnostics_payload",
+]:
+    need(marker in diagnostics_routes, f"project diagnostics route missing {marker}")
+for marker in [
+    "class ProjectDiagnostics",
+    "PROJECT_DIAGNOSTICS_TIMEOUT_SECONDS = 2.0",
+    "asyncio.timeout(PROJECT_DIAGNOSTICS_TIMEOUT_SECONDS)",
+    "await set_project_context(session, project_id)",
+    "CURRENT_TIMESTAMP AS observed_at",
+]:
+    need(marker in project_diagnostics, f"project diagnostics missing {marker}")
+need(
+    project_diagnostics.count("await session.execute(") == 1,
+    "project diagnostics must use one fixed snapshot statement",
+)
+need(
+    project_diagnostics.count("= :project_id") == 13,
+    "every project diagnostics aggregate must have an explicit Project predicate",
+)
+for prohibited in [
+    "endpoint_url",
+    "request_url",
+    "payload_snapshot",
+    "claim_token_digest",
+    "failure_summary",
+    "last_error_code",
+    "last_http_status",
+]:
+    need(
+        prohibited not in project_diagnostics,
+        f"project diagnostics reads prohibited field {prohibited}",
+    )
+for marker in [
+    "test_project_diagnostics_payload_is_fixed_and_identifier_free",
+    "test_project_diagnostics_query_is_fixed_scoped_and_timeout_bounded",
+    "test_project_diagnostics_has_dedicated_read_scope",
+    "test_postgres_project_diagnostics_are_tenant_bounded",
+]:
+    need(
+        marker in diagnostics_tests
+        or marker in diagnostics_postgres_tests,
+        f"project diagnostics test missing {marker}",
+    )
+need('"diagnostic.read"' in permissions, "diagnostic.read permission is missing")
+need(
+    "async function projectDiagnostics(" in api_client
+    and "ProjectDiagnosticsSummary" in shared_types,
+    "typed project diagnostics client contract is missing",
+)
+need(
+    "v1_router.include_router(diagnostics_router)" in main,
+    "project diagnostics router is not registered",
+)
 
 print("Structured observability foundation verification passed")

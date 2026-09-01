@@ -60,6 +60,33 @@ export interface ProjectSummary {
   version: number;
 }
 
+export interface ProjectDiagnosticsSummary {
+  observed_at: string;
+  execution: {
+    active_leases: number;
+    build_dispatch_ready: number;
+    run_commands_ready: number;
+  };
+  schedules: {
+    due: number;
+  };
+  request_queues: {
+    ready: number;
+    claimed: number;
+    failed: number;
+  };
+  credential_canaries: {
+    ready: number;
+    claimed: number;
+    failed: number;
+  };
+  webhook_deliveries: {
+    ready: number;
+    claimed: number;
+    dead_lettered: number;
+  };
+}
+
 export interface SessionData {
   user: {
     id: string;

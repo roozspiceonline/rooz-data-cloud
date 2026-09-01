@@ -1028,6 +1028,18 @@ Project, worker, lease, Run, destination, policy, URL, payload, claim, token,
 secret or error dimensions. Query failure returns 503 and only
 `rdc_runtime_metrics_healthy 0`.
 
+`GET /api/v1/projects/{project_id}/diagnostics` requires the dedicated
+`diagnostic.read` permission and resolves the Project and tenant server-side
+before reading under PostgreSQL RLS. It returns a fixed, current database
+timestamp plus project-scoped counts for active execution leases; ready build
+and Run dispatch; due schedules; ready/claimed/failed Request Queue and
+credential-canary work; and ready/claimed/dead-lettered webhook delivery work.
+The complete snapshot is one fixed-cardinality statement bounded by a two-second
+timeout. It MUST NOT return tenant, resource, worker or attempt identifiers;
+URLs; payloads; claims or tokens; credentials or secrets; HTTP status; or error
+codes/text. It creates no diagnostics storage and is not an audit or billing
+ledger.
+
 Phase 1F claim payloads MUST contain `execution_enabled: false`. This contract does not authorize an implementation to execute Agent code, invoke container runtimes, or expose project-secret plaintext.
 
 

@@ -27,6 +27,12 @@ test("client exposes execution-plane metadata collections", async () => {
   assert.match(source, /execution-artifacts/);
 });
 
+test("client exposes tenant-authorized project diagnostics", async () => {
+  const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
+  assert.match(source, /projectDiagnostics/);
+  assert.match(source, /\/projects\/\$\{encodeURIComponent\(projectId\)\}\/diagnostics/);
+});
+
 test("client exposes secure source and storage delivery operations", async () => {
   const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
   assert.match(source, /createSourceUpload/);

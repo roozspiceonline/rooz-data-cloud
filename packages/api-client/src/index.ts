@@ -18,6 +18,7 @@ import type {
   ExecutionLeaseSummary,
   RunSummary,
   OrganizationSummary,
+  ProjectDiagnosticsSummary,
   ProjectSummary,
   SessionData,
   UpdateAgentInput,
@@ -146,6 +147,15 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     const response = await request<
       ApiSuccess<ReadonlyArray<ProjectSummary>>
     >(`/organizations/${encodeURIComponent(organizationId)}/projects`);
+    return response.data;
+  }
+
+  async function projectDiagnostics(
+    projectId: string,
+  ): Promise<ProjectDiagnosticsSummary> {
+    const response = await request<ApiSuccess<ProjectDiagnosticsSummary>>(
+      `/projects/${encodeURIComponent(projectId)}/diagnostics`,
+    );
     return response.data;
   }
 
@@ -492,6 +502,7 @@ export function createRdcApiClient(options: RdcApiClientOptions) {
     logout,
     organizations,
     projects,
+    projectDiagnostics,
     projectExecutionArtifacts,
     projectExecutionLeases,
     projectRuns,

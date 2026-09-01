@@ -12,6 +12,7 @@ from starlette.responses import Response
 from .api.routes.agents import router as agents_router
 from .api.routes.builds_secrets import router as builds_secrets_router
 from .api.routes.datasets import router as datasets_router
+from .api.routes.diagnostics import router as diagnostics_router
 from .api.routes.egress_policies import router as egress_policies_router
 from .api.routes.events import router as events_router
 from .api.routes.execution import router as execution_router
@@ -172,6 +173,7 @@ v1_router.include_router(identity_router)
 v1_router.include_router(agents_router)
 v1_router.include_router(builds_secrets_router)
 v1_router.include_router(datasets_router)
+v1_router.include_router(diagnostics_router)
 v1_router.include_router(egress_policies_router)
 v1_router.include_router(events_router)
 v1_router.include_router(webhook_destinations_router)
