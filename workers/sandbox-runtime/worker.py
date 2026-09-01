@@ -60,6 +60,7 @@ from rdc_worker_client import (
     decrypt_egress_credential_envelope,
     decrypt_secret_envelope,
     generate_worker_key_pair,
+    request_correlation_id,
 )
 from run_executor import cancel_run, load_image, run_agent
 from web_fetch_contract import (
@@ -67,6 +68,7 @@ from web_fetch_contract import (
     phase1j_broker_adapter,
     phase1j_broker_result_adapter,
 )
+from worker_observability import log_worker_event
 from worker_recovery import (
     LeaseWatchdog,
     force_startup_cleanup,
@@ -323,7 +325,6 @@ def _require_live_browser_navigation_receipt(
         raise SandboxPolicyError(
             "Phase 1M browser navigation receipt does not match the Run intent."
         )
-    return None
 
 
 def _require_canary_activation(
@@ -1036,7 +1037,7 @@ def _build(
     claim: dict[str, Any],
     *,
     worker_name: str,
-) -> None:
+) -> str:
     lease = _data(claim)
     payload = dict(lease["payload"])
     lease_id = str(lease["id"])
@@ -1054,8 +1055,117 @@ def _build(
                 "error_summary": "The control plane did not authorize sandbox execution.",
             },
         )
-        return
+        return "failed"
     workspace = private_temp_dir(config.workspace_root, "build-")
+    try:
+        egress_policy = _effective_worker_egress_policy(
+            payload,
+            _worker_egress_policy(config),
+        )
+        browser_policy = _worker_browser_policy(config)
+        activation = _require_canary_activation(
+            payload,
+            worker_name=worker_name,
+            egress_policy=egress_policy,
+            browser_policy=browser_policy,
+            browser_live_navigation_enabled=(config.browser_live_navigation_enabled),
+            dataset_writes_enabled=config.dataset_writes_enabled,
+            key_value_store_enabled=config.key_value_store_enabled,
+            request_queue_enabled=config.request_queue_enabled,
+            request_queue_http_enabled=config.request_queue_http_enabled,
+            request_queue_browser_enabled=(config.request_queue_browser_enabled),
+            request_queue_dataset_enabled=(config.request_queue_dataset_enabled),
+            request_queue_key_value_store_enabled=(
+                config.request_queue_key_value_store_enabled
+            ),
+        )
+        source_zip = workspace / "source.zip"
+        source_dir = workspace / "source"
+        source_dir.mkdir(mode=0o700)
+        grant = _data(client.source_download(lease_id, token))
+        source_meta = dict(payload["source"])
+        download_file(
+            str(grant["url"]), source_zip, max_bytes=int(source_meta["size_bytes"])
+        )
+        digest, size = sha256_file(source_zip)
+        if digest != source_meta["sha256_digest"] or size != int(
+            source_meta["size_bytes"]
+        ):
+            raise SandboxPolicyError(
+                "Downloaded source digest or size does not match the claim."
+            )
+        _extract_zip(source_zip, source_dir)
+        client.status(lease_id, token, status="RUNNING")
+        artifacts = build_agent(
+            config=config,
+            source_dir=source_dir,
+            workspace=workspace,
+            build_id=str(payload["build_id"]),
+            agent_version_id=str(payload["agent_version_id"]),
+            source_sha256=str(source_meta["sha256_digest"]),
+            activation=activation,
+            timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
+        )
+        registrations = _upload_artifacts(
+            client,
+            lease_id=lease_id,
+            lease_token=token,
+            artifacts=artifacts,
+        )
+        client.complete(
+            lease_id,
+            token,
+            {"outcome": "SUCCEEDED", "retryable": False, "artifacts": registrations},
+        )
+        return "succeeded"
+    except Exception as exc:
+        client.complete(
+            lease_id,
+            token,
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_BUILD_FAILED",
+                "error_summary": str(exc)[:2000],
+            },
+        )
+        return "failed"
+    finally:
+        cleanup_tree(workspace)
+
+
+def _run(
+    client: RdcWorkerClient,
+    config: SandboxWorkerConfig,
+    claim: dict[str, Any],
+    *,
+    worker_name: str,
+) -> str:
+    lease = _data(claim)
+    payload = dict(lease["payload"])
+    lease_id = str(lease["id"])
+    token = str(lease["lease_token"])
+    if payload.get("work_kind") == "RUN_CANCEL":
+        cancel_run(config=config, run_id=str(payload["run_id"]))
+        client.complete(lease_id, token, {"outcome": "ABORTED", "retryable": False})
+        return "aborted"
+    if payload.get("execution_enabled") is not True or not isinstance(
+        payload.get("sandbox"), dict
+    ):
+        client.complete(
+            lease_id,
+            token,
+            {
+                "outcome": "FAILED",
+                "retryable": False,
+                "error_code": "SANDBOX_POLICY_DENIED",
+                "error_summary": (
+                    "The control plane did not authorize sandbox execution."
+                ),
+            },
+        )
+        return "failed"
+    workspace = private_temp_dir(config.workspace_root, "run-")
     try:
         egress_policy = _effective_worker_egress_policy(
             payload,
@@ -1121,113 +1231,6 @@ def _build(
                 run_id=str(payload["run_id"]),
                 policy_binding_digest=binding_digest,
             )
-        source_zip = workspace / "source.zip"
-        source_dir = workspace / "source"
-        source_dir.mkdir(mode=0o700)
-        grant = _data(client.source_download(lease_id, token))
-        source_meta = dict(payload["source"])
-        download_file(
-            str(grant["url"]), source_zip, max_bytes=int(source_meta["size_bytes"])
-        )
-        digest, size = sha256_file(source_zip)
-        if digest != source_meta["sha256_digest"] or size != int(
-            source_meta["size_bytes"]
-        ):
-            raise SandboxPolicyError(
-                "Downloaded source digest or size does not match the claim."
-            )
-        _extract_zip(source_zip, source_dir)
-        client.status(lease_id, token, status="RUNNING")
-        artifacts = build_agent(
-            config=config,
-            source_dir=source_dir,
-            workspace=workspace,
-            build_id=str(payload["build_id"]),
-            agent_version_id=str(payload["agent_version_id"]),
-            source_sha256=str(source_meta["sha256_digest"]),
-            activation=activation,
-            timeout_seconds=int(payload["sandbox"]["timeout_seconds"]),
-        )
-        registrations = _upload_artifacts(
-            client,
-            lease_id=lease_id,
-            lease_token=token,
-            artifacts=artifacts,
-        )
-        client.complete(
-            lease_id,
-            token,
-            {"outcome": "SUCCEEDED", "retryable": False, "artifacts": registrations},
-        )
-    except Exception as exc:
-        client.complete(
-            lease_id,
-            token,
-            {
-                "outcome": "FAILED",
-                "retryable": False,
-                "error_code": "SANDBOX_BUILD_FAILED",
-                "error_summary": str(exc)[:2000],
-            },
-        )
-    finally:
-        cleanup_tree(workspace)
-
-
-def _run(
-    client: RdcWorkerClient,
-    config: SandboxWorkerConfig,
-    claim: dict[str, Any],
-    *,
-    worker_name: str,
-) -> None:
-    lease = _data(claim)
-    payload = dict(lease["payload"])
-    lease_id = str(lease["id"])
-    token = str(lease["lease_token"])
-    if payload.get("work_kind") == "RUN_CANCEL":
-        cancel_run(config=config, run_id=str(payload["run_id"]))
-        client.complete(lease_id, token, {"outcome": "ABORTED", "retryable": False})
-        return
-    if payload.get("execution_enabled") is not True or not isinstance(
-        payload.get("sandbox"), dict
-    ):
-        client.complete(
-            lease_id,
-            token,
-            {
-                "outcome": "FAILED",
-                "retryable": False,
-                "error_code": "SANDBOX_POLICY_DENIED",
-                "error_summary": (
-                    "The control plane did not authorize sandbox execution."
-                ),
-            },
-        )
-        return
-    workspace = private_temp_dir(config.workspace_root, "run-")
-    try:
-        egress_policy = _effective_worker_egress_policy(
-            payload,
-            _worker_egress_policy(config),
-        )
-        browser_policy = _worker_browser_policy(config)
-        activation = _require_canary_activation(
-            payload,
-            worker_name=worker_name,
-            egress_policy=egress_policy,
-            browser_policy=browser_policy,
-            browser_live_navigation_enabled=(config.browser_live_navigation_enabled),
-            dataset_writes_enabled=config.dataset_writes_enabled,
-            key_value_store_enabled=config.key_value_store_enabled,
-            request_queue_enabled=config.request_queue_enabled,
-            request_queue_http_enabled=config.request_queue_http_enabled,
-            request_queue_browser_enabled=(config.request_queue_browser_enabled),
-            request_queue_dataset_enabled=(config.request_queue_dataset_enabled),
-            request_queue_key_value_store_enabled=(
-                config.request_queue_key_value_store_enabled
-            ),
-        )
         if (
             activation.get("capability_profile") == "controlled-browser"
             and activation.get("request_queue_browser_enabled") is not True
@@ -1311,7 +1314,7 @@ def _run(
                         "error_summary": "Controlled browser execution failed closed.",
                     },
                 )
-                return
+                return "failed"
 
             browser_artifacts: list[LocalArtifact] = []
             for kind, path, media_type in [
@@ -1345,7 +1348,7 @@ def _run(
                     "artifacts": registrations,
                 },
             )
-            return
+            return "succeeded"
 
         artifact_grant = _data(client.artifact_download(lease_id, token))
         image_path = workspace / "image.oci.tar"
@@ -1408,7 +1411,7 @@ def _run(
                             "artifacts": [],
                         },
                     )
-                    return
+                    return "succeeded"
                 queue_claim = validate_queue_claim_result(
                     _data(claimed),
                     expected_queue_id=queue_id,
@@ -1439,7 +1442,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         if queue_claim is not None and queue_browser_enabled:
             if egress_policy is None or browser_policy is None:
@@ -1492,7 +1495,7 @@ def _run(
                             ),
                         },
                     )
-                    return
+                    return "failed"
                 client.complete(
                     lease_id,
                     token,
@@ -1505,7 +1508,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         if queue_claim is not None and queue_http_enabled:
             if egress_policy is None:
@@ -1557,7 +1560,7 @@ def _run(
                             ),
                         },
                     )
-                    return
+                    return "failed"
                 client.complete(
                     lease_id,
                     token,
@@ -1570,7 +1573,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         if kv_enabled:
             try:
@@ -1622,7 +1625,7 @@ def _run(
                                 ),
                             },
                         )
-                        return
+                        return "failed"
                 client.complete(
                     lease_id,
                     token,
@@ -1635,7 +1638,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         if web_fetch is not None and profile != "brokered-web-egress":
             raise SandboxPolicyError(
@@ -1682,7 +1685,7 @@ def _run(
                             ),
                         },
                     )
-                    return
+                    return "failed"
                 except EgressPolicyError:
                     client.complete(
                         lease_id,
@@ -1697,7 +1700,7 @@ def _run(
                             ),
                         },
                     )
-                    return
+                    return "failed"
                 input_value["_rdc_web_fetch_result"] = web_fetch_result
             else:
                 input_value = broker_web_requests(
@@ -1803,7 +1806,7 @@ def _run(
                                 ),
                             },
                         )
-                        return
+                        return "failed"
                 client.complete(
                     lease_id,
                     token,
@@ -1816,7 +1819,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         dataset_enabled = (
             isinstance(manifest.get("capabilities"), dict)
@@ -1881,7 +1884,7 @@ def _run(
                                 ),
                             },
                         )
-                        return
+                        return "failed"
                 client.complete(
                     lease_id,
                     token,
@@ -1892,7 +1895,7 @@ def _run(
                         "error_summary": ("Controlled Dataset append failed closed."),
                     },
                 )
-                return
+                return "failed"
 
         if queue_claim is not None:
             try:
@@ -1917,7 +1920,7 @@ def _run(
                         ),
                     },
                 )
-                return
+                return "failed"
 
         image_digest = (
             str(artifact_grant["digest_algorithm"])
@@ -1977,6 +1980,7 @@ def _run(
                 "artifacts": registrations,
             },
         )
+        return "succeeded" if code == 0 else "failed"
     except Exception as exc:
         client.complete(
             lease_id,
@@ -1988,6 +1992,7 @@ def _run(
                 "error_summary": str(exc)[:2000],
             },
         )
+        return "failed"
     finally:
         cleanup_tree(workspace)
 
@@ -2007,20 +2012,29 @@ def main() -> None:
         recovery=cleanup_report.as_protocol(),
     )
     worker = _data(client.worker())
+    worker_id = str(worker["id"])
     worker_name = str(worker["name"])
     if int(worker["max_concurrency"]) != 1:
         raise SandboxPolicyError("Phase 1J canary worker must have max_concurrency=1.")
+    log_worker_event(
+        "worker.started",
+        request_id=request_correlation_id("/internal/v1/workers/me"),
+        worker_id=worker_id,
+    )
     stop_requested = False
+    active_request_id = request_correlation_id("/internal/v1/leases/claim")
+    active_lease_id: str | None = None
+    active_run_id: str | None = None
+    active_work_kind: str | None = None
 
     def request_stop(_signum: int, _frame: object) -> None:
         nonlocal stop_requested
         stop_requested = True
         raise WorkerShutdown
 
-    for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum, request_stop)
-
     try:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, request_stop)
         while not stop_requested:
             claim = client.claim(["RUN_CANCEL", "BUILD", "RUN_START"])
             if claim is None:
@@ -2032,6 +2046,25 @@ def main() -> None:
                 )
                 continue
             data = _data(claim)
+            lease_id = str(data["id"])
+            payload = dict(data["payload"])
+            work_kind = str(data["work_kind"])
+            correlation_id = request_correlation_id(
+                f"/internal/v1/leases/{lease_id}"
+            )
+            run_id = payload.get("run_id")
+            active_request_id = correlation_id
+            active_lease_id = lease_id
+            active_run_id = str(run_id) if run_id is not None else None
+            active_work_kind = work_kind
+            log_worker_event(
+                "worker.lease.claimed",
+                request_id=correlation_id,
+                worker_id=worker_id,
+                lease_id=lease_id,
+                run_id=str(run_id) if run_id is not None else None,
+                work_kind=work_kind,
+            )
             with LeaseWatchdog(
                 client=client,
                 config=config,
@@ -2039,24 +2072,53 @@ def main() -> None:
                 lease_token=str(data["lease_token"]),
                 sandbox=probe.attestation,
             ) as watchdog:
-                if data["work_kind"] == "BUILD":
-                    _build(
+                if work_kind == "BUILD":
+                    outcome = _build(
                         client,
                         config,
                         claim,
                         worker_name=worker_name,
                     )
                 else:
-                    _run(
+                    outcome = _run(
                         client,
                         config,
                         claim,
                         worker_name=worker_name,
                     )
                 watchdog.mark_completed()
+            log_worker_event(
+                "worker.lease.completed",
+                request_id=correlation_id,
+                worker_id=worker_id,
+                lease_id=lease_id,
+                run_id=str(run_id) if run_id is not None else None,
+                work_kind=work_kind,
+                outcome=outcome,
+            )
+            active_request_id = request_correlation_id("/internal/v1/leases/claim")
+            active_lease_id = None
+            active_run_id = None
+            active_work_kind = None
     except WorkerShutdown:
         pass
+    except Exception as exc:
+        log_worker_event(
+            "worker.failed",
+            request_id=active_request_id,
+            worker_id=worker_id,
+            lease_id=active_lease_id,
+            run_id=active_run_id,
+            work_kind=active_work_kind,
+            error_type=type(exc).__name__,
+        )
+        raise
     finally:
+        log_worker_event(
+            "worker.stopped",
+            request_id=request_correlation_id("/internal/v1/workers/me/heartbeat"),
+            worker_id=worker_id,
+        )
         final_cleanup = force_startup_cleanup(config)
         client.heartbeat(
             software_version=config.software_version,

@@ -25,6 +25,14 @@ Existing Agent stdout/stderr remains a tenant-authorized `LOG_BUNDLE` object
 artifact with the established size, digest, lease and object-storage controls.
 It is not copied into service logs.
 
-Remaining observability work is intentionally separate: structured sandbox
-worker lifecycle events and correlation propagation, bounded multi-process
-runtime metrics, and tenant-authorized diagnostics over existing resources.
+The second increment extends the same schema to the isolated sandbox worker.
+Lease-scoped internal API calls use a deterministic `lease_<uuidhex>` request
+identifier derived only from the public lease UUID; heartbeat and claim calls
+use random `worker_<uuidhex>` identifiers. `worker.started`,
+`worker.lease.claimed`, `worker.lease.completed`, `worker.failed` and
+`worker.stopped` contain only worker/lease/Run IDs, work kind, bounded outcome
+and exception type. Lease tokens, claims, inputs, exception text and Agent
+stdout/stderr are never included.
+
+Remaining observability work is intentionally separate: bounded multi-process
+runtime metrics and tenant-authorized diagnostics over existing resources.
