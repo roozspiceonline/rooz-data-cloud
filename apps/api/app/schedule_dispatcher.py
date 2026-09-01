@@ -10,9 +10,10 @@ from uuid import uuid4
 
 from .core.config import get_settings
 from .core.database import engine, session_factory
+from .core.observability import configure_structured_logging, log_event
 from .services.schedules import dispatch_due_schedules
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("rdc.schedule_dispatcher")
 
 
 async def run_dispatch_loop(*, stop: asyncio.Event) -> None:
@@ -29,15 +30,22 @@ async def run_dispatch_loop(*, stop: asyncio.Event) -> None:
                 )
                 await session.commit()
             if result.acquired and result.examined:
-                logger.info(
-                    "schedule dispatch complete examined=%d fired=%d skipped=%d failed=%d",
-                    result.examined,
-                    result.fired,
-                    result.skipped,
-                    result.failed,
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "schedule.dispatch.completed",
+                    examined=result.examined,
+                    fired=result.fired,
+                    skipped=result.skipped,
+                    failed=result.failed,
                 )
-        except Exception:
-            logger.exception("schedule dispatch failed")
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "schedule.dispatch.failed",
+                error_type=type(exc).__name__,
+            )
         elapsed = time.monotonic() - started
         wait_seconds = max(
             0.0, settings.schedule_dispatch_interval_seconds - elapsed
@@ -56,14 +64,19 @@ async def serve() -> None:
         if settings.schedule_dispatch_enabled:
             await run_dispatch_loop(stop=stop)
         else:
-            logger.info("schedule dispatcher is disabled")
+            log_event(logger, logging.INFO, "schedule.dispatcher.disabled")
             await stop.wait()
     finally:
         await engine.dispose()
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+    configure_structured_logging(
+        service="schedule_dispatcher",
+        environment=settings.env,
+        deployment_id=settings.deployment_id,
+    )
     asyncio.run(serve())
 
 

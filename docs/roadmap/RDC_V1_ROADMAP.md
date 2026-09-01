@@ -31,6 +31,7 @@ test gates pass on the exact merged commit.
 | --- | --- | --- |
 | Proxy/egress | Immutable binding, credential envelopes, lease observations and privacy-preserving route aggregates implemented | Scraping runtime and write-only Project secrets |
 | Platform efficiency | Complete: compact telemetry, rollups, retention, canonical status, verifier orchestration, Docker context controls and advisory changed-path CI | Egress health persistence |
+| Observability | Structured secret-safe API and trusted-runner correlation logs implemented; worker correlation, metrics and tenant diagnostics remain | Execution/runtime foundations |
 
 The merged recovery workstream centralizes server-owned retry eligibility and
 bounded exponential backoff, refuses to retry when the durable outbox source is
@@ -119,6 +120,10 @@ The final platform-efficiency increment adds conservative changed-path
 classification and focused advisory feedback while preserving the unchanged
 full frontend, backend and scaffold checks on every pull-request head and every
 merged-main commit. Advisory success never grants merge eligibility.
+The first observability increment adds a bounded `rdc.log/v1` JSON contract,
+request-ID correlation with matched route templates, secret-bearing field-class
+denial and consistent structured events across trusted service runners. It does
+not persist tenant logs or copy Agent output into control-plane logs.
 The eighth increment transactionally schedules credential-rotation canaries
 against exact active revision, secret version and operator target-digest
 lineage. Enqueue is idempotent, claims are race-safe and expiring, completion

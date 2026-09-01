@@ -1,3 +1,5 @@
+import logging
+import time
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
@@ -30,8 +32,20 @@ from .core.errors import (
     error_payload,
     validation_error_handler,
 )
+from .core.observability import (
+    bind_log_context,
+    configure_structured_logging,
+    log_event,
+    reset_log_context,
+)
 
 settings = get_settings()
+configure_structured_logging(
+    service="api",
+    environment=settings.env,
+    deployment_id=settings.deployment_id,
+)
+logger = logging.getLogger("rdc.api")
 
 app = FastAPI(
     title="Rooz Data Cloud API",
@@ -76,10 +90,28 @@ async def request_context(
         character.isalnum() or character in "._-" for character in incoming
     )
     request.state.request_id = incoming if valid else f"req_{uuid4().hex}"
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request.state.request_id
-    response.headers.setdefault("Cache-Control", "no-store")
-    return response
+    token = bind_log_context(request_id=request.state.request_id)
+    started = time.monotonic()
+    response: Response | None = None
+    try:
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        response.headers.setdefault("Cache-Control", "no-store")
+        return response
+    finally:
+        route = request.scope.get("route")
+        route_template = getattr(route, "path", "unmatched")
+        status_code = response.status_code if response is not None else 500
+        log_event(
+            logger,
+            logging.ERROR if status_code >= 500 else logging.INFO,
+            "http.request.completed",
+            method=request.method,
+            route=route_template,
+            status_code=status_code,
+            duration_ms=max(0, round((time.monotonic() - started) * 1000)),
+        )
+        reset_log_context(token)
 
 
 async def handle_api_error(
@@ -110,8 +142,18 @@ app.add_exception_handler(
 @app.exception_handler(Exception)
 async def unexpected_error(
     request: Request,
-    _: Exception,
+    exc: Exception,
 ) -> JSONResponse:
+    token = bind_log_context(request_id=request.state.request_id)
+    try:
+        log_event(
+            logger,
+            logging.ERROR,
+            "http.request.unexpected_error",
+            error_type=type(exc).__name__,
+        )
+    finally:
+        reset_log_context(token)
     return JSONResponse(
         status_code=500,
         content=error_payload(
