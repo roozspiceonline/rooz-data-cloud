@@ -51,6 +51,7 @@ PERMISSIONS = frozenset(
         "api_key.revoke",
         "audit.read",
         "event.read",
+        "diagnostic.read",
         "webhook.create",
         "webhook.read",
         "webhook.update",
@@ -105,6 +106,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "api_key.read_metadata",
             "api_key.revoke",
             "event.read",
+            "diagnostic.read",
             "webhook.create",
             "webhook.read",
             "webhook.update",
@@ -129,6 +131,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "schedule.read",
             "api_key.read_metadata",
             "event.read",
+            "diagnostic.read",
             "webhook.read",
         }
     ),
@@ -152,6 +155,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "schedule.read",
             "egress.read",
             "event.read",
+            "diagnostic.read",
             "webhook.read",
             "webhook.update",
         }
@@ -173,6 +177,7 @@ ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "schedule.read",
             "egress.read",
             "event.read",
+            "diagnostic.read",
             "webhook.read",
         }
     ),

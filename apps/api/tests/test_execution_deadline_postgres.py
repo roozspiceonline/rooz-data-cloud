@@ -11,7 +11,7 @@ import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, OperationalError
 
-from app.core.database import engine, session_factory
+from app.core.database import engine, session_factory, set_tenant_context
 from app.core.errors import ApiError
 from app.execution_schemas import (
     ClaimWorkRequest,
@@ -34,6 +34,7 @@ from app.services.execution_recovery_sweeper import (
     record_execution_recovery_failure,
     run_execution_recovery_sweep,
 )
+from app.services.project_diagnostics import read_project_diagnostics
 from app.services.runs import cancel_run
 from app.services.runtime_metrics import read_runtime_metrics
 
@@ -185,6 +186,40 @@ async def test_postgres_runtime_metrics_read_one_cross_process_snapshot() -> Non
     assert metrics.active_execution_leases >= 1
     assert metrics.active_workers >= 1
     assert all(value >= 0 for value in metrics.__dict__.values())
+
+
+async def test_postgres_project_diagnostics_are_tenant_bounded() -> None:
+    if not await _database_available():
+        pytest.skip("PostgreSQL integration database is unavailable")
+    now = datetime.now(UTC)
+    _, _, _, user_id, org_id, project_id, _ = await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    await _seed_deadline_lease(
+        work_kind="BUILD",
+        now=now,
+        overdue=False,
+    )
+    async with session_factory() as session:
+        await set_tenant_context(
+            session,
+            user_id=user_id,
+            organization_id=org_id,
+        )
+        diagnostics = await read_project_diagnostics(
+            session,
+            project_id=project_id,
+        )
+    assert diagnostics.active_execution_leases == 1
+    assert diagnostics.observed_at.tzinfo is not None
+    scalar_counts = {
+        key: value
+        for key, value in diagnostics.__dict__.items()
+        if key != "observed_at"
+    }
+    assert all(value >= 0 for value in scalar_counts.values())
 
 
 @pytest.mark.parametrize("work_kind", ["BUILD", "RUN_START"])

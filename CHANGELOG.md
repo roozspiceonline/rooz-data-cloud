@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added a dedicated tenant-authorized project diagnostics snapshot over
+  existing execution, Scheduler, Queue, credential-canary and webhook state.
 - Added a hidden fixed-series Prometheus snapshot of durable runtime queue and
   in-flight work across scheduler, execution, scraping and trusted runners.
 - Added lease-derived sandbox-worker/API request correlation and bounded

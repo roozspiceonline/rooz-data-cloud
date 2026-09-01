@@ -23,11 +23,9 @@
       "remaining": []
     },
     "observability": {
-      "status": "active",
-      "last_delivery_issue": 119,
-      "remaining": [
-        "tenant_diagnostics"
-      ]
+      "status": "complete",
+      "last_delivery_issue": 121,
+      "remaining": []
     },
     "usage_cost": {"status": "not_started"},
     "console_sdk_cli": {"status": "partial"},
