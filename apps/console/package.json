@@ -15,6 +15,7 @@
     "@rdc/shared-types": "workspace:*",
     "@rdc/ui": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
+    "lucide-react": "1.37.0",
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
