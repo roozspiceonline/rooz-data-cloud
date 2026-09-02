@@ -25,31 +25,20 @@ export function LoginForm() {
       router.replace("/console/select-org");
       router.refresh();
     } catch (caught) {
-      setError(
-        caught instanceof RdcApiError
-          ? caught.message
-          : "Sign in could not be completed.",
-      );
+      setError(caught instanceof RdcApiError ? caught.message : "Sign in could not be completed.");
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={submit} style={{ display: "grid", gap: "1rem" }}>
-      <div style={{ display: "grid", gap: "0.4rem" }}>
+    <form className="auth-form" onSubmit={submit}>
+      <div className="auth-field">
         <label htmlFor="email">Email address</label>
-        <input
-          autoComplete="email"
-          id="email"
-          name="email"
-          required
-          type="email"
-          style={{ minHeight: 44, padding: "0.7rem" }}
-        />
+        <input autoComplete="email" id="email" name="email" required type="email" />
       </div>
 
-      <div style={{ display: "grid", gap: "0.4rem" }}>
+      <div className="auth-field">
         <label htmlFor="password">Password</label>
         <input
           autoComplete="current-password"
@@ -57,7 +46,6 @@ export function LoginForm() {
           name="password"
           required
           type="password"
-          style={{ minHeight: 44, padding: "0.7rem" }}
         />
       </div>
 
@@ -67,11 +55,7 @@ export function LoginForm() {
         </p>
       ) : null}
 
-      <button
-        disabled={submitting}
-        style={{ minHeight: 44 }}
-        type="submit"
-      >
+      <button className="auth-submit" disabled={submitting} type="submit">
         {submitting ? "Signing in…" : "Sign in"}
       </button>
     </form>
